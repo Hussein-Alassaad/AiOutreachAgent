@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+/* Tailwind v4 theme customisation. Extend here rather than in a config file. */
+@theme {
+  /* Temperature colours — used by the Hot/Warm/Cold badges across the whole
+     dashboard (live feed cards, pipeline cards, approval queue, client history).
+     Defined once so every screen agrees on what "hot" looks like. */
+  --color-hot: oklch(0.63 0.22 25);
+  --color-warm: oklch(0.75 0.16 70);
+  --color-cold: oklch(0.68 0.11 235);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  /* Safe-area padding so content clears the notch and home indicator when the
+     PWA is launched full-screen from Mahmoud's iPhone home screen. */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right)
+    env(safe-area-inset-bottom) env(safe-area-inset-left);
+
+  /* Stops iOS Safari from auto-enlarging text in landscape. */
+  -webkit-text-size-adjust: 100%;
+}

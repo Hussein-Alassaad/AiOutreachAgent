@@ -1,0 +1,96 @@
+# PROGRESS — Nexaris AI Outreach Agent
+
+Updated after every phase. If a session runs out of context, point the next one at
+this file plus `00_MASTER_PROMPT.md` and it can pick up without losing anything.
+
+**Current state:** Phase 0 complete, awaiting Hussein's confirmation.
+**Next:** Phase 1 — database schema in Supabase.
+
+---
+
+## Phase status
+
+| Phase | Name | Status |
+|-------|------|--------|
+| 0 | Project setup & foundations | ✅ Built — awaiting confirmation |
+| 1 | Database schema | ⬜ Not started |
+| 2 | Agent core: account pool & sessions | ⬜ Not started |
+| 3 | Discovery: LinkedIn & Instagram | ⬜ Not started |
+| 4 | Claude analysis pipeline | ⬜ Not started |
+| 5 | Message generation | ⬜ Not started |
+| 6 | Approval workflow | ⬜ Not started |
+| 7 | Sending & routing | ⬜ Not started |
+| 8 | CRM, pipeline, follow-up, notifications | ⬜ Not started |
+| 9 | Dashboard frontend | ⬜ Not started |
+| 10 | Deploy & warm-up | ⬜ Not started |
+
+---
+
+## Phase 0 — Project setup & foundations
+
+**Built:**
+
+- Git repository initialised on `main`, `.gitignore` covering `.env`, `venv/`,
+  `node_modules/`, and Playwright browser profiles
+- Folder structure exactly per `03_PROJECT_STRUCTURE.md`
+- **Python agent** (`agent/`)
+  - `venv/` with all dependencies installed
+  - `requirements.txt` — supabase, anthropic, playwright, APScheduler, dotenv,
+    httpx, beautifulsoup4, pytz
+  - `config.py` — single place all secrets and settings are read from
+  - `db/client.py` — lazy Supabase client using the service role key
+  - `main.py` — runs a self-check reporting what is and isn't configured
+  - 23 stub modules, each documenting what it will hold and which phase builds it
+- **Dashboard** (`dashboard/`)
+  - Vite + React 18 + Tailwind v4
+  - `src/lib/supabase.js` — client using the anon key, degrades gracefully when unset
+  - `src/App.jsx` — Phase 0 status page listing the 10 sections coming in Phase 9
+  - PWA manifest + generated icons (180/192/512 + SVG favicon), iOS meta tags,
+    safe-area padding for iPhone full-screen
+- `.env.example` documenting every variable, annotated with the phase that needs it
+- `database/schema.sql` — copy of the Supabase schema for reference
+- `REQUIREMENTS_COVERAGE.md` — every spec requirement mapped to a phase, so nothing
+  can be silently dropped
+
+**How to test:**
+
+```bash
+# Agent
+agent/venv/Scripts/python.exe -m agent.main
+
+# Dashboard
+cd dashboard && npm run dev
+```
+
+**Decisions made:**
+
+1. **Built in place** rather than inside a `nexaris-outreach-agent/` wrapper folder,
+   so the planning documents sit alongside the code. Structure below that level is
+   exactly as specified.
+2. **Tailwind v4** via the Vite plugin instead of v3. No `tailwind.config.js` or
+   `postcss.config.js` is needed — theme customisation lives in `src/index.css`
+   under `@theme`. This differs from `03_PROJECT_STRUCTURE.md`, which was written
+   assuming v3.
+3. **Dependency pins loosened to `>=`.** Exact pins made the set unresolvable —
+   supabase and anthropic each constrain `httpx` to different ranges.
+4. **`runs` table** treated as a 9th table to verify in Phase 1. It is created by
+   the schema but missing from the build plan's verification list, and it is what
+   feeds the Run Status panel and the finish time in the daily summary.
+5. **Icons are placeholders** — a generated "N" mark. Replace with real Nexaris
+   branding in Phase 9.
+
+**Not done / still open:**
+
+- Supabase project not created yet — blocks Phase 1
+- Claude API key not set — blocks Phase 4
+- Playwright browsers not downloaded yet (`playwright install chromium`) — Phase 2
+- Open decisions Q1–Q7 in `REQUIREMENTS_COVERAGE.md`
+
+---
+
+## Decisions log
+
+| Date | Decision |
+|------|----------|
+| 2026-07-22 | Repo is public on GitHub as `AiOutreachAgent`. Hussein pushes himself — the agent never runs `git push`. |
+| 2026-07-22 | Build order follows `01_PHASED_BUILD_PLAN.md` (11 phases) over spec §14 (10 steps) where they conflict. No requirement is dropped either way. |

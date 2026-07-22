@@ -1,0 +1,43 @@
+# ── SECRETS — never commit ──
+.env
+.env.local
+.env.*.local
+agent/.env
+dashboard/.env
+*.pem
+*.key
+
+# ── Python ──
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# ── Playwright ──
+playwright-report/
+test-results/
+.playwright/
+browser_profiles/
+
+# ── Node / Vite ──
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.local
+
+# ── Editors / OS ──
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Logs ──
+*.log
+npm-debug.log*
+logs/

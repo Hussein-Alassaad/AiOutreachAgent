@@ -1,0 +1,31 @@
+# ── Nexaris Outreach Agent — Python dependencies ──
+# Install:  pip install -r requirements.txt
+#           playwright install chromium
+
+# Pins are minimum-version (>=) rather than exact (==) because supabase and anthropic
+# each constrain httpx to their own range — exact pins made the set unresolvable.
+
+# Database — Supabase (Postgres + Auth + Realtime)
+supabase>=2.10.0
+
+# Claude API — Haiku for analysis/scoring, Sonnet for message generation
+anthropic>=0.42.0
+
+# Browser automation — LinkedIn/Instagram discovery + LinkedIn sending
+playwright>=1.49.1
+
+# Environment variables from agent/.env
+python-dotenv>=1.0.1
+
+# Per-account scheduling (each account runs at its own time)
+APScheduler>=3.11.0
+
+# HTTP — website analysis, WhatsApp API calls.
+# Unpinned: supabase and anthropic both depend on it and pick a compatible version.
+httpx
+
+# HTML parsing for website weak-point analysis (Phase 4)
+beautifulsoup4>=4.12.3
+
+# Timezone handling for per-account run times
+pytz>=2024.2

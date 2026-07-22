@@ -1,0 +1,24 @@
+{
+  "name": "nexaris-dashboard",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Nexaris AI Outreach Agent — responsive PWA dashboard (laptop + iPhone)",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.47.10",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.1.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "tailwindcss": "^4.0.0",
+    "vite": "^6.0.7"
+  }
+}
