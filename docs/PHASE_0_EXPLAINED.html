@@ -1,0 +1,866 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Phase 0 Explained — Nexaris AI Outreach Agent</title>
+<style>
+  @page { size: A4; }
+
+  :root {
+    --ink: #0f172a;
+    --body: #1e293b;
+    --muted: #64748b;
+    --line: #e2e8f0;
+    --accent: #1d4ed8;
+    --ok: #047857;
+    --warn: #b45309;
+    --bg-soft: #f8fafc;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: "Segoe UI", -apple-system, system-ui, sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.55;
+    color: var(--body);
+  }
+
+  h1, h2, h3, h4 { color: var(--ink); line-height: 1.25; }
+
+  h1 { font-size: 26pt; margin: 0 0 4px; letter-spacing: -0.5px; }
+
+  h2 {
+    font-size: 15pt;
+    margin: 30px 0 12px;
+    padding-bottom: 6px;
+    border-bottom: 2px solid var(--ink);
+    page-break-after: avoid;
+  }
+
+  h3 {
+    font-size: 11.5pt;
+    margin: 20px 0 6px;
+    page-break-after: avoid;
+  }
+
+  h4 {
+    font-size: 10.5pt;
+    margin: 14px 0 4px;
+    color: var(--accent);
+    page-break-after: avoid;
+  }
+
+  p { margin: 0 0 9px; }
+  ul, ol { margin: 0 0 10px; padding-left: 20px; }
+  li { margin-bottom: 4px; }
+
+  code {
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 9pt;
+    background: #eef2f7;
+    padding: 1px 4px;
+    border-radius: 3px;
+    color: #0f172a;
+  }
+
+  pre {
+    background: #0f172a;
+    color: #e2e8f0;
+    padding: 11px 13px;
+    border-radius: 5px;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 8.6pt;
+    line-height: 1.5;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    page-break-inside: avoid;
+    margin: 8px 0 12px;
+  }
+  pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 9.2pt;
+    margin: 8px 0 14px;
+    page-break-inside: avoid;
+  }
+  th {
+    background: var(--ink);
+    color: #fff;
+    text-align: left;
+    padding: 6px 8px;
+    font-weight: 600;
+  }
+  td { padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:nth-child(even) td { background: var(--bg-soft); }
+
+  .file-card {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    border-radius: 4px;
+    padding: 11px 14px;
+    margin: 12px 0;
+    page-break-inside: avoid;
+    background: #fff;
+  }
+  .file-card h4 { margin-top: 0; font-family: Consolas, monospace; font-size: 10pt; }
+
+  .note, .warn-box, .ok-box {
+    border-radius: 4px;
+    padding: 10px 13px;
+    margin: 12px 0;
+    font-size: 9.8pt;
+    page-break-inside: avoid;
+  }
+  .note { background: #eff6ff; border-left: 3px solid var(--accent); }
+  .warn-box { background: #fffbeb; border-left: 3px solid var(--warn); }
+  .ok-box { background: #ecfdf5; border-left: 3px solid var(--ok); }
+
+  .cover {
+    text-align: center;
+    padding: 60px 0 40px;
+    border-bottom: 3px solid var(--ink);
+    margin-bottom: 26px;
+  }
+  .cover .eyebrow {
+    font-size: 9pt;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 14px;
+  }
+  .cover .sub { font-size: 12pt; color: var(--muted); margin-top: 8px; }
+  .cover .meta { margin-top: 26px; font-size: 9pt; color: var(--muted); }
+
+  .step {
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 12px 15px;
+    margin: 12px 0;
+    page-break-inside: avoid;
+  }
+  .step-num {
+    display: inline-block;
+    background: var(--ink);
+    color: #fff;
+    width: 21px; height: 21px;
+    border-radius: 50%;
+    text-align: center;
+    line-height: 21px;
+    font-size: 9.5pt;
+    font-weight: 700;
+    margin-right: 7px;
+  }
+  .step h3 { display: inline; font-size: 11pt; }
+
+  .tag {
+    display: inline-block;
+    font-size: 7.5pt;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    vertical-align: middle;
+  }
+  .tag-new { background: #dcfce7; color: #15803d; }
+  .tag-edit { background: #fef3c7; color: #a16207; }
+  .tag-block { background: #fee2e2; color: #b91c1c; }
+
+  .page-break { page-break-before: always; }
+  .toc a { color: var(--body); text-decoration: none; }
+  .toc li { margin-bottom: 3px; }
+  .small { font-size: 9pt; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="eyebrow">Nexaris &middot; AI Outreach Agent</div>
+  <h1>Phase 0 — Explained</h1>
+  <div class="sub">Project setup &amp; foundations · every file, every decision, every next step</div>
+  <div class="meta">
+    22 July 2026 &nbsp;·&nbsp; Commit <code>b9315c4</code> &nbsp;·&nbsp; 61 files &nbsp;·&nbsp; Phase 0 of 11
+  </div>
+</div>
+
+<h2>Contents</h2>
+<ol class="toc">
+  <li><a href="#what">What Phase 0 was for</a></li>
+  <li><a href="#map">The complete file map</a></li>
+  <li><a href="#repo">Repository-level files explained</a></li>
+  <li><a href="#agent">The Python agent explained</a></li>
+  <li><a href="#dash">The dashboard explained</a></li>
+  <li><a href="#tools">The documentation tool</a></li>
+  <li><a href="#concepts">Key concepts (read this if anything above was unclear)</a></li>
+  <li><a href="#decisions">Decisions I made, and why</a></li>
+  <li><a href="#problems">Problems hit during the build, and how they were fixed</a></li>
+  <li><a href="#now">What you should do right now — step by step</a></li>
+  <li><a href="#future">What you need before each future phase</a></li>
+  <li><a href="#open">Open questions I need answers to</a></li>
+</ol>
+
+<h2 id="what">1. What Phase 0 was for</h2>
+
+<p>Phase 0 builds <strong>no features</strong>. Its only job is to create a clean, running
+skeleton so that from Phase 1 onward every piece of real work has somewhere obvious to
+go. The build plan defines the goal as: <em>"a clean, running skeleton for both the agent
+and the dashboard."</em></p>
+
+<p>Concretely, the phase is complete when four things are true:</p>
+<ul>
+  <li>The folder structure matches <code>03_PROJECT_STRUCTURE.md</code> exactly.</li>
+  <li>The Python agent runs and reports its own configuration state.</li>
+  <li>The React dashboard builds and displays a page.</li>
+  <li>Every environment variable the project will ever need is documented in one place.</li>
+</ul>
+
+<div class="ok-box">
+  <strong>All four are verified done.</strong> The agent was executed and printed its
+  self-check; the dashboard compiled to a production build in 4.26 seconds with zero
+  errors. Neither does real work yet — that is correct and expected at this stage.
+</div>
+
+<h3>The one thing added beyond the plan</h3>
+<p>You asked that nothing from the spec be missed. A promise is not checkable, so I
+created <code>REQUIREMENTS_COVERAGE.md</code> — a ledger giving every single requirement
+an ID and mapping it to the phase that delivers it. A phase cannot be closed until all
+of its rows are marked done. This is the mechanism that makes "nothing missed" a fact
+rather than a hope.</p>
+
+<div class="page-break"></div>
+<h2 id="map">2. The complete file map</h2>
+
+<p>61 files are tracked in git. Ignoring the 23 documentation stubs (listed separately in
+section 4), here is everything created or edited:</p>
+
+<table>
+  <tr><th style="width:34%">File</th><th style="width:11%">Status</th><th>What it is</th></tr>
+  <tr><td><code>.gitignore</code></td><td><span class="tag tag-new">new</span></td><td>Stops secrets and build junk being committed</td></tr>
+  <tr><td><code>.env.example</code></td><td><span class="tag tag-new">new</span></td><td>Every environment variable, annotated with the phase that needs it</td></tr>
+  <tr><td><code>README.md</code></td><td><span class="tag tag-new">new</span></td><td>What the project is and how to run both halves</td></tr>
+  <tr><td><code>PROGRESS.md</code></td><td><span class="tag tag-new">new</span></td><td>Phase tracker + decisions log; how a fresh session resumes</td></tr>
+  <tr><td><code>REQUIREMENTS_COVERAGE.md</code></td><td><span class="tag tag-new">new</span></td><td>Every requirement mapped to a phase</td></tr>
+  <tr><td><code>database/schema.sql</code></td><td><span class="tag tag-new">new</span></td><td>Reference copy of the Supabase schema</td></tr>
+  <tr><td><code>agent/requirements.txt</code></td><td><span class="tag tag-edit">edited</span></td><td>Python dependencies</td></tr>
+  <tr><td><code>agent/config.py</code></td><td><span class="tag tag-new">new</span></td><td>The single place all secrets and settings are read</td></tr>
+  <tr><td><code>agent/db/client.py</code></td><td><span class="tag tag-new">new</span></td><td>Supabase connection for the agent</td></tr>
+  <tr><td><code>agent/main.py</code></td><td><span class="tag tag-edit">edited</span></td><td>Entry point; currently a setup self-check</td></tr>
+  <tr><td><code>agent/**/__init__.py</code> (9)</td><td><span class="tag tag-new">new</span></td><td>Makes each folder an importable Python package</td></tr>
+  <tr><td><code>agent/</code> stubs (23)</td><td><span class="tag tag-new">new</span></td><td>Placeholder modules documenting future work</td></tr>
+  <tr><td><code>dashboard/package.json</code></td><td><span class="tag tag-new">new</span></td><td>Dashboard dependencies and scripts</td></tr>
+  <tr><td><code>dashboard/vite.config.js</code></td><td><span class="tag tag-edit">edited</span></td><td>Build config; React + Tailwind + network access</td></tr>
+  <tr><td><code>dashboard/index.html</code></td><td><span class="tag tag-new">new</span></td><td>Page shell + the iPhone PWA meta tags</td></tr>
+  <tr><td><code>dashboard/src/main.jsx</code></td><td><span class="tag tag-new">new</span></td><td>Mounts React into the page</td></tr>
+  <tr><td><code>dashboard/src/App.jsx</code></td><td><span class="tag tag-new">new</span></td><td>The Phase 0 status page</td></tr>
+  <tr><td><code>dashboard/src/index.css</code></td><td><span class="tag tag-new">new</span></td><td>Tailwind import, temperature colours, iPhone safe areas</td></tr>
+  <tr><td><code>dashboard/src/lib/supabase.js</code></td><td><span class="tag tag-new">new</span></td><td>Supabase connection for the browser</td></tr>
+  <tr><td><code>dashboard/public/manifest.json</code></td><td><span class="tag tag-new">new</span></td><td>What makes it installable on a phone</td></tr>
+  <tr><td><code>dashboard/public/icons/</code> (4)</td><td><span class="tag tag-new">new</span></td><td>App icons: 180/192/512 PNG + SVG favicon</td></tr>
+  <tr><td><code>tools/make_pdf.py</code></td><td><span class="tag tag-new">new</span></td><td>Turns these phase documents into PDFs</td></tr>
+  <tr><td><code>docs/PHASE_0_EXPLAINED.html</code></td><td><span class="tag tag-new">new</span></td><td>The source of the document you are reading</td></tr>
+</table>
+
+<p class="small">Not in git, correctly: <code>agent/venv/</code> (your Python packages),
+<code>dashboard/node_modules/</code> (92 JavaScript packages), <code>dashboard/dist/</code>
+(the compiled output). These are regenerated from <code>requirements.txt</code> and
+<code>package.json</code>, so committing them would only bloat the repository.</p>
+
+<div class="page-break"></div>
+<h2 id="repo">3. Repository-level files explained</h2>
+
+<div class="file-card">
+  <h4>.gitignore</h4>
+  <p><strong>What it does:</strong> tells git which files to never track.</p>
+  <p><strong>Why it was the very first file written:</strong> your repository is
+  <em>public</em>. Once a secret is committed and pushed, deleting it later does not
+  remove it — it stays in the git history forever, and bots scan public GitHub for
+  exactly this. Writing <code>.gitignore</code> before the first <code>git add</code>
+  means an <code>.env</code> file can never be committed by accident.</p>
+  <p><strong>What it blocks:</strong> all <code>.env</code> variants, <code>*.pem</code>
+  and <code>*.key</code>, <code>venv/</code>, <code>node_modules/</code>,
+  <code>__pycache__/</code>, <code>dist/</code>, Playwright browser profiles (which will
+  contain your logged-in LinkedIn and Instagram sessions), and editor/OS clutter.</p>
+  <p><strong>Verified:</strong> after committing, I ran a check confirming no
+  <code>.env</code> file is tracked.</p>
+</div>
+
+<div class="file-card">
+  <h4>.env.example</h4>
+  <p><strong>What it does:</strong> documents every environment variable the project will
+  ever need, with placeholder values instead of real secrets. It is committed; the real
+  <code>.env</code> files are not.</p>
+  <p><strong>Why it matters:</strong> it is the answer to "what do I need to fill in?"
+  Each block carries a comment saying which phase actually requires it, so you can see
+  that an empty Claude API key is fine now but blocks Phase 4.</p>
+  <p><strong>Structure:</strong> two sections. The first is for
+  <code>agent/.env</code> (Supabase URL and <em>service role</em> key, Claude key, model
+  names, WhatsApp credentials, timezone, headless flag, a dev safety cap). The second is
+  for <code>dashboard/.env</code> (Supabase URL and <em>anon</em> key only).</p>
+  <p><strong>Note it contains:</strong> proxy credentials are deliberately <em>not</em>
+  here. They live per-account in the Supabase <code>accounts</code> table so you can edit
+  them from the dashboard — which is what makes "add proxies later" a settings change
+  with zero code change, exactly as the spec requires.</p>
+</div>
+
+<div class="file-card">
+  <h4>REQUIREMENTS_COVERAGE.md</h4>
+  <p><strong>What it does:</strong> the anti-omission ledger. Eight tables of requirements,
+  each row with an ID, the requirement, the file that implements it, the phase, and a status.</p>
+  <table>
+    <tr><th>Group</th><th>Count</th><th>Contents</th></tr>
+    <tr><td>A — Core rules</td><td>10</td><td>R1–R10, the never-violate constraints</td></tr>
+    <tr><td>B — Agent tasks</td><td>17</td><td>T1–T17 from spec §6, in execution order</td></tr>
+    <tr><td>C — Dashboard</td><td>11</td><td>D1–D11, every screen plus the PWA</td></tr>
+    <tr><td>D — Settings</td><td>15</td><td>S1–S15, every editable control</td></tr>
+    <tr><td>E — Notifications</td><td>5</td><td>N1–N5, the WhatsApp alert types</td></tr>
+    <tr><td>F — Safety/proxy</td><td>7</td><td>P1–P7, proxy rules and warm-up</td></tr>
+    <tr><td>G — Out of scope</td><td>11</td><td>X1–X11, listed so they are never accidentally built</td></tr>
+    <tr><td>H — Open questions</td><td>7</td><td>Q1–Q7, decisions I need from you</td></tr>
+  </table>
+  <p><strong>How it gets used:</strong> at the end of every phase I mark that phase's rows
+  <code>DONE</code>. If a row cannot be marked, the phase does not close. Group G exists
+  because the spec explicitly lists features that were <em>considered and cut</em> —
+  writing them down prevents accidentally building something you decided against.</p>
+</div>
+
+<div class="file-card">
+  <h4>PROGRESS.md</h4>
+  <p><strong>What it does:</strong> the phase tracker required by the master prompt. Shows
+  the status of all 11 phases, a full write-up of what Phase 0 built, how to test it,
+  decisions made, and what is still open.</p>
+  <p><strong>Why it exists:</strong> if this chat session runs out of memory, a fresh
+  session can read <code>PROGRESS.md</code> plus <code>00_MASTER_PROMPT.md</code> and
+  continue without you re-explaining anything.</p>
+</div>
+
+<div class="file-card">
+  <h4>README.md</h4>
+  <p><strong>What it does:</strong> the front door of the repository. Explains what the
+  system is in one paragraph, states the three channel rules in a table (LinkedIn
+  automated, WhatsApp conditional, Instagram never automated), gives the exact commands
+  to run both halves, shows the folder layout, and links every reference document.</p>
+</div>
+
+<div class="file-card">
+  <h4>database/schema.sql</h4>
+  <p><strong>What it does:</strong> a copy of <code>02_SUPABASE_SCHEMA.sql</code>, placed
+  where <code>03_PROJECT_STRUCTURE.md</code> asks for it. Reference only — the real schema
+  gets run inside Supabase in Phase 1.</p>
+</div>
+
+<div class="page-break"></div>
+<h2 id="agent">4. The Python agent explained</h2>
+
+<div class="file-card">
+  <h4>agent/requirements.txt</h4>
+  <p><strong>What it does:</strong> lists the Python packages the agent needs, so the same
+  environment can be rebuilt on your laptop and on the server with one command.</p>
+  <table>
+    <tr><th style="width:26%">Package</th><th>Why it's there</th></tr>
+    <tr><td><code>supabase</code></td><td>Reads and writes the database</td></tr>
+    <tr><td><code>anthropic</code></td><td>Calls Claude — Haiku for analysis, Sonnet for messages</td></tr>
+    <tr><td><code>playwright</code></td><td>Drives a real browser for LinkedIn/Instagram discovery and LinkedIn sending</td></tr>
+    <tr><td><code>python-dotenv</code></td><td>Loads <code>agent/.env</code> into the process</td></tr>
+    <tr><td><code>APScheduler</code></td><td>Runs each account at its own configured time</td></tr>
+    <tr><td><code>httpx</code></td><td>HTTP calls — website analysis, WhatsApp API</td></tr>
+    <tr><td><code>beautifulsoup4</code></td><td>Parses lead websites to find weak points in Phase 4</td></tr>
+    <tr><td><code>pytz</code></td><td>Timezone handling for per-account run times</td></tr>
+  </table>
+  <p><strong>Edited during the build:</strong> the versions were originally pinned exactly
+  (<code>==</code>). That combination was impossible to install — see section 9, problem 1.</p>
+</div>
+
+<div class="file-card">
+  <h4>agent/config.py</h4>
+  <p><strong>What it does:</strong> reads every secret and setting from
+  <code>agent/.env</code>, and is the <em>only</em> file that does so.</p>
+  <p><strong>Why one file:</strong> when something is misconfigured there is exactly one
+  place to look. Nothing else in the codebase touches environment variables directly.</p>
+  <p><strong>The pieces:</strong></p>
+  <ul>
+    <li><code>_get()</code> — reads a variable and treats an empty string as missing.
+      Without this, a line like <code>ANTHROPIC_API_KEY=</code> would count as "set" and
+      you would get a confusing authentication failure later instead of a clear message now.</li>
+    <li>Supabase URL and <strong>service role</strong> key.</li>
+    <li>Claude API key, plus the two model names as variables so the models can be
+      changed without editing code.</li>
+    <li>WhatsApp provider settings — defaulted to Twilio, but this is open question Q1.</li>
+    <li><code>TIMEZONE</code> (default <code>Asia/Beirut</code>) — how per-account run
+      times are interpreted.</li>
+    <li><code>HEADLESS</code> — when false, Playwright shows a visible browser window.
+      You will want that while we build discovery in Phase 3 so you can watch it work.</li>
+    <li><code>DEV_MAX_LEADS_PER_ACCOUNT</code> — a safety brake that caps volume during
+      local testing regardless of the dashboard setting. Protects your accounts from an
+      accidental full-volume run during development.</li>
+    <li><code>missing_required()</code> — each phase asks only for the keys it needs, so
+      Phase 0 runs happily with a totally empty <code>.env</code> while Phase 4 can refuse
+      to start without a Claude key.</li>
+  </ul>
+</div>
+
+<div class="file-card">
+  <h4>agent/db/client.py</h4>
+  <p><strong>What it does:</strong> creates and shares the Supabase connection.</p>
+  <ul>
+    <li><strong>Lazy creation.</strong> The connection is made on first use, not on
+      import. This is why the agent runs today with no credentials at all — importing the
+      module cannot fail.</li>
+    <li><strong>One shared client.</strong> Creating a client opens a connection pool, so
+      the module caches a single instance rather than making a new one per call.</li>
+    <li><strong>Service role key.</strong> The agent runs on a server you control and needs
+      full access to every table. See section 7 for why this key must never appear in the
+      dashboard.</li>
+    <li><code>check_connection()</code> — proves the credentials actually work by selecting
+      one row from <code>settings</code>. It returns <code>(ok, message)</code> instead of
+      raising, because in the Phase 0 self-check a failure is information, not a crash.</li>
+  </ul>
+</div>
+
+<div class="file-card">
+  <h4>agent/main.py</h4>
+  <p><strong>What it does today:</strong> runs a self-check and prints which parts of the
+  system are configured, with the phase each missing piece is needed for.</p>
+  <p><strong>What it becomes:</strong> from Phase 2 this is the daily run loop — for each
+  account, at its own scheduled time, open a session and work through Tasks 1 to 17.</p>
+  <p><strong>Run it with:</strong></p>
+  <pre><code>agent/venv/Scripts/python.exe -m agent.main</code></pre>
+  <p><strong>Current output:</strong></p>
+  <pre><code>==============================================================
+  NEXARIS AI OUTREACH AGENT - setup self-check
+==============================================================
+
+  [ok]  Python runtime           Python 3.11.9
+  [--]  Supabase credentials     not set - needed for Phase 1
+  [--]  Claude API key           not set - needed for Phase 4
+  [--]  WhatsApp credentials     not set - needed for Phase 7
+
+  Models:    analysis=claude-haiku-4-5-20251001
+             messages=claude-sonnet-5
+  Timezone:  Asia/Beirut
+  Headless:  True</code></pre>
+  <p>Three <code>[--]</code> marks is the <em>correct</em> result right now. They are a
+  to-do list, not errors.</p>
+</div>
+
+<h3>The 9 <code>__init__.py</code> files</h3>
+<p>A folder only becomes an importable Python package when it contains an
+<code>__init__.py</code>. Without them, <code>from agent.db import client</code> fails.
+Each one holds a single line describing what its folder is for.</p>
+
+<h3>The 23 stub modules</h3>
+<p>Every file named in <code>03_PROJECT_STRUCTURE.md</code> now exists, containing a
+docstring that states what it will do, which phase builds it, and the specific rules it
+must obey. They contain no code yet.</p>
+
+<div class="note">
+  <strong>Why create empty files?</strong> Three reasons. First, the structure is real and
+  navigable now rather than theoretical. Second, each stub carries the rules with it — for
+  example <code>sending/instagram_queue.py</code> opens with "THIS MODULE NEVER SENDS", so
+  the constraint sits in the file where it applies rather than only in a document. Third,
+  when we reach Phase 3 there is no ambiguity about where LinkedIn discovery goes.
+</div>
+
+<table>
+  <tr><th style="width:30%">Module</th><th style="width:8%">Phase</th><th>Purpose</th></tr>
+  <tr><td><code>scheduler.py</code></td><td>2</td><td>Runs each account at its own time; opens and closes the <code>runs</code> row</td></tr>
+  <tr><td><code>core/account_pool.py</code></td><td>2</td><td>Loads the 3 accounts, selects by run time</td></tr>
+  <tr><td><code>core/session.py</code></td><td>2</td><td>One isolated browser context per account, on its own proxy</td></tr>
+  <tr><td><code>core/health.py</code></td><td>2</td><td>Detects problems, records warning type + specific reason</td></tr>
+  <tr><td><code>core/warmup.py</code></td><td>2</td><td>Ramps daily volume from 5–10 up to full over weeks</td></tr>
+  <tr><td><code>discovery/linkedin.py</code></td><td>3</td><td>LinkedIn search and profile reading, 30/account</td></tr>
+  <tr><td><code>discovery/instagram.py</code></td><td>3</td><td>Instagram search and reading, 20/account, read-only</td></tr>
+  <tr><td><code>discovery/qualify.py</code></td><td>3</td><td>Is this a real business worth pursuing?</td></tr>
+  <tr><td><code>analysis/analyze.py</code></td><td>4</td><td>Deep company analysis via Haiku</td></tr>
+  <tr><td><code>analysis/founder.py</code></td><td>4</td><td>Founder detection from bios</td></tr>
+  <tr><td><code>analysis/whatsapp_detect.py</code></td><td>4</td><td>Finds public WhatsApp numbers</td></tr>
+  <tr><td><code>analysis/score.py</code></td><td>4</td><td>Scores 1–10 with written reasoning</td></tr>
+  <tr><td><code>analysis/prompts.py</code></td><td>4</td><td>All Claude prompts, structured for caching</td></tr>
+  <tr><td><code>messaging/generate.py</code></td><td>5</td><td>Message generation via Sonnet</td></tr>
+  <tr><td><code>messaging/style.py</code></td><td>5</td><td>Direct/Discovery style and rotation</td></tr>
+  <tr><td><code>sending/linkedin_send.py</code></td><td>7</td><td>Auto-send on LinkedIn</td></tr>
+  <tr><td><code>sending/whatsapp_send.py</code></td><td>7</td><td>Auto-send on WhatsApp</td></tr>
+  <tr><td><code>sending/instagram_queue.py</code></td><td>7</td><td>Manual-send queue — never sends</td></tr>
+  <tr><td><code>crm/pipeline.py</code></td><td>8</td><td>Stage movement, timestamped history</td></tr>
+  <tr><td><code>crm/followup.py</code></td><td>8</td><td>Follow-up, re-engagement, 2-contact maximum</td></tr>
+  <tr><td><code>crm/reply_detection.py</code></td><td>8</td><td>Detects replies, advances the pipeline</td></tr>
+  <tr><td><code>notifications/whatsapp_notify.py</code></td><td>8</td><td>The 5 alert types</td></tr>
+  <tr><td><code>db/repositories.py</code></td><td>1</td><td>Read/write functions per table</td></tr>
+</table>
+
+<div class="page-break"></div>
+<h2 id="dash">5. The dashboard explained</h2>
+
+<div class="file-card">
+  <h4>dashboard/package.json</h4>
+  <p><strong>What it does:</strong> lists JavaScript dependencies and the commands to run.</p>
+  <p><strong>Dependencies:</strong> React 18, React DOM, React Router (for navigating
+  between the 10 sections in Phase 9), and the Supabase JavaScript client.
+  <strong>Build tools:</strong> Vite 6, the React plugin, and Tailwind 4.</p>
+  <p><strong>Commands:</strong> <code>npm run dev</code> (development server),
+  <code>npm run build</code> (production build for Vercel),
+  <code>npm run preview</code> (test the production build locally).</p>
+</div>
+
+<div class="file-card">
+  <h4>dashboard/vite.config.js</h4>
+  <p><strong>What it does:</strong> configures the build. Three settings, each deliberate:</p>
+  <ul>
+    <li><strong>Plugins</strong> — React plus Tailwind v4. In v4 Tailwind is a Vite plugin,
+      which is why there is no <code>tailwind.config.js</code>.</li>
+    <li><strong><code>css.postcss: {}</code></strong> — added mid-build to fix a real
+      failure. See section 9, problem 3.</li>
+    <li><strong><code>server.host: true</code></strong> — exposes the dev server on your
+      local network so you can open the dashboard on your <em>phone</em> during
+      development, not just the laptop. Given that Mahmoud will use this on an iPhone,
+      testing the mobile layout early matters.</li>
+  </ul>
+</div>
+
+<div class="file-card">
+  <h4>dashboard/index.html</h4>
+  <p><strong>What it does:</strong> the page shell React mounts into. Most of it is the
+  PWA setup that makes "Add to Home Screen" work properly on Mahmoud's iPhone:</p>
+  <ul>
+    <li><code>viewport-fit=cover</code> — lets the app draw into the notch area.</li>
+    <li><code>apple-mobile-web-app-capable</code> — this is the tag that makes iOS open it
+      <em>full-screen with no Safari address bar</em>. Without it, "Add to Home Screen"
+      produces a bookmark rather than something that feels like an app.</li>
+    <li><code>apple-mobile-web-app-title</code> — the name under the home screen icon.</li>
+    <li><code>apple-touch-icon</code> — the icon itself.</li>
+    <li><code>link rel="manifest"</code> — the manifest below.</li>
+  </ul>
+</div>
+
+<div class="file-card">
+  <h4>dashboard/public/manifest.json + icons/</h4>
+  <p><strong>What it does:</strong> declares the app's name, colours, icons, and that it
+  should launch <code>standalone</code> (full-screen, no browser chrome).</p>
+  <p><strong>The icons</strong> are 180px (iOS home screen), 192px and 512px (the manifest
+  sizes), plus an SVG favicon. I generated them programmatically — a dark slate square
+  with a light "N" — using a small pure-Python PNG encoder, so no image library was needed.
+  <em>These are placeholders.</em> Replace them with real Nexaris branding in Phase 9.</p>
+</div>
+
+<div class="file-card">
+  <h4>dashboard/src/lib/supabase.js</h4>
+  <p><strong>What it does:</strong> the browser's database connection.</p>
+  <ul>
+    <li>Uses the <strong>anon key</strong> — never the service role key. See section 7.</li>
+    <li>Exports <code>isConfigured</code> so the UI can show a helpful setup message
+      instead of crashing when <code>.env</code> is empty, which is the state right now.</li>
+    <li>Enables <strong>Realtime</strong>, which is what will make the live feed, run
+      status, and analytics update by themselves as the agent works — no refresh, no
+      polling.</li>
+  </ul>
+</div>
+
+<div class="file-card">
+  <h4>dashboard/src/index.css</h4>
+  <p><strong>What it does:</strong> imports Tailwind and sets three things.</p>
+  <ul>
+    <li><strong>Temperature colours</strong> — hot, warm, and cold defined once under
+      <code>@theme</code>. The Hot/Warm/Cold badge appears on live feed cards, pipeline
+      cards, the approval queue and client history; defining the colours in one place means
+      every screen agrees on what "hot" looks like.</li>
+    <li><strong>Safe-area padding</strong> — keeps content clear of the iPhone notch and
+      home indicator in full-screen mode.</li>
+    <li><strong><code>-webkit-text-size-adjust</code></strong> — stops iOS Safari
+      auto-enlarging text in landscape.</li>
+  </ul>
+</div>
+
+<div class="file-card">
+  <h4>dashboard/src/main.jsx and src/App.jsx</h4>
+  <p><code>main.jsx</code> mounts React into the page — four lines, standard.</p>
+  <p><code>App.jsx</code> is the Phase 0 status page. It shows whether the dashboard built
+  correctly and whether Supabase credentials are present, then lists the 10 sections coming
+  in Phase 9 so the build order is visible. It is written responsively
+  (<code>max-w-3xl</code>, <code>sm:</code> breakpoints) because every screen in this
+  project has to work on both a laptop and a phone.</p>
+  <p><strong>Verified:</strong> production build succeeded — 70 modules, 4.26 seconds,
+  10 KB of CSS and 362 KB of JavaScript (103 KB gzipped).</p>
+</div>
+
+<h2 id="tools">6. The documentation tool</h2>
+
+<div class="file-card">
+  <h4>tools/make_pdf.py</h4>
+  <p><strong>What it does:</strong> turns a phase document from HTML into PDF.</p>
+  <p><strong>How:</strong> it drives the Chromium browser that Playwright already installs
+  for the agent, loads the HTML, and prints it to A4 with page numbers. Because Playwright
+  is already a dependency, this adds nothing new to install.</p>
+  <p><strong>Usage:</strong></p>
+  <pre><code>agent/venv/Scripts/python.exe tools/make_pdf.py docs/PHASE_0_EXPLAINED.html</code></pre>
+  <p>Every phase from here on will produce one of these.</p>
+</div>
+
+<div class="page-break"></div>
+<h2 id="concepts">7. Key concepts</h2>
+
+<h3>The two Supabase keys — the most important thing on this page</h3>
+<p>Supabase gives you two keys and they are <strong>not</strong> interchangeable.</p>
+<table>
+  <tr><th style="width:18%">Key</th><th style="width:16%">Used by</th><th>Behaviour</th></tr>
+  <tr>
+    <td><strong>anon</strong></td><td>Dashboard</td>
+    <td>Safe to ship in browser code. It is restricted by Row Level Security — the rules
+    we write in Phase 1 that say only you and Mahmoud may read or write.</td>
+  </tr>
+  <tr>
+    <td><strong>service role</strong></td><td>Agent</td>
+    <td><strong>Bypasses Row Level Security entirely.</strong> Full read/write on every
+    table. Safe only on a server you control.</td>
+  </tr>
+</table>
+<div class="warn-box">
+  <strong>If the service role key ever ends up in the dashboard</strong>, it gets compiled
+  into the JavaScript that every visitor downloads — and since your repository is public,
+  anyone could take it and read or delete your entire database. This is why the two
+  clients are separate files reading separate variables, and why <code>.env</code> is
+  gitignored. Whenever you copy keys, check twice which one you are pasting.
+</div>
+
+<h3>Why a virtual environment (<code>venv</code>)</h3>
+<p>A venv is a private Python installation for this project only. Its packages cannot
+conflict with other Python work on your machine, and <code>requirements.txt</code> lets
+the server rebuild the identical environment. That is why commands use
+<code>agent/venv/Scripts/python.exe</code> rather than plain <code>python</code>.</p>
+
+<h3>What "PWA" actually buys you</h3>
+<p>A Progressive Web App is a website that can be installed. On Mahmoud's iPhone: open in
+Safari, Share, Add to Home Screen — it then gets an icon and opens full-screen with no
+address bar. No App Store, no Apple developer account, no separate iOS codebase. One
+React app serves your laptop and his phone.</p>
+
+<h3>Why the agent and dashboard are separate</h3>
+<p>They share one Supabase database but are otherwise independent. The agent writes what
+it discovers; the dashboard reads it and writes back settings, approvals, and manual
+actions. They are deployed to different places (agent to an always-on server, dashboard to
+Vercel) and can be restarted independently — a dashboard deploy never interrupts a run.</p>
+
+<h2 id="decisions">8. Decisions I made, and why</h2>
+
+<table>
+  <tr><th style="width:22%">Decision</th><th>Reasoning</th></tr>
+  <tr>
+    <td><strong>Built in place</strong>, not inside a <code>nexaris-outreach-agent/</code> wrapper</td>
+    <td><code>03_PROJECT_STRUCTURE.md</code> shows a wrapper folder. Building in place keeps
+    the planning documents beside the code instead of in a sibling directory. Everything
+    below that level matches the spec exactly.</td>
+  </tr>
+  <tr>
+    <td><strong>Tailwind v4</strong> instead of v3</td>
+    <td>The structure document assumed v3, which needs <code>tailwind.config.js</code> and
+    <code>postcss.config.js</code>. v4 runs as a Vite plugin and needs neither — theme
+    settings live in <code>index.css</code>. Fewer files, current standard.</td>
+  </tr>
+  <tr>
+    <td><strong>Loosened version pins</strong> to <code>&gt;=</code></td>
+    <td>Forced by an unresolvable conflict — see section 9.</td>
+  </tr>
+  <tr>
+    <td><strong><code>runs</code> treated as a 9th table</strong></td>
+    <td>The schema creates it but the Phase 1 checklist lists only 8 tables. It is the data
+    source for the Run Status panel and the finish time in the daily summary, so it is
+    verified in Phase 1 alongside the others.</td>
+  </tr>
+  <tr>
+    <td><strong>Build plan wins over spec §14</strong></td>
+    <td>The two documents give slightly different orderings. The master prompt names the
+    build plan authoritative. No requirement is dropped by either ordering.</td>
+  </tr>
+  <tr>
+    <td><strong>Placeholder icons</strong></td>
+    <td>The manifest referencing missing files would be a broken build. Generated a simple
+    "N" mark to make it valid; replace with real branding in Phase 9.</td>
+  </tr>
+</table>
+
+<div class="page-break"></div>
+<h2 id="problems">9. Problems hit during the build, and how they were fixed</h2>
+
+<div class="file-card">
+  <h4>Problem 1 — Python dependencies could not be installed</h4>
+  <p><strong>Symptom:</strong> <code>ERROR: ResolutionImpossible</code>.</p>
+  <p><strong>Cause:</strong> I had pinned every package to an exact version. But
+  <code>supabase</code> and <code>anthropic</code> each require <code>httpx</code> within
+  their own version range, and my exact <code>httpx</code> pin satisfied neither.</p>
+  <p><strong>Fix:</strong> changed exact pins (<code>==</code>) to minimum pins
+  (<code>&gt;=</code>) and left <code>httpx</code> unpinned so pip can pick a version that
+  satisfies both. Documented in the file itself so it is not "fixed" back later.</p>
+</div>
+
+<div class="file-card">
+  <h4>Problem 2 — <code>npm install</code> reported success but installed nothing</h4>
+  <p><strong>Symptom:</strong> exit code 0, empty output, no <code>node_modules</code>, and
+  the build then failed on a missing package.</p>
+  <p><strong>Cause:</strong> the first run was launched in the background and did not
+  complete properly.</p>
+  <p><strong>Fix:</strong> re-ran it in the foreground — 92 packages installed in 56
+  seconds. <em>Lesson worth keeping:</em> "the command exited 0" is not proof the work
+  happened; I check the actual artifact.</p>
+</div>
+
+<div class="file-card">
+  <h4>Problem 3 — the build broke because of an unrelated project on your Desktop</h4>
+  <p><strong>Symptom:</strong> <code>`@layer base` is used but no matching `@tailwind base`
+  directive is present</code>, with a stack trace pointing at
+  <code>C:\Users\AUB\Desktop\node_modules\tailwindcss</code>.</p>
+  <p><strong>Cause:</strong> this was the interesting one. When Vite starts it searches
+  <em>upward</em> through parent folders for a PostCSS configuration. Your Desktop contains
+  a leftover <code>package.json</code>, <code>postcss.config.js</code>,
+  <code>tailwind.config.js</code> and <code>node_modules</code> from an earlier project
+  using Tailwind <strong>v3</strong>. Our project sits inside the Desktop folder, so Vite
+  walked up, found that v3 config, and tried to apply v3 processing to our v4 stylesheet.</p>
+  <p><strong>Fix:</strong> declared an empty PostCSS config inside our own
+  <code>vite.config.js</code>. That stops the upward search at our project boundary. I did
+  <strong>not</strong> touch or delete anything on your Desktop.</p>
+  <div class="note">
+    <strong>Worth knowing:</strong> those stray files will keep interfering with any
+    JavaScript project you create inside your Desktop folder. Cleaning them up eventually
+    is a good idea — but that is your call, not mine to make.
+  </div>
+</div>
+
+<div class="file-card">
+  <h4>Problem 4 — garbled characters in the agent output</h4>
+  <p><strong>Symptom:</strong> the self-check printed <code>AGENT &#65533; setup</code>.</p>
+  <p><strong>Cause:</strong> the Windows console uses an older character encoding that
+  cannot display the long dash character (—).</p>
+  <p><strong>Fix:</strong> replaced the dashes in <em>printed output</em> with plain
+  hyphens. Comments and documentation keep proper typography; only what reaches the console
+  was changed.</p>
+</div>
+
+<div class="page-break"></div>
+<h2 id="now">10. What you should do right now — step by step</h2>
+
+<div class="step">
+  <span class="step-num">1</span><h3>Test the agent</h3>
+  <p>Open a terminal in the project folder and run:</p>
+  <pre><code>agent/venv/Scripts/python.exe -m agent.main</code></pre>
+  <p><strong>Expect:</strong> the self-check box, with <code>[ok]</code> beside Python
+  runtime and <code>[--]</code> beside the three credential lines. That is a pass —
+  the three dashes are your to-do list, not errors.</p>
+</div>
+
+<div class="step">
+  <span class="step-num">2</span><h3>Test the dashboard</h3>
+  <pre><code>cd dashboard
+npm run dev</code></pre>
+  <p>Open <code>http://localhost:5173</code>. <strong>Expect:</strong> a dark page titled
+  "AI Outreach Agent", a setup status box with a green dot on Dashboard and a grey dot on
+  Supabase, and a numbered list of the 10 sections coming in Phase 9.</p>
+  <p><strong>Optional but worth doing:</strong> the terminal also prints a "Network"
+  address like <code>http://192.168.1.x:5173</code>. Open that on your phone (same Wi-Fi)
+  to confirm the mobile layout works. Stop the server with <code>Ctrl+C</code>.</p>
+</div>
+
+<div class="step">
+  <span class="step-num">2b</span><h3>If <code>npm run dev</code> fails on your machine</h3>
+  <p>Try <code>cd dashboard</code> then <code>npm install</code> once, then
+  <code>npm run dev</code> again. If it still fails, send me the error text — do not try to
+  fix it yourself, it is more likely my problem than yours.</p>
+</div>
+
+<div class="step">
+  <span class="step-num">3</span><h3>Push to GitHub</h3>
+  <p>The commit is made and waiting. Add your remote once, then push:</p>
+  <pre><code>git remote add origin https://github.com/YOUR-USERNAME/AiOutreachAgent.git
+git push -u origin main</code></pre>
+  <p>Replace <code>YOUR-USERNAME</code> with your actual GitHub username. After this
+  first time, pushing is just <code>git push</code>.</p>
+  <p class="small">I never run <code>git push</code> myself — you asked to be the one who
+  decides what leaves your machine, and I have recorded that.</p>
+</div>
+
+<div class="step">
+  <span class="step-num">4</span><h3>Create the Supabase project <span class="tag tag-block">blocks phase 1</span></h3>
+  <ol>
+    <li>Go to <strong>supabase.com</strong> and sign up (free — you are well within the
+      free tier with 2 users).</li>
+    <li>Create a new project. Give it a name like <code>nexaris-outreach</code>.</li>
+    <li>Choose a database password and <strong>save it somewhere safe</strong> — it is
+      shown once.</li>
+    <li>Pick the region closest to Lebanon (Frankfurt <code>eu-central-1</code> is
+      usually the best latency).</li>
+    <li>Wait about two minutes for it to provision.</li>
+    <li>Go to <strong>Project Settings → API</strong> and copy three values:
+      <ul>
+        <li>Project URL</li>
+        <li><code>anon</code> / <code>public</code> key</li>
+        <li><code>service_role</code> key (click to reveal — this is the powerful one)</li>
+      </ul>
+    </li>
+  </ol>
+  <div class="warn-box">
+    <strong>Send them to me in this chat, not into a file.</strong> Do not paste keys into
+    any file yourself yet — I will put each one in the correct place. The
+    <code>service_role</code> key must go only into <code>agent/.env</code>, never into the
+    dashboard, because your repository is public.
+  </div>
+</div>
+
+<div class="step">
+  <span class="step-num">5</span><h3>Answer my open questions (as many as you can)</h3>
+  <p>Listed in section 12. The two that matter soonest are the WhatsApp provider and
+  whether you have a Claude API key yet. "I don't know" is a fine answer — I will
+  recommend a default and flag it.</p>
+</div>
+
+<div class="step">
+  <span class="step-num">6</span><h3>Tell me to start Phase 1</h3>
+  <p>Once you have tested both apps and have the Supabase details, say the word. Phase 1
+  creates the database: I walk you through running the schema table by table, set up the
+  security rules, build the data-access layer, and seed your default settings.</p>
+</div>
+
+<h2 id="future">11. What you need before each future phase</h2>
+
+<table>
+  <tr><th style="width:12%">Phase</th><th style="width:40%">What it builds</th><th>What you need ready</th></tr>
+  <tr><td><strong>1</strong></td><td>Database schema</td><td>Supabase project + all three keys</td></tr>
+  <tr><td><strong>2</strong></td><td>Account pool, sessions, health, scheduler</td><td>Nothing — proxies are not needed yet</td></tr>
+  <tr><td><strong>3</strong></td><td>LinkedIn + Instagram discovery</td><td>Login details for the 3 accounts</td></tr>
+  <tr><td><strong>4</strong></td><td>Claude analysis and scoring</td><td>Claude API key from console.anthropic.com, with a little credit</td></tr>
+  <tr><td><strong>5</strong></td><td>Message generation</td><td>Nothing new — but you review the messages</td></tr>
+  <tr><td><strong>6</strong></td><td>Approval workflow</td><td>Nothing</td></tr>
+  <tr><td><strong>7</strong></td><td>Sending and routing</td><td>WhatsApp Business API account (Twilio or 360dialog), or a decision on the informal method</td></tr>
+  <tr><td><strong>8</strong></td><td>CRM, follow-up, notifications</td><td>Your and Mahmoud's WhatsApp numbers</td></tr>
+  <tr><td><strong>9</strong></td><td>The full dashboard</td><td>Real Nexaris icon/branding if you want it</td></tr>
+  <tr><td><strong>10</strong></td><td>Deploy and warm-up</td><td>3 sticky residential proxy IPs, a server (Oracle free tier or ~$5 Hetzner VPS), a Vercel account</td></tr>
+</table>
+
+<div class="note">
+  You do <strong>not</strong> need proxies or a server until Phase 10. Everything before
+  that is built and tested locally at low volume, which is both free and safer for your
+  accounts.
+</div>
+
+<h2 id="open">12. Open questions I need answers to</h2>
+
+<table>
+  <tr><th style="width:6%">ID</th><th style="width:38%">Question</th><th style="width:10%">Needed by</th><th>What I will assume otherwise</th></tr>
+  <tr><td><strong>Q1</strong></td><td>WhatsApp sending: Twilio, 360dialog, or the informal method?</td><td>Phase 7</td><td>Build behind a swappable interface; Twilio as the reference</td></tr>
+  <tr><td><strong>Q2</strong></td><td>Same provider for notifications as for sending?</td><td>Phase 8</td><td>Same provider, separate configuration</td></tr>
+  <tr><td><strong>Q3</strong></td><td>How should LinkedIn replies be detected?</td><td>Phase 8</td><td>Check the inbox on each daily run</td></tr>
+  <tr><td><strong>Q4</strong></td><td>Should any alert go to only one number?</td><td>Phase 8</td><td>All five to both, except the approval reminder to Mahmoud only</td></tr>
+  <tr><td><strong>Q5</strong></td><td>Which niche and country for the first real run?</td><td>Phase 10</td><td>Left blank for you to set from the dashboard</td></tr>
+  <tr><td><strong>Q6</strong></td><td>Is the Supabase project created?</td><td>Phase 1</td><td>Blocking — cannot proceed without it</td></tr>
+  <tr><td><strong>Q7</strong></td><td>Do you have a Claude API key?</td><td>Phase 4</td><td>Blocking at Phase 4</td></tr>
+</table>
+
+<hr style="margin:34px 0 14px;border:none;border-top:1px solid var(--line)">
+<p class="small">
+  Phase 0 of 11 complete · Commit <code>b9315c4</code> · Generated 22 July 2026<br>
+  Source: <code>docs/PHASE_0_EXPLAINED.html</code> · Rendered by <code>tools/make_pdf.py</code><br>
+  Tracking document: <code>REQUIREMENTS_COVERAGE.md</code> · Phase tracker: <code>PROGRESS.md</code>
+</p>
+
+</body>
+</html>
