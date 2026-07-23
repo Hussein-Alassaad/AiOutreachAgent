@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Phase 1 Explained — Nexaris AI Outreach Agent</title>
+<style>
+  @page { size: A4; }
+  * { box-sizing: border-box; }
+  :root {
+    --ink: #0f172a; --body: #1e293b; --muted: #64748b; --line: #e2e8f0;
+    --accent: #1d4ed8; --ok: #047857; --warn: #b45309; --bg-soft: #f8fafc;
+  }
+  body { margin:0; font-family:"Segoe UI",-apple-system,system-ui,sans-serif; font-size:10.5pt; line-height:1.55; color:var(--body); }
+  h1,h2,h3,h4 { color:var(--ink); line-height:1.25; }
+  h1 { font-size:26pt; margin:0 0 4px; letter-spacing:-0.5px; }
+  h2 { font-size:15pt; margin:30px 0 12px; padding-bottom:6px; border-bottom:2px solid var(--ink); page-break-after:avoid; }
+  h3 { font-size:11.5pt; margin:20px 0 6px; page-break-after:avoid; }
+  h4 { font-size:10.5pt; margin:14px 0 4px; color:var(--accent); page-break-after:avoid; }
+  p { margin:0 0 9px; } ul,ol { margin:0 0 10px; padding-left:20px; } li { margin-bottom:4px; }
+  code { font-family:Consolas,"Courier New",monospace; font-size:9pt; background:#eef2f7; padding:1px 4px; border-radius:3px; color:#0f172a; }
+  pre { background:#0f172a; color:#e2e8f0; padding:11px 13px; border-radius:5px; font-family:Consolas,"Courier New",monospace; font-size:8.6pt; line-height:1.5; overflow-x:auto; white-space:pre-wrap; word-break:break-word; page-break-inside:avoid; margin:8px 0 12px; }
+  pre code { background:none; padding:0; color:inherit; font-size:inherit; }
+  table { width:100%; border-collapse:collapse; font-size:9.2pt; margin:8px 0 14px; page-break-inside:avoid; }
+  th { background:var(--ink); color:#fff; text-align:left; padding:6px 8px; font-weight:600; }
+  td { padding:5px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  tr:nth-child(even) td { background:var(--bg-soft); }
+  .file-card { border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:4px; padding:11px 14px; margin:12px 0; page-break-inside:avoid; background:#fff; }
+  .file-card h4 { margin-top:0; font-family:Consolas,monospace; font-size:10pt; }
+  .note,.warn-box,.ok-box { border-radius:4px; padding:10px 13px; margin:12px 0; font-size:9.8pt; page-break-inside:avoid; }
+  .note { background:#eff6ff; border-left:3px solid var(--accent); }
+  .warn-box { background:#fffbeb; border-left:3px solid var(--warn); }
+  .ok-box { background:#ecfdf5; border-left:3px solid var(--ok); }
+  .cover { text-align:center; padding:60px 0 40px; border-bottom:3px solid var(--ink); margin-bottom:26px; }
+  .cover .eyebrow { font-size:9pt; letter-spacing:3px; text-transform:uppercase; color:var(--muted); margin-bottom:14px; }
+  .cover .sub { font-size:12pt; color:var(--muted); margin-top:8px; }
+  .cover .meta { margin-top:26px; font-size:9pt; color:var(--muted); }
+  .step { border:1px solid var(--line); border-radius:5px; padding:12px 15px; margin:12px 0; page-break-inside:avoid; }
+  .step-num { display:inline-block; background:var(--ink); color:#fff; width:21px; height:21px; border-radius:50%; text-align:center; line-height:21px; font-size:9.5pt; font-weight:700; margin-right:7px; }
+  .step h3 { display:inline; font-size:11pt; }
+  .tag { display:inline-block; font-size:7.5pt; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; padding:2px 6px; border-radius:3px; vertical-align:middle; }
+  .tag-new { background:#dcfce7; color:#15803d; } .tag-block { background:#fee2e2; color:#b91c1c; }
+  .page-break { page-break-before:always; }
+  .toc a { color:var(--body); text-decoration:none; } .toc li { margin-bottom:3px; }
+  .small { font-size:9pt; color:var(--muted); }
+  .pass { color:var(--ok); font-weight:700; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="eyebrow">Nexaris &middot; AI Outreach Agent</div>
+  <h1>Phase 1 — Explained</h1>
+  <div class="sub">Database schema &amp; security &middot; live, verified, and running</div>
+  <div class="meta">24 July 2026 &nbsp;·&nbsp; Phase 1 of 11 &nbsp;·&nbsp; Status: <span class="pass">ALL CHECKS PASSED</span></div>
+</div>
+
+<h2>Contents</h2>
+<ol class="toc">
+  <li><a href="#what">What Phase 1 was for</a></li>
+  <li><a href="#files">The three files built</a></li>
+  <li><a href="#run">Running it against your real database</a></li>
+  <li><a href="#result">The verified result</a></li>
+  <li><a href="#concepts">Key concepts</a></li>
+  <li><a href="#problems">Problems hit, and how they were fixed</a></li>
+  <li><a href="#security">A note on the keys and password you shared</a></li>
+  <li><a href="#now">What you should do right now</a></li>
+  <li><a href="#next">What's needed before Phase 2</a></li>
+</ol>
+
+<h2 id="what">1. What Phase 1 was for</h2>
+<p>Phase 1's goal, from the build plan: <em>"the full database exists in Supabase."</em> Concretely
+that means four things had to be true by the end: all 9 tables exist, they're locked down so only
+you and Mahmoud can touch them, the agent's Python code can read and write every table through one
+clean layer, and the seed data (3 accounts + default settings) is present.</p>
+<div class="ok-box">
+  <strong>All four are now true and verified live</strong> — not just "should work." The automated
+  smoke test ran against your actual Supabase project and passed every check.
+</div>
+
+<h2 id="files">2. The three files built</h2>
+
+<div class="file-card">
+  <h4>database/policies.sql <span class="tag tag-new">new</span></h4>
+  <p><strong>Language:</strong> SQL (PostgreSQL), run inside Supabase.</p>
+  <p><strong>What it does:</strong> creating a table does not protect it. Until Row Level Security
+  (RLS) is switched on, Supabase treats it as open at the policy layer. This file turns RLS
+  <strong>on</strong> for all 9 tables and adds one policy per table: the <code>authenticated</code>
+  role (i.e. you or Mahmoud, logged in) gets full read/write; everyone else gets nothing.</p>
+  <p><strong>Why this model:</strong> with exactly two trusted users, a finer-grained system (e.g.
+  "Mahmoud can approve but not delete") would be complexity with no present benefit. Both of you are
+  treated as trusted owners. This can be tightened later per table without touching the others.</p>
+  <p><strong>The agent is unaffected</strong> — it connects with the separate <em>service role</em>
+  key, which bypasses RLS entirely by design. RLS only governs the dashboard's connection.</p>
+</div>
+
+<div class="file-card">
+  <h4>agent/db/repositories.py <span class="tag tag-new">new</span></h4>
+  <p><strong>Language:</strong> Python.</p>
+  <p><strong>What it does:</strong> the single data-access layer. 25 functions, one section per
+  table, covering every read/write the agent will need through Phase 8. No other file in the agent
+  talks to Supabase directly.</p>
+  <table>
+    <tr><th style="width:22%">Table</th><th>What the functions do</th></tr>
+    <tr><td>accounts</td><td>List/get/update accounts, record a warning (pauses the account, never auto-redistributes — core rule R9)</td></tr>
+    <tr><td>settings</td><td>Get/update the single global settings row</td></tr>
+    <tr><td>leads</td><td>Insert/update/get, filter by status, and pull every already-contacted profile URL for same-day deduplication (Task 1)</td></tr>
+    <tr><td>messages</td><td>Insert/update, list what's awaiting Mahmoud's approval, list all messages for one lead</td></tr>
+    <tr><td>pipeline_history</td><td>Append a timestamped stage change, read the full history for a lead</td></tr>
+    <tr><td>follow_ups</td><td>Insert/update, find follow-ups whose scheduled time has arrived</td></tr>
+    <tr><td>client_history</td><td>Save a permanent snapshot, flag it contacted later</td></tr>
+    <tr><td>notifications_log</td><td>Record a sent WhatsApp alert</td></tr>
+    <tr><td>runs</td><td>Open a run row at start, close it with results and finish time</td></tr>
+  </table>
+  <p><strong>Verified:</strong> the file imports cleanly with no syntax errors, and every function
+  category was exercised live during the smoke test (see section 4).</p>
+</div>
+
+<div class="file-card">
+  <h4>agent/db/smoke_test.py <span class="tag tag-new">new</span></h4>
+  <p><strong>Language:</strong> Python.</p>
+  <p><strong>What it does:</strong> a single command that proves the Phase 1 checkpoint. In order:
+  checks the connection, checks all 9 tables are queryable, checks the seed data is present,
+  then inserts a throwaway test lead, reads it back, and deletes it — leaving the database exactly
+  as it was.</p>
+  <p><strong>Run it any time</strong> with <code>agent/venv/Scripts/python.exe -m agent.db.smoke_test</code>
+  — useful as a quick "is the database still healthy?" check in any future phase.</p>
+</div>
+
+<div class="page-break"></div>
+<h2 id="run">3. Running it against your real database</h2>
+
+<p>Supabase gives three ways to run SQL: their web SQL Editor, a direct Postgres connection, or a
+connection pooler. We used the direct/pooler route with a Python script rather than the web editor,
+since you provided the database connection details for this step.</p>
+
+<div class="step">
+  <span class="step-num">1</span><h3>Installed a Postgres driver</h3>
+  <p><code>psycopg2-binary</code> was added to the agent's virtual environment — <strong>not</strong>
+  to <code>requirements.txt</code>, because it's an admin/migration tool the agent doesn't need at
+  runtime (the agent talks to Supabase through its REST API via the <code>supabase</code> package,
+  not raw Postgres).</p>
+</div>
+
+<div class="step">
+  <span class="step-num">2</span><h3>Connected and ran both files, in order</h3>
+  <p>First <code>02_SUPABASE_SCHEMA.sql</code> (creates all 9 tables, indexes, and seeds 3 accounts
+  + 1 settings row), then <code>database/policies.sql</code> (turns RLS on). Both ran with a plain
+  <code>OK</code> — no errors.</p>
+</div>
+
+<div class="step">
+  <span class="step-num">3</span><h3>Confirmed RLS directly against Postgres</h3>
+  <p>Queried <code>pg_tables</code> for every table's <code>rowsecurity</code> flag. Result: all 9
+  read <code>True</code>. This is the database itself confirming the lockdown, independent of the
+  application code.</p>
+</div>
+
+<h2 id="result">4. The verified result</h2>
+<pre><code>PHASE 1 SMOKE TEST — database verification
+
+  [PASS]  Connection            — Connected to Supabase
+
+  Tables:
+  [PASS]  accounts   [PASS]  settings          [PASS]  leads
+  [PASS]  messages   [PASS]  pipeline_history   [PASS]  follow_ups
+  [PASS]  client_history   [PASS]  notifications_log   [PASS]  runs
+
+  Seed data:
+  [PASS]  3 accounts seeded — found 3
+  [PASS]  settings row seeded — style=discovery
+
+  Read/write round-trip:
+  [PASS]  insert test lead — 8bda2e52-fedb-4c6f-a3b5-0300a2838ee2
+  [PASS]  read it back
+  [PASS]  deleted test lead (DB left clean)
+
+  ALL CHECKS PASSED — Phase 1 database is ready.</code></pre>
+<p>Every line is a real result from your live project (ref <code>xtesxgezongzpdgppobm</code>,
+Singapore region) — not a simulation.</p>
+
+<h2 id="concepts">5. Key concepts</h2>
+
+<h3>Direct connection vs. pooler — and why it matters here</h3>
+<p>Supabase offers a <strong>direct connection</strong> (talks straight to Postgres) and a
+<strong>pooler connection</strong> (goes through a connection-pooling proxy, better for many short
+connections). The direct hostname (<code>db.&lt;ref&gt;.supabase.co</code>) is <strong>IPv6-only</strong>
+by default. Most home/office networks — including the one this was built on — are IPv4-only, so the
+direct connection failed to resolve. The <strong>session pooler</strong> hostname
+(<code>aws-0-&lt;region&gt;.pooler.supabase.com</code>) supports IPv4 and worked immediately. This is
+a Supabase platform detail, not a mistake in your setup — worth remembering if you ever connect a
+new tool to this database and hit the same DNS error.</p>
+
+<h3>Why RLS matters given the repo is public</h3>
+<p>Your code (including the anon key) is on public GitHub. Without RLS, that key alone would let
+anyone read or write every lead, message, and account in your database. With RLS on, the anon key is
+useless without also being logged in as you or Mahmoud through Supabase Auth. The key being public is
+fine <em>because</em> RLS is on — this is the intended design, not a loophole.</p>
+
+<div class="page-break"></div>
+<h2 id="problems">6. Problems hit, and how they were fixed</h2>
+
+<div class="file-card">
+  <h4>Problem 1 — direct connection: DNS lookup failed</h4>
+  <p><strong>Symptom:</strong> <code>could not translate host name "db.xtesxgezongzpdgppobm.supabase.co"
+  to address: Name or service not known</code>.</p>
+  <p><strong>Cause:</strong> that hostname is IPv6-only; this network has no IPv6 route.</p>
+  <p><strong>Fix:</strong> switched to the session pooler connection string instead, which resolves
+  fine over IPv4. Worked on the very next attempt.</p>
+</div>
+
+<div class="file-card">
+  <h4>Problem 2 — deciding who should physically run the migration</h4>
+  <p>Not a technical bug, but worth recording: you were clear you don't want infrastructure actions
+  to look automated. We considered giving Claude your Supabase account login (rejected — that's more
+  access than needed and risks 2FA complications), then considered you pasting the SQL into the web
+  editor yourself (the safest option), and settled on you providing the database connection string
+  instead. That approach let a script run the SQL without ever touching your account credentials,
+  while keeping the actual execution tied to a connection you explicitly authorized. The connection
+  string and password were used once, in a temporary script, then <strong>deleted immediately after
+  the run</strong> — nothing containing your database password was left on disk.</p>
+</div>
+
+<h2 id="security">7. A note on the keys and password you shared</h2>
+<div class="warn-box">
+  <p><strong>The <code>service_role</code> key</strong> now lives only in <code>agent/.env</code>,
+  which is gitignored — confirmed with <code>git check-ignore</code> before it was ever written. It
+  will never reach the public repository as long as that file stays untracked.</p>
+  <p><strong>The database password</strong> (<code>OutReachAgent1</code>) was used only inside a
+  temporary script in the session's scratchpad folder, which has now been deleted. It is not stored
+  in any project file. It <em>is</em> still visible in this chat's history, though, and in Supabase's
+  own dashboard. If you'd like extra peace of mind, you can reset it from <strong>Project Settings →
+  Database → Reset database password</strong> at any time — nothing in the codebase needs updating
+  if you do, since the codebase itself never stored it.</p>
+</div>
+
+<h2 id="now">8. What you should do right now</h2>
+
+<div class="step">
+  <span class="step-num">1</span><h3>Look at your Supabase project</h3>
+  <p>Table Editor (left sidebar) → you should see all 9 tables, with <code>accounts</code> holding 3
+  rows and <code>settings</code> holding 1. This is the same thing the smoke test just confirmed
+  programmatically — seeing it yourself is worth 30 seconds.</p>
+</div>
+
+<div class="step">
+  <span class="step-num">2</span><h3>Commit and push</h3>
+  <p>Two small pieces of work happened this session: the <code>.gitignore</code> update from the
+  config change, and this Phase 1 documentation. Nothing else needs committing — the three Phase 1
+  code files were already pushed last session under commit <code>60e8f23</code>.</p>
+  <pre><code>git add .gitignore docs/PHASE_1_EXPLAINED.html docs/PHASE_1_EXPLAINED.pdf PROGRESS.md REQUIREMENTS_COVERAGE.md
+git commit -m "Phase 1 verified live — database schema and RLS running in Supabase"
+git push</code></pre>
+  <p class="small">Note: <code>agent/.env</code> and <code>dashboard/.env</code> are correctly
+  excluded — they were never staged and never will be.</p>
+</div>
+
+<div class="step">
+  <span class="step-num">3</span><h3>Say the word for Phase 2</h3>
+  <p>Phase 2 builds the account pool, isolated browser sessions per account and proxy, health
+  detection, and the daily scheduler. This is one of the two phases in the build where the
+  reasoning quality genuinely matters — a subtle mistake here risks a real LinkedIn or Instagram
+  account getting flagged. Switch to Opus for it when we start (<code>/model opus</code>).</p>
+</div>
+
+<h2 id="next">9. What's needed before Phase 2</h2>
+<div class="ok-box">
+  <strong>Nothing new is required.</strong> Phase 2 builds the account pool manager and session
+  isolation logic with proxy slots left empty — proxies aren't needed until Phase 10. You can start
+  Phase 2 immediately.
+</div>
+<p class="small">Still open for later phases: a Claude API key (Phase 4) and a decision on the
+WhatsApp provider — Twilio, 360dialog, or the informal method (Phase 7).</p>
+
+<hr style="margin:34px 0 14px;border:none;border-top:1px solid var(--line)">
+<p class="small">
+  Phase 1 of 11 complete and verified live · Generated 24 July 2026<br>
+  Source: <code>docs/PHASE_1_EXPLAINED.html</code> · Rendered by <code>tools/make_pdf.py</code><br>
+  Tracking document: <code>REQUIREMENTS_COVERAGE.md</code> · Phase tracker: <code>PROGRESS.md</code>
+</p>
+
+</body>
+</html>

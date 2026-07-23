@@ -10,10 +10,11 @@ phase is not closed until all of its rows are marked.
 **Status legend:** `TODO` = not started · `WIP` = in progress · `CODE` = code written, not
 yet verified live · `DONE` = built and tested by Hussein · `N/A` = deliberately out of scope
 
-**Phase 1 progress (2026-07-23):** `database/policies.sql` (RLS), `agent/db/repositories.py`
-(25 functions, all 9 tables), and `agent/db/smoke_test.py` are written and import-clean.
-The live run + verify in Supabase is blocked on Hussein's keys (Q6). Settings rows
-S1–S8, S14 get their storage from the schema now; their dashboard UI is Phase 9.
+**Phase 1 — DONE (2026-07-24).** `database/policies.sql`, `agent/db/repositories.py`, and
+`agent/db/smoke_test.py` are built and verified live against the real Supabase project
+(ref `xtesxgezongzpdgppobm`). All 9 tables exist with RLS enabled; seed data confirmed;
+smoke test passed end-to-end. Q6 resolved. Settings rows S1–S8, S14 have their storage in
+place; their dashboard UI is still Phase 9.
 
 ---
 

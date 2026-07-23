@@ -3,9 +3,8 @@
 Updated after every phase. If a session runs out of context, point the next one at
 this file plus `00_MASTER_PROMPT.md` and it can pick up without losing anything.
 
-**Current state:** Phase 1 code built; blocked on Supabase keys for the live run/verify step.
-**Next:** Hussein creates the Supabase project and sends the 3 keys → we run both SQL
-files, then `python -m agent.db.smoke_test` proves the checkpoint.
+**Current state:** Phase 1 complete and verified live against the real Supabase project.
+**Next:** Phase 2 — agent core: account pool & browser sessions.
 
 ---
 
@@ -13,8 +12,8 @@ files, then `python -m agent.db.smoke_test` proves the checkpoint.
 
 | Phase | Name | Status |
 |-------|------|--------|
-| 0 | Project setup & foundations | ✅ Built — awaiting confirmation |
-| 1 | Database schema | 🟡 Code built — blocked on Supabase keys for live verify |
+| 0 | Project setup & foundations | ✅ Complete |
+| 1 | Database schema | ✅ Complete — verified live in Supabase |
 | 2 | Agent core: account pool & sessions | ⬜ Not started |
 | 3 | Discovery: LinkedIn & Instagram | ⬜ Not started |
 | 4 | Claude analysis pipeline | ⬜ Not started |
@@ -107,11 +106,14 @@ cd dashboard && npm run dev
   tables, seed data (3 accounts + settings), and a self-cleaning write/read/delete.
   Verified: fails gracefully with a clear message when keys are absent.
 
-**Blocked (needs Hussein):** create the Supabase project, put the 3 keys in
-`agent/.env` + `dashboard/.env`, run `02_SUPABASE_SCHEMA.sql` then
-`database/policies.sql` in the Supabase SQL editor. Then the smoke test verifies it.
+**Live verification (2026-07-24):** Supabase project created (ref `xtesxgezongzpdgppobm`,
+Singapore). Both SQL files run successfully against the real database via a session-pooler
+connection (the direct/IPv6 connection failed to resolve on this network — documented in
+the Phase 1 PDF). `python -m agent.db.smoke_test` — **ALL CHECKS PASSED**: connection,
+all 9 tables, seed data (3 accounts + settings), and a clean insert/read/delete round-trip.
 
-**Phase 1 PDF:** held until the live-verify step is done, so it's one complete doc.
+**Phase 1 PDF:** `docs/PHASE_1_EXPLAINED.pdf` — covers all 3 files, the migration process,
+the IPv6/pooler issue, and a security note on the temporary use of the DB password.
 
 ---
 
