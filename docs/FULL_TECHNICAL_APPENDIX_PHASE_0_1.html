@@ -1,0 +1,3516 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Full Technical Appendix — Phases 0 &amp; 1 — Nexaris AI Outreach Agent</title>
+<style>
+  @page { size: A4; }
+  * { box-sizing: border-box; }
+  :root {
+    --ink:#0f172a; --body:#1e293b; --muted:#64748b; --line:#e2e8f0;
+    --accent:#1d4ed8; --ok:#047857; --warn:#b45309; --bg-soft:#f8fafc; --purple:#7c3aed;
+  }
+  body { margin:0; font-family:"Segoe UI",-apple-system,system-ui,sans-serif; font-size:10.2pt; line-height:1.55; color:var(--body); }
+  h1,h2,h3,h4 { color:var(--ink); line-height:1.25; }
+  h1 { font-size:24pt; margin:0 0 4px; letter-spacing:-0.5px; }
+  h2 { font-size:14.5pt; margin:30px 0 12px; padding-bottom:6px; border-bottom:2px solid var(--ink); page-break-after:avoid; }
+  h2.section-h2 { margin-top:36px; page-break-before:always; }
+  h3 { font-size:11pt; margin:18px 0 6px; page-break-after:avoid; color:var(--accent); }
+  p { margin:0 0 9px; } ul,ol { margin:0 0 10px; padding-left:20px; } li { margin-bottom:4px; }
+  code { font-family:Consolas,"Courier New",monospace; font-size:8.5pt; background:#eef2f7; padding:1px 4px; border-radius:3px; color:#0f172a; }
+  pre { background:#0f172a; color:#e2e8f0; padding:10px 12px; border-radius:5px; font-family:Consolas,"Courier New",monospace; font-size:7.6pt; line-height:1.45; overflow-x:auto; white-space:pre-wrap; word-break:break-word; margin:6px 0 4px; }
+  pre code { background:none; padding:0; color:inherit; font-size:inherit; }
+  table { width:100%; border-collapse:collapse; font-size:9pt; margin:8px 0 14px; page-break-inside:avoid; }
+  th { background:var(--ink); color:#fff; text-align:left; padding:6px 8px; font-weight:600; }
+  td { padding:5px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  tr:nth-child(even) td { background:var(--bg-soft); }
+  .concept { border:1px solid var(--line); border-left:3px solid var(--purple); border-radius:4px; padding:10px 13px; margin:10px 0; page-break-inside:avoid; background:#fff; }
+  .concept h4 { margin:0 0 4px; color:var(--purple); font-size:9.8pt; }
+  .note,.ok-box { border-radius:4px; padding:10px 13px; margin:12px 0; font-size:9.5pt; page-break-inside:avoid; }
+  .note { background:#eff6ff; border-left:3px solid var(--accent); }
+  .ok-box { background:#ecfdf5; border-left:3px solid var(--ok); }
+  .cover { text-align:center; padding:56px 0 36px; border-bottom:3px solid var(--ink); margin-bottom:26px; }
+  .cover .eyebrow { font-size:9pt; letter-spacing:3px; text-transform:uppercase; color:var(--muted); margin-bottom:14px; }
+  .cover .sub { font-size:12pt; color:var(--muted); margin-top:8px; }
+  .cover .meta { margin-top:22px; font-size:9pt; color:var(--muted); }
+  .page-break { page-break-before:always; }
+  .toc a { color:var(--body); text-decoration:none; } .toc li { margin-bottom:3px; }
+  .toc .part { font-weight:700; margin-top:10px; color:var(--ink); }
+  .small { font-size:9pt; color:var(--muted); }
+  .file-block { page-break-inside:avoid; margin-bottom:14px; }
+  .file-header { display:flex; justify-content:space-between; align-items:baseline; background:var(--ink); color:#fff; padding:6px 10px; border-radius:4px 4px 0 0; font-family:Consolas,monospace; }
+  .file-path { font-size:9.3pt; font-weight:700; }
+  .file-meta { font-size:8pt; color:#94a3b8; }
+  .filenote { font-size:8.8pt; color:var(--muted); font-style:italic; margin:4px 0 4px 2px; }
+  .file-block pre { border-radius:0 0 5px 5px; margin-top:0; }
+  .diagram-wrap { text-align:center; margin:20px 0; }
+  .legend { display:flex; gap:18px; justify-content:center; margin-top:10px; font-size:8.5pt; color:var(--muted); flex-wrap:wrap; }
+  .legend span { display:inline-flex; align-items:center; gap:5px; }
+  .swatch { width:11px; height:11px; border-radius:2px; display:inline-block; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="eyebrow">Nexaris &middot; AI Outreach Agent</div>
+  <h1>Full Technical Appendix</h1>
+  <div class="sub">Phases 0 &amp; 1 — every document, every line of code, every concept, and the system as built</div>
+  <div class="meta">24 July 2026 &nbsp;·&nbsp; 58 files reproduced in full &nbsp;·&nbsp; Standalone reference</div>
+</div>
+
+<h2>Contents</h2>
+<ol class="toc">
+  <li class="part">Part A — Concepts implemented in Phases 0 &amp; 1</li>
+  <li><a href="#concepts">A. All concepts, condensed</a></li>
+  <li class="part">Part B — Every document and every line of code</li>
+  <li><a href="#b1">B1. Planning &amp; reference documents</a></li>
+  <li><a href="#b2">B2. Database (SQL)</a></li>
+  <li><a href="#b3">B3. Backend — Python agent: core</a></li>
+  <li><a href="#b4">B4. Backend — Python agent: database layer</a></li>
+  <li><a href="#b5">B5. Backend — Python agent: stub modules</a></li>
+  <li><a href="#b6">B6. Backend — package init files</a></li>
+  <li><a href="#b7">B7. Frontend — dashboard configuration</a></li>
+  <li><a href="#b8">B8. Frontend — dashboard application code</a></li>
+  <li><a href="#b9">B9. Tooling</a></li>
+  <li class="part">Part C — Visual workflow</li>
+  <li><a href="#workflow">C. How everything connects</a></li>
+</ol>
+
+<div class="page-break"></div>
+<h2 id="concepts">A. All concepts implemented in Phases 0 &amp; 1, condensed</h2>
+<p>
+Each concept below was applied for real somewhere in the files that follow in Part B — this
+is the "why," collected in one place before the "what."
+</p>
+
+<h3>Phase 0 concepts</h3>
+<div class="concept"><h4>Version control (Git)</h4><p>Every change tracked as a chain of commits; a staging area lets a commit be built deliberately; a local repo and the GitHub remote are separate, connected only by an explicit <code>origin</code> pointer.</p></div>
+<div class="concept"><h4>Secret hygiene before first commit</h4><p><code>.gitignore</code> was written before anything else specifically because this repository is public — a committed secret is recoverable from history forever, even after later deletion.</p></div>
+<div class="concept"><h4>Python virtual environments</h4><p>An isolated, project-scoped copy of the interpreter and its packages, so this project's dependencies can never collide with any other Python project on the machine.</p></div>
+<div class="concept"><h4>Dependency resolution</h4><p>Exact version pins (<code>==</code>) left no room for two packages' conflicting sub-requirements to be reconciled; minimum pins (<code>&gt;=</code>) gave the solver room to find a version that satisfies everyone.</p></div>
+<div class="concept"><h4>Python packages and modules</h4><p><code>__init__.py</code> marks a folder as importable; dot-notation imports (<code>agent.db.repositories</code>) walk that package structure.</p></div>
+<div class="concept"><h4>Centralised configuration</h4><p>Exactly one file (<code>config.py</code>) reads environment variables; every other module asks it for a named value, never the OS directly.</p></div>
+<div class="concept"><h4>Node.js / npm / package.json</h4><p>The JavaScript equivalent of the Python venv + requirements.txt pairing — an isolated runtime and a declared, reproducible dependency list.</p></div>
+<div class="concept"><h4>Build tools (Vite)</h4><p>Transforms JSX/ES-module source into plain JS/CSS/HTML a browser can run; instant reload in development, a fixed optimised bundle for production.</p></div>
+<div class="concept"><h4>Component-based UI (React) &amp; SPA</h4><p>The interface is built from small functions returning markup (JSX); one HTML page loads once, and JavaScript swaps content in afterward without full reloads.</p></div>
+<div class="concept"><h4>Utility-first CSS (Tailwind v4)</h4><p>Styling composed from small utility classes in markup; v4's plugin-based integration removed the separate config files earlier versions required.</p></div>
+<div class="concept"><h4>Progressive Web Apps</h4><p>A manifest, icon set, and iOS-specific meta tags make a website installable and launchable full-screen from a phone's home screen.</p></div>
+<div class="concept"><h4>Binary file formats (PNG)</h4><p>Icons were generated with a hand-written PNG encoder — signature bytes, chunked structure (IHDR/IDAT/IEND), CRC32 checksums, zlib-compressed pixel data — with zero external image libraries.</p></div>
+<div class="concept"><h4>Backend-as-a-Service</h4><p>Supabase supplies a managed Postgres database, an auto-generated REST API over it, authentication, and a realtime layer, replacing a hand-built backend server.</p></div>
+<div class="concept"><h4>JWTs and least-privilege API keys</h4><p>Both Supabase keys are signed JSON Web Tokens declaring a role; the low-privilege anon key is safe to expose publicly only because Row Level Security constrains what it can do, while the powerful service-role key is confined to the trusted server-side agent only.</p></div>
+
+<h3>Phase 1 concepts</h3>
+<div class="concept"><h4>Relational database structure</h4><p>Nine tables, each one entity, related to one another rather than duplicating data.</p></div>
+<div class="concept"><h4>SQL DDL vs DML</h4><p><code>CREATE TABLE</code> statements define structure (DDL); the day-to-day reads and writes the agent performs are DML, generated for us by the client library.</p></div>
+<div class="concept"><h4>UUID primary keys</h4><p>128-bit identifiers generated independently by any process with no central coordination and negligible collision risk — chosen over auto-incrementing integers because both the agent and dashboard can create rows concurrently.</p></div>
+<div class="concept"><h4>Foreign keys &amp; referential integrity</h4><p><code>references</code> constraints, with explicit <code>on delete cascade</code> / <code>on delete set null</code> behaviour, so the database itself refuses to let a relationship point at nothing.</p></div>
+<div class="concept"><h4>JSONB columns</h4><p>Variable-shaped data (a lead's weak-points list) stored as a queryable JSON document inside one column, rather than forcing a rigid extra table for a simple list.</p></div>
+<div class="concept"><h4>Indexes</h4><p>Separate lookup structures built on the columns queried most often (status, temperature, platform), trading a little storage/write cost for much faster reads.</p></div>
+<div class="concept"><h4>Row Level Security</h4><p>Enabling RLS flips a table's default from open to closed; explicit policies then grant back exactly the access needed — here, full access for any <code>authenticated</code> user, none for anyone else. The service-role key bypasses this layer entirely by design.</p></div>
+<div class="concept"><h4>Repository design pattern</h4><p>Every database read/write funnelled through one file of small, purpose-named functions, so a schema change only ever requires editing one place.</p></div>
+<div class="concept"><h4>REST over Postgres (PostgREST)</h4><p>The Python client never writes raw SQL during normal operation — it builds HTTP requests against an API Supabase auto-generates directly from the schema.</p></div>
+<div class="concept"><h4>Smoke testing &amp; round-trip verification</h4><p>A fast, broad check (connection, tables, seed data) plus a genuine round-trip: insert, read back, confirm an exact match, then delete — leaving no trace.</p></div>
+<div class="concept"><h4>DNS, IPv4 vs IPv6, connection pooling</h4><p>A hostname must resolve via DNS before it's reachable; Supabase's direct-connection host is IPv6-only, unreachable on an IPv4-only network, which is exactly what was hit — solved by switching to the IPv4-reachable session-pooler endpoint instead.</p></div>
+<div class="concept"><h4>Least privilege</h4><p>Every component was given only the access it needs — anon+RLS for the public dashboard, service-role for the trusted agent, and a one-time DB password used only transiently and then discarded rather than stored anywhere permanent.</p></div>
+
+<h2 class="section-h2">B1. Planning &amp; Reference Documents</h2>
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">00_MASTER_PROMPT.md</span>
+    <span class="file-meta">78 lines &middot; markdown</span>
+  </div>
+  <p class="filenote">The instruction set the whole build follows</p>
+  <pre><code># MASTER PROMPT — Nexaris AI Outreach Agent
+
+&gt; Paste this entire file into Claude Code as your first message.
+&gt; Attach the other 3 files (`01_PHASED_BUILD_PLAN.md`, `02_SUPABASE_SCHEMA.sql`, `03_PROJECT_STRUCTURE.md`) alongside it.
+
+---
+
+## Who you are
+
+You are the lead engineer building a production AI outreach agent for **Nexaris**, an AI/software agency. You are working with **Hussein**, the owner. Hussein is a CS student and a capable developer, but he wants to **understand every part of what you build** — he is not looking for a black box.
+
+## How you must behave (read carefully — this is the most important part)
+
+1. **Work in phases.** Follow the phased build plan in `01_PHASED_BUILD_PLAN.md` exactly. Do not jump ahead. Do not build Phase 3 before Phase 2 is done and confirmed.
+
+2. **Explain every single step.** Before writing code for a phase, explain in plain language: what you are about to build, why, and how it connects to the rest. After writing it, explain what the code does, file by file. Hussein explicitly asked to be informed of every detail — the same way a previous project (a marriage platform) was built with him.
+
+3. **Confirm before moving on.** At the end of every phase, stop. Summarize what was built, show Hussein how to test it, and ask him to confirm it works before you start the next phase. Never chain multiple phases without a checkpoint.
+
+4. **Never skip details from the spec.** The complete specification is in the attached documents and summarized below. If something is ambiguous, ask Hussein rather than guessing. If you notice a requirement you can&#x27;t fully implement yet, flag it clearly rather than silently dropping it.
+
+5. **Keep code clean and commented.** Every non-obvious function gets a short comment explaining what it does. Hussein should be able to read the code and follow it.
+
+6. **Track progress.** Maintain a `PROGRESS.md` file in the repo. After each phase, update it with what&#x27;s done, what&#x27;s next, and any decisions made. This lets Hussein (or a fresh session) pick up without losing context.
+
+---
+
+## What you are building — one paragraph
+
+A fully automated AI outreach agent that runs daily on a schedule, uses 3 accounts (each on its own proxy) to discover business leads on **LinkedIn** and **Instagram**, deeply analyzes each business, detects founders, finds public WhatsApp numbers, scores each lead 1–10 with reasoning, and generates a personalized human-style outreach message using the Claude API. Messages wait for **Mahmoud&#x27;s daily approval**, then send automatically on LinkedIn and WhatsApp — while Instagram messages are surfaced in the dashboard for a human to send manually (Instagram bans automated cold outreach). Everything lands in a **CRM with a pipeline**, and a **responsive dashboard** (works on laptop and iPhone) shows live leads, analytics, account health, and every editable setting.
+
+---
+
+## Tech stack (already decided — do not change without asking)
+
+- **Frontend / dashboard:** React + Tailwind CSS (responsive PWA — must work on laptop and iPhone, installable via &quot;Add to Home Screen&quot;)
+- **Backend / agent:** Python
+- **Browser automation:** Playwright (for LinkedIn/Instagram discovery + LinkedIn sending)
+- **Agent brain:** Claude API
+  - **Haiku** model → analysis, scoring, qualification, founder detection (cost-efficient)
+  - **Sonnet** model → message generation (higher writing quality, better reply rates)
+- **Database:** Supabase (Postgres + Auth + Realtime) — **free tier**, only 2 users
+- **Dashboard hosting:** Vercel (free tier)
+- **Agent hosting:** always-on server for scheduled runs — Oracle Cloud free tier or a ~$5/month VPS (Hetzner). Recommend VPS for reliability.
+- **Proxies:** residential sticky proxies, **one dedicated IP per account** — config slot per account, can start empty and be filled later
+
+---
+
+## The 10 core rules of this system (never violate)
+
+1. **Instagram is find-only.** The agent discovers, analyzes, scores, and drafts messages for Instagram leads but **never sends** on Instagram. Those messages go to a dashboard section for manual human sending. (Instagram&#x27;s API bans automated cold outreach.)
+2. **LinkedIn is fully automated** — find and send.
+3. **WhatsApp sends automatically** — but only when a public WhatsApp number is found on a lead&#x27;s Instagram bio, LinkedIn profile, or website.
+4. **Nothing sends without Mahmoud&#x27;s daily approval.** This is a hard gate with no bypass.
+5. **Messages are AI-generated** per lead, personalized from the business name + details + weak points, in a human tone.
+6. **Each of the 3 accounts uses its own dedicated sticky proxy IP** — sessions never mix IPs.
+7. **Founder detection:** scan bios for &quot;founder of X&quot;, &quot;co-founder&quot;, &quot;CEO &amp; founder&quot;, etc. If found, flag on the dashboard for manual founder outreach.
+8. **Max 2 contacts per lead.** Follow-up is per-lead (Hussein sets on/off + timing). Re-contact gap is Hussein&#x27;s choice.
+9. **Warnings show type + reason.** Redistribution of a paused account&#x27;s quota is Hussein&#x27;s manual decision, never automatic.
+10. **Everything is editable from the dashboard** — niche, location, language, per-account run times, per-account daily limits, message style, style duration, follow-up, proxy credentials, WhatsApp recipient numbers.
+
+---
+
+## Full feature reference
+
+The complete, verified specification is in the attached file `Nexaris_Agent_COMPLETE_SPEC_FINAL.pdf` (Hussein has it). The build plan below references it. If you ever need a detail not in the build plan, ask Hussein to quote the relevant section of that spec.
+
+---
+
+## Start here
+
+1. Read all attached files fully.
+2. Confirm back to Hussein: your understanding of the project in your own words (5–8 sentences), the tech stack, and the phase list.
+3. Ask any clarifying questions you have BEFORE writing any code.
+4. Then begin **Phase 0** from `01_PHASED_BUILD_PLAN.md`.
+
+Do not write any code until you&#x27;ve done steps 1–3 above.
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">01_PHASED_BUILD_PLAN.md</span>
+    <span class="file-meta">175 lines &middot; markdown</span>
+  </div>
+  <p class="filenote">The 11 phases, in order</p>
+  <pre><code># PHASED BUILD PLAN — Nexaris AI Outreach Agent
+
+Build in this exact order. **Stop at the end of every phase, summarize, show how to test, and wait for Hussein&#x27;s confirmation before continuing.**
+
+Update `PROGRESS.md` after each phase.
+
+---
+
+## PHASE 0 — Project setup &amp; foundations
+
+**Goal:** a clean, running skeleton for both the agent and the dashboard.
+
+- Set up the repo using the structure in `03_PROJECT_STRUCTURE.md`
+- Initialize the Python backend/agent project (with a virtual environment, `requirements.txt`)
+- Initialize the React + Tailwind dashboard (Vite)
+- Set up the Supabase project connection (env vars, client setup in both backend and frontend)
+- Create a `.env.example` listing every environment variable the project will need (Claude API key, Supabase URL/key, proxy credentials per account, WhatsApp API credentials, etc.)
+- Create `PROGRESS.md`
+- Confirm both apps run (dashboard shows a blank page, agent runs a &quot;hello&quot; script)
+
+**Checkpoint:** Hussein can run the dashboard locally and run the agent script. Nothing does real work yet.
+
+---
+
+## PHASE 1 — Database schema
+
+**Goal:** the full database exists in Supabase.
+
+- Run `02_SUPABASE_SCHEMA.sql` in Supabase (walk Hussein through doing this)
+- Verify every table exists: `leads`, `messages`, `pipeline_history`, `client_history`, `accounts`, `settings`, `notifications_log`, `follow_ups`
+- Set up Row Level Security appropriately (2 users only)
+- Create the backend data-access layer (functions to read/write each table)
+- Seed the `settings` table with sensible defaults (niche empty, 20 IG / 30 LinkedIn per account, default run times, message style = &quot;discovery&quot;, style duration = 7 days, etc.)
+
+**Checkpoint:** Hussein can see all tables in Supabase and the backend can read/write a test record.
+
+---
+
+## PHASE 2 — Agent core: account pool &amp; browser sessions
+
+**Goal:** the agent can open isolated browser sessions per account, each on its own proxy.
+
+- Build the **account pool manager**: loads the 3 accounts, each with its own run time, daily limit, and **proxy config slot** (can be empty for now)
+- Build Playwright session management: one isolated browser context per account, routed through that account&#x27;s proxy IP (if set) — sessions must NEVER share context or IP
+- Build the **account health check**: detect login challenges, CAPTCHAs, restrictions; when detected, record warning **type + reason**, pause the account, and log it
+- Build the **scheduler**: each account runs at its own configured time; agent records run start and **finish time**
+- Build the **redistribution decision hook**: when an account is paused, do NOT auto-redistribute — surface the decision to Hussein (a flag in the DB the dashboard will read)
+
+**Checkpoint:** Hussein can trigger a run; the agent opens sessions per account (no proxy yet is fine), respects run times, and logs a warning correctly if a session fails. Test at LOW volume.
+
+---
+
+## PHASE 3 — Discovery: LinkedIn &amp; Instagram
+
+**Goal:** the agent finds and reads real profiles.
+
+- **LinkedIn discovery:** search by niche/industry/company size/location/activity; read company name, description, headcount, website, recent posts, public contact info; target 30/account (from settings)
+- **Instagram discovery:** search hashtags/explore/location tags; read bio, followers, posts, engagement; target 20/account (from settings)
+- **Qualification logic:** decide if each profile is a real business worth pursuing; skip personal/inactive/irrelevant accounts
+- Make discovery **agentic** — if a search returns weak results, the agent adapts its search terms rather than collecting junk
+- Store raw discovered data in `leads` with status &quot;discovered&quot;
+
+**Checkpoint:** Hussein runs the agent and sees real qualified leads appear in the database from both platforms. Test at low volume with a few profiles.
+
+---
+
+## PHASE 4 — Claude analysis pipeline
+
+**Goal:** every lead is deeply analyzed, scored, and enriched by Claude.
+
+- **Deep analysis (Haiku):** company size, revenue tier, industry, website analysis, ads activity, social presence, full weak points list, AI opportunities
+- **Founder detection (Haiku):** scan bio for founder phrases; if found, store founder name + set the founder flag
+- **WhatsApp number detection:** check bio/description/website for a public WhatsApp number; store if found
+- **Lead scoring (Haiku):** score 1–10 with written reasoning; label Hot/Warm/Cold
+- **Save to `client_history`** permanently (full record, whether or not it&#x27;s later contacted)
+- Use **prompt caching** on the repeated instruction template to cut cost
+- Store everything on the `leads` record
+
+**Checkpoint:** Hussein sees leads in the DB now fully enriched — score, reasoning, weak points, founder flag, WhatsApp flag. Verify the scoring reasoning makes sense on real examples.
+
+---
+
+## PHASE 5 — Message generation
+
+**Goal:** every qualified lead gets a personalized, human-sounding message.
+
+- **Message generation (Sonnet):** personalized greeting (business/team/founder name), references specific weak points/opportunities, human tone
+- Respect the **message style** setting (Direct = names weak points; Discovery = softer/curiosity) and **style duration** (rotate after N days)
+- Use the personalization-line style from the spec as a guide (e.g. &quot;I noticed you&#x27;re spending on Meta ads, but your follow-up is manual and your booking takes 12h&quot;)
+- Adapt tone per platform (LinkedIn more formal, WhatsApp more direct)
+- Store the generated message on the lead, status &quot;awaiting_approval&quot;
+
+**Checkpoint:** Hussein reviews generated messages for real leads and confirms they read as human and personalized.
+
+---
+
+## PHASE 6 — Approval workflow
+
+**Goal:** Mahmoud approves before anything sends.
+
+- Build the message queue: all generated messages sit in &quot;awaiting_approval&quot;
+- Build the backend approve/edit/hold logic
+- Nothing can move to &quot;sending&quot; without approval
+- Build the approval reminder trigger (feeds Phase 8 notifications)
+
+**Checkpoint:** Hussein can approve/edit/hold a message via a test call; unapproved messages are correctly blocked from sending.
+
+---
+
+## PHASE 7 — Sending &amp; routing
+
+**Goal:** approved messages go out on the right channels.
+
+- **LinkedIn:** auto-send via the account&#x27;s Playwright session; log timestamp/account/platform; move lead to &quot;Contacted&quot;
+- **WhatsApp:** auto-send when a public number was found (integrate WhatsApp Business API — Twilio/360dialog, or the chosen method); log and move to &quot;Contacted&quot;
+- **Instagram:** do NOT auto-send — mark the message as &quot;manual_send_pending&quot; so the dashboard&#x27;s Instagram section shows it; when a human marks it Sent, move to &quot;Contacted&quot;
+- Respect per-account daily limits and the warm-up ramp
+
+**Checkpoint:** A test approved LinkedIn message sends; a WhatsApp test sends; an Instagram message correctly appears in the manual-send queue instead of sending.
+
+---
+
+## PHASE 8 — CRM, pipeline, follow-up, notifications
+
+**Goal:** the full lifecycle and all alerts work.
+
+- **Pipeline:** New → Contacted → Replied → Interested → Meeting Booked → Deal Closed → Lost; auto-move on reply detection; manual moves supported; timestamp every move
+- **Follow-up + re-engagement:** per-lead on/off + timing; re-engagement for cold-after-reply; max 2 contacts; re-contact gap set per lead; pause on reply
+- **WhatsApp notifications (all 5 types to both numbers):** hot lead alert, founder found, account warning, approval reminder (to Mahmoud), daily run summary
+- Reply detection: check for replies on LinkedIn/WhatsApp and update pipeline
+
+**Checkpoint:** Hussein sees leads move through stages, receives test WhatsApp alerts, and follow-up scheduling works.
+
+---
+
+## PHASE 9 — Dashboard frontend
+
+**Goal:** the full responsive dashboard, working on laptop and iPhone.
+
+Build these sections (see spec §7 for full detail):
+- **Live Feed** — today&#x27;s lead cards (all details incl. weak points, founder flag, copyable message)
+- **Instagram Manual Send section** — ready messages + &quot;Mark as Sent&quot;
+- **Mahmoud&#x27;s Approval section** — edit/approve per message + Approve All + count badge (mobile-friendly)
+- **CRM Pipeline board** — kanban, drag-and-drop
+- **Lead Detail page** — full record + editable follow-up
+- **Client History** — permanent searchable database
+- **Analytics/KPIs** — all metrics from spec §7.7 with date/platform/account filters
+- **Account Health monitor** — status + warning type/reason + redistribution toggle
+- **Run Status panel** — running/idle, current task, start/finish time, duration
+- **Settings panel** — every editable control from spec §8
+- Make it a **PWA** (installable, works full-screen on iPhone)
+
+**Checkpoint:** Hussein opens the dashboard on his laptop AND adds it to his iPhone home screen; every section shows real data.
+
+---
+
+## PHASE 10 — Deploy &amp; warm-up
+
+**Goal:** live and safe.
+
+- Deploy dashboard to Vercel
+- Deploy agent to the always-on server (Oracle free tier or VPS)
+- Set up the daily scheduler on the server
+- **Test end-to-end at LOW volume with NO proxy first**
+- Add proxy credentials per account in settings (3 dedicated sticky residential IPs)
+- Begin the **warm-up ramp**: start 5–10/day per account, increase over 2–4 weeks to the 20 IG / 30 LinkedIn target
+- Vary timing slightly between accounts
+
+**Checkpoint:** The system runs a full real daily cycle end-to-end, safely, at warm-up volume.
+
+---
+
+## After Phase 10
+Everything in the spec&#x27;s &quot;Out of Scope&quot; section (meetings automation, proposals, call summaries, support mode, campaigns) is a potential **Phase 2 project** — do not build these now.
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">03_PROJECT_STRUCTURE.md</span>
+    <span class="file-meta">101 lines &middot; markdown</span>
+  </div>
+  <p class="filenote">The intended folder layout</p>
+  <pre><code># PROJECT STRUCTURE — Nexaris AI Outreach Agent
+
+This is the folder layout Claude Code should set up in Phase 0. Two main parts: the **agent** (Python) and the **dashboard** (React). They share one Supabase database.
+
+```
+nexaris-outreach-agent/
+│
+├── PROGRESS.md                  # updated after every phase — what&#x27;s done, what&#x27;s next
+├── README.md                    # how to run everything
+├── .env.example                 # every env var needed (no real secrets)
+│
+├── agent/                       # ── THE PYTHON AGENT ──
+│   ├── requirements.txt
+│   ├── .env                     # real secrets (gitignored)
+│   ├── main.py                  # entry point — the daily run loop
+│   ├── scheduler.py             # runs each account at its own time
+│   │
+│   ├── core/
+│   │   ├── account_pool.py      # loads 3 accounts, manages rotation
+│   │   ├── session.py           # Playwright browser context per account + proxy
+│   │   ├── health.py            # detects warnings, records type + reason
+│   │   └── warmup.py            # per-account warm-up ramp logic
+│   │
+│   ├── discovery/
+│   │   ├── linkedin.py          # LinkedIn search + profile reading
+│   │   ├── instagram.py         # Instagram search + profile reading
+│   │   └── qualify.py           # is this a real business worth pursuing?
+│   │
+│   ├── analysis/
+│   │   ├── analyze.py           # deep company analysis (Claude Haiku)
+│   │   ├── founder.py           # founder detection from bio
+│   │   ├── whatsapp_detect.py   # find public WhatsApp number
+│   │   ├── score.py             # lead scoring 1-10 + reasoning (Haiku)
+│   │   └── prompts.py           # all Claude prompt templates (with caching)
+│   │
+│   ├── messaging/
+│   │   ├── generate.py          # message generation (Claude Sonnet)
+│   │   └── style.py             # message style + duration rotation logic
+│   │
+│   ├── sending/
+│   │   ├── linkedin_send.py     # auto-send on LinkedIn
+│   │   ├── whatsapp_send.py     # auto-send on WhatsApp (when number found)
+│   │   └── instagram_queue.py   # push to dashboard manual-send queue (NO auto-send)
+│   │
+│   ├── crm/
+│   │   ├── pipeline.py          # stage movement + history
+│   │   ├── followup.py          # follow-up + re-engagement scheduling (max 2 contacts)
+│   │   └── reply_detection.py   # detect replies, move pipeline
+│   │
+│   ├── notifications/
+│   │   └── whatsapp_notify.py   # all 5 alert types to both numbers
+│   │
+│   └── db/
+│       ├── client.py            # Supabase connection
+│       └── repositories.py      # read/write functions per table
+│
+├── dashboard/                   # ── THE REACT DASHBOARD (PWA) ──
+│   ├── package.json
+│   ├── vite.config.js
+│   ├── tailwind.config.js
+│   ├── .env                     # frontend env (Supabase public keys)
+│   ├── public/
+│   │   ├── manifest.json        # PWA manifest (installable on iPhone)
+│   │   └── icons/               # app icons for home screen
+│   │
+│   └── src/
+│       ├── main.jsx
+│       ├── App.jsx
+│       ├── lib/
+│       │   └── supabase.js       # Supabase client
+│       │
+│       ├── components/           # shared UI pieces
+│       │   ├── LeadCard.jsx
+│       │   ├── KpiCard.jsx
+│       │   ├── TemperatureBadge.jsx
+│       │   └── ...
+│       │
+│       └── pages/                # one file per dashboard section (spec §7)
+│           ├── LiveFeed.jsx          # today&#x27;s leads
+│           ├── InstagramManualSend.jsx  # IG messages to send by hand
+│           ├── ApprovalQueue.jsx     # Mahmoud approves messages
+│           ├── PipelineBoard.jsx     # kanban
+│           ├── LeadDetail.jsx        # full lead record
+│           ├── ClientHistory.jsx     # permanent database
+│           ├── Analytics.jsx         # all KPIs + charts
+│           ├── AccountHealth.jsx     # 3 accounts, warnings, redistribution
+│           ├── RunStatus.jsx         # live run tracking + finish time
+│           └── Settings.jsx          # every editable control (spec §8)
+│
+└── database/
+    └── schema.sql               # copy of 02_SUPABASE_SCHEMA.sql for reference
+```
+
+## Notes for Claude Code
+
+- **Agent and dashboard are separate apps** sharing one Supabase DB. The agent writes data; the dashboard reads it (and writes settings/approvals/manual actions back).
+- **Realtime:** use Supabase Realtime so the dashboard updates live as the agent works (live feed, run status, analytics).
+- **The PWA manifest + icons** are what make it installable on Mahmoud&#x27;s iPhone — don&#x27;t skip these in Phase 9.
+- **Secrets** (Claude API key, proxy credentials, WhatsApp API) live in `agent/.env`, never committed. `.env.example` documents them.
+- Keep each file focused — one responsibility. Hussein wants to be able to open any file and understand it.
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">HOW_TO_USE.md</span>
+    <span class="file-meta">60 lines &middot; markdown</span>
+  </div>
+  <p class="filenote">Original usage instructions for the planning package</p>
+  <pre><code># HOW TO USE THIS PACKAGE — for Hussein
+
+You have 4 files. Here&#x27;s exactly what to do with them in Claude Code.
+
+## The files
+
+1. **00_MASTER_PROMPT.md** — the main instruction. This tells Claude Code who it is, what it&#x27;s building, the rules, and how to behave (explain everything, work in phases, confirm before moving on).
+2. **01_PHASED_BUILD_PLAN.md** — the 11 phases (Phase 0 → Phase 10), in order.
+3. **02_SUPABASE_SCHEMA.sql** — the full database, ready to run in Supabase.
+4. **03_PROJECT_STRUCTURE.md** — the exact folder layout.
+
+Plus keep **Nexaris_Agent_COMPLETE_SPEC_FINAL.pdf** handy — it&#x27;s the full reference if Claude Code needs a detail.
+
+## Steps
+
+**1. Set the model to Opus** in Claude Code (`/model` → Opus). Use Opus for Phases 0–4 (the complex foundation). You can switch to Sonnet later for routine dashboard work.
+
+**2. Start a new Claude Code session** in an empty folder where you want the project built.
+
+**3. Paste the entire contents of `00_MASTER_PROMPT.md`** as your first message, and attach the other 3 files (and the spec PDF) to the same message.
+
+**4. Let Claude Code respond.** It will:
+   - Read everything
+   - Tell you its understanding of the project in its own words
+   - Ask you any clarifying questions
+   - Wait for your go-ahead
+
+**5. Answer its questions**, then tell it to begin Phase 0.
+
+**6. After each phase**, Claude Code will stop, summarize what it built, show you how to test it, and ask you to confirm before continuing. Test it, confirm, and it moves to the next phase.
+
+## Things you&#x27;ll need to have ready
+
+Before Phase 4 (Claude analysis) you need:
+- **A Claude API key** (from console.anthropic.com)
+
+Before Phase 1 (database) you need:
+- **A Supabase project** (free — supabase.com) with its URL and keys
+
+Before Phase 7 (WhatsApp sending) you need:
+- A **WhatsApp Business API** account (Twilio or 360dialog) OR decide on the informal method
+
+Before Phase 10 (deploy + real use) you need:
+- **3 dedicated sticky residential proxy IPs** (DataImpulse / IPRoyal / Evomi) — one per account
+- **An always-on server** (Oracle Cloud free tier or a ~$5/month Hetzner VPS)
+- **A Vercel account** (free) for the dashboard
+
+You do NOT need the proxies or server until Phase 10 — you can build and test everything before then locally with no proxy at low volume.
+
+## Important reminders (Claude Code has these too, but so you know)
+
+- **Instagram never auto-sends** — the agent prepares those messages, a human sends them from the dashboard.
+- **Nothing sends without Mahmoud&#x27;s daily approval.**
+- **Each account gets its own proxy IP** — never shared.
+- **Warm up slowly** — start at 5–10/day per account, ramp up over 2–4 weeks. Do not start at full volume with the shared-origin accounts.
+
+## If a session runs out of context
+
+Claude Code keeps a `PROGRESS.md` file in the repo. If you start a fresh session, point it at `PROGRESS.md` and the master prompt, and it can continue where it left off.
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">README.md</span>
+    <span class="file-meta">98 lines &middot; markdown</span>
+  </div>
+  <p class="filenote">Project front door</p>
+  <pre><code># Nexaris AI Outreach Agent
+
+An automated outreach agent that discovers business leads on LinkedIn and Instagram,
+analyses each business with Claude, scores it 1–10 with written reasoning, and writes
+a personalised message — which sends automatically on LinkedIn and WhatsApp only
+after daily human approval. Instagram messages are prepared but always sent by hand.
+Everything lands in a CRM with a pipeline, shown in a responsive dashboard that works
+on laptop and iPhone.
+
+**Status:** Phase 0 of 11 complete. See [PROGRESS.md](PROGRESS.md).
+
+---
+
+## The three channel rules
+
+| Channel | Discovery | Sending |
+|---------|-----------|---------|
+| **LinkedIn** | Automated | Automated (after approval) |
+| **WhatsApp** | — | Automated (after approval), only when a public number is found |
+| **Instagram** | Automated | **Never automated** — prepared for a human to send manually |
+
+Instagram&#x27;s terms ban automated cold outreach, so the agent finds, analyses, scores,
+and writes the message, then stops. Nothing sends on any channel without Mahmoud&#x27;s
+daily approval — that gate has no bypass.
+
+---
+
+## Running it
+
+### Agent (Python)
+
+```bash
+# One-time setup
+python -m venv agent/venv
+agent/venv/Scripts/python.exe -m pip install -r agent/requirements.txt
+agent/venv/Scripts/python.exe -m playwright install chromium   # from Phase 2
+cp .env.example agent/.env                                     # then fill it in
+
+# Run
+agent/venv/Scripts/python.exe -m agent.main
+```
+
+On macOS or Linux use `agent/venv/bin/python` instead.
+
+### Dashboard (React PWA)
+
+```bash
+cd dashboard
+npm install
+cp ../.env.example .env        # keep only the VITE_ lines, then fill them in
+npm run dev
+```
+
+Opens on `http://localhost:5173`. The dev server binds to your local network too, so
+you can open it on a phone using your laptop&#x27;s IP to test the mobile layout.
+
+---
+
+## Layout
+
+```
+agent/          Python agent — discovery, analysis, messaging, sending, CRM
+  core/         Account pool, browser sessions, health checks, warm-up
+  discovery/    LinkedIn + Instagram search and qualification
+  analysis/     Claude analysis, founder detection, scoring
+  messaging/    Message generation and style rotation
+  sending/      Channel routing
+  crm/          Pipeline, follow-up, reply detection
+  db/           Supabase access
+dashboard/      React + Tailwind PWA
+database/       Reference copy of the Supabase schema
+```
+
+The agent and dashboard are separate apps sharing one Supabase database. The agent
+writes data; the dashboard reads it and writes back settings, approvals, and manual
+actions. Supabase Realtime keeps the dashboard live as the agent works.
+
+---
+
+## Reference documents
+
+| File | What&#x27;s in it |
+|------|--------------|
+| [00_MASTER_PROMPT.md](00_MASTER_PROMPT.md) | How the build is run, the 10 core rules |
+| [01_PHASED_BUILD_PLAN.md](01_PHASED_BUILD_PLAN.md) | The 11 phases in order |
+| [02_SUPABASE_SCHEMA.sql](02_SUPABASE_SCHEMA.sql) | Full database schema |
+| [03_PROJECT_STRUCTURE.md](03_PROJECT_STRUCTURE.md) | Intended folder layout |
+| [REQUIREMENTS_COVERAGE.md](REQUIREMENTS_COVERAGE.md) | Every requirement mapped to a phase |
+| [PROGRESS.md](PROGRESS.md) | What&#x27;s built, what&#x27;s next, decisions made |
+
+---
+
+## Stack
+
+React + Tailwind (PWA on Vercel) · Python + Playwright (agent on an always-on
+server) · Claude API — Haiku for analysis, Sonnet for messages · Supabase for
+Postgres, Auth, and Realtime · one dedicated sticky residential proxy IP per account.
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">PROGRESS.md</span>
+    <span class="file-meta">126 lines &middot; markdown</span>
+  </div>
+  <p class="filenote">Phase tracker and decisions log</p>
+  <pre><code># PROGRESS — Nexaris AI Outreach Agent
+
+Updated after every phase. If a session runs out of context, point the next one at
+this file plus `00_MASTER_PROMPT.md` and it can pick up without losing anything.
+
+**Current state:** Phase 1 complete and verified live against the real Supabase project.
+**Next:** Phase 2 — agent core: account pool &amp; browser sessions.
+
+---
+
+## Phase status
+
+| Phase | Name | Status |
+|-------|------|--------|
+| 0 | Project setup &amp; foundations | ✅ Complete |
+| 1 | Database schema | ✅ Complete — verified live in Supabase |
+| 2 | Agent core: account pool &amp; sessions | ⬜ Not started |
+| 3 | Discovery: LinkedIn &amp; Instagram | ⬜ Not started |
+| 4 | Claude analysis pipeline | ⬜ Not started |
+| 5 | Message generation | ⬜ Not started |
+| 6 | Approval workflow | ⬜ Not started |
+| 7 | Sending &amp; routing | ⬜ Not started |
+| 8 | CRM, pipeline, follow-up, notifications | ⬜ Not started |
+| 9 | Dashboard frontend | ⬜ Not started |
+| 10 | Deploy &amp; warm-up | ⬜ Not started |
+
+---
+
+## Phase 0 — Project setup &amp; foundations
+
+**Built:**
+
+- Git repository initialised on `main`, `.gitignore` covering `.env`, `venv/`,
+  `node_modules/`, and Playwright browser profiles
+- Folder structure exactly per `03_PROJECT_STRUCTURE.md`
+- **Python agent** (`agent/`)
+  - `venv/` with all dependencies installed
+  - `requirements.txt` — supabase, anthropic, playwright, APScheduler, dotenv,
+    httpx, beautifulsoup4, pytz
+  - `config.py` — single place all secrets and settings are read from
+  - `db/client.py` — lazy Supabase client using the service role key
+  - `main.py` — runs a self-check reporting what is and isn&#x27;t configured
+  - 23 stub modules, each documenting what it will hold and which phase builds it
+- **Dashboard** (`dashboard/`)
+  - Vite + React 18 + Tailwind v4
+  - `src/lib/supabase.js` — client using the anon key, degrades gracefully when unset
+  - `src/App.jsx` — Phase 0 status page listing the 10 sections coming in Phase 9
+  - PWA manifest + generated icons (180/192/512 + SVG favicon), iOS meta tags,
+    safe-area padding for iPhone full-screen
+- `.env.example` documenting every variable, annotated with the phase that needs it
+- `database/schema.sql` — copy of the Supabase schema for reference
+- `REQUIREMENTS_COVERAGE.md` — every spec requirement mapped to a phase, so nothing
+  can be silently dropped
+- **Documentation** — `docs/PHASE_0_EXPLAINED.pdf` (17 pages) explaining every file,
+  decision, and problem hit, plus step-by-step next actions. Generated by
+  `tools/make_pdf.py`, which renders HTML to PDF using the Chromium that Playwright
+  already installs. Every phase from here produces one of these.
+
+**How to test:**
+
+```bash
+# Agent
+agent/venv/Scripts/python.exe -m agent.main
+
+# Dashboard
+cd dashboard &amp;&amp; npm run dev
+```
+
+**Decisions made:**
+
+1. **Built in place** rather than inside a `nexaris-outreach-agent/` wrapper folder,
+   so the planning documents sit alongside the code. Structure below that level is
+   exactly as specified.
+2. **Tailwind v4** via the Vite plugin instead of v3. No `tailwind.config.js` or
+   `postcss.config.js` is needed — theme customisation lives in `src/index.css`
+   under `@theme`. This differs from `03_PROJECT_STRUCTURE.md`, which was written
+   assuming v3.
+3. **Dependency pins loosened to `&gt;=`.** Exact pins made the set unresolvable —
+   supabase and anthropic each constrain `httpx` to different ranges.
+4. **`runs` table** treated as a 9th table to verify in Phase 1. It is created by
+   the schema but missing from the build plan&#x27;s verification list, and it is what
+   feeds the Run Status panel and the finish time in the daily summary.
+5. **Icons are placeholders** — a generated &quot;N&quot; mark. Replace with real Nexaris
+   branding in Phase 9.
+
+**Not done / still open:**
+
+- Supabase project not created yet — blocks Phase 1
+- Claude API key not set — blocks Phase 4
+- Playwright browsers not downloaded yet (`playwright install chromium`) — Phase 2
+- Open decisions Q1–Q7 in `REQUIREMENTS_COVERAGE.md`
+
+---
+
+## Phase 1 — Database schema
+
+**Built (code, no live DB yet):**
+
+- `database/policies.sql` — Row Level Security for all 9 tables. Model: RLS on,
+  `authenticated` role gets full access, `anon` gets nothing. Fits the 2-user setup.
+  The agent&#x27;s service-role key bypasses RLS, so only the dashboard is governed.
+- `agent/db/repositories.py` — the data-access layer. 25 functions across all 9
+  tables, one section per table. The only module that touches the database directly.
+  Verified: imports clean.
+- `agent/db/smoke_test.py` — Phase 1 checkpoint proof. Checks connection, all 9
+  tables, seed data (3 accounts + settings), and a self-cleaning write/read/delete.
+  Verified: fails gracefully with a clear message when keys are absent.
+
+**Live verification (2026-07-24):** Supabase project created (ref `xtesxgezongzpdgppobm`,
+Singapore). Both SQL files run successfully against the real database via a session-pooler
+connection (the direct/IPv6 connection failed to resolve on this network — documented in
+the Phase 1 PDF). `python -m agent.db.smoke_test` — **ALL CHECKS PASSED**: connection,
+all 9 tables, seed data (3 accounts + settings), and a clean insert/read/delete round-trip.
+
+**Phase 1 PDF:** `docs/PHASE_1_EXPLAINED.pdf` — covers all 3 files, the migration process,
+the IPv6/pooler issue, and a security note on the temporary use of the DB password.
+
+---
+
+## Decisions log
+
+| Date | Decision |
+|------|----------|
+| 2026-07-22 | Repo is public on GitHub as `AiOutreachAgent`. Hussein pushes himself — the agent never runs `git push`. |
+| 2026-07-22 | Build order follows `01_PHASED_BUILD_PLAN.md` (11 phases) over spec §14 (10 steps) where they conflict. No requirement is dropped either way. |
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">REQUIREMENTS_COVERAGE.md</span>
+    <span class="file-meta">174 lines &middot; markdown</span>
+  </div>
+  <p class="filenote">Every spec requirement mapped to a phase</p>
+  <pre><code># REQUIREMENTS COVERAGE LEDGER — Nexaris AI Outreach Agent
+
+Every requirement from `Nexaris_Agent_COMPLETE_SPEC_FINAL.pdf`, the master prompt, and the
+build plan is listed here with an ID, the phase that delivers it, and the file it lands in.
+
+**Purpose:** Hussein asked that nothing from the spec be missed. A promise isn&#x27;t checkable —
+this table is. At the end of every phase, the rows for that phase get marked `DONE` and the
+phase is not closed until all of its rows are marked.
+
+**Status legend:** `TODO` = not started · `WIP` = in progress · `CODE` = code written, not
+yet verified live · `DONE` = built and tested by Hussein · `N/A` = deliberately out of scope
+
+**Phase 1 — DONE (2026-07-24).** `database/policies.sql`, `agent/db/repositories.py`, and
+`agent/db/smoke_test.py` are built and verified live against the real Supabase project
+(ref `xtesxgezongzpdgppobm`). All 9 tables exist with RLS enabled; seed data confirmed;
+smoke test passed end-to-end. Q6 resolved. Settings rows S1–S8, S14 have their storage in
+place; their dashboard UI is still Phase 9.
+
+---
+
+## A. The 10 core rules (never violated — these are constraints, not features)
+
+| ID | Rule | Enforced in | Phase | Status |
+|----|------|-------------|-------|--------|
+| R1 | Instagram is **find-only** — never auto-sends | `sending/instagram_queue.py` | 7 | TODO |
+| R2 | LinkedIn is fully automated — find **and** send | `sending/linkedin_send.py` | 7 | TODO |
+| R3 | WhatsApp auto-sends **only** when a public number was found | `sending/whatsapp_send.py` | 7 | TODO |
+| R4 | Nothing sends without Mahmoud&#x27;s approval — hard gate, no bypass | approval gate in `sending/` | 6 | TODO |
+| R5 | Messages are AI-generated per lead, human tone | `messaging/generate.py` | 5 | TODO |
+| R6 | Each account uses its own dedicated sticky proxy IP — never shared | `core/session.py` | 2 | TODO |
+| R7 | Founder detection flags for **manual** outreach — never auto-contacts founder | `analysis/founder.py` | 4 | TODO |
+| R8 | Max **2** contacts per lead, ever | `crm/followup.py` + DB constraint | 8 | TODO |
+| R9 | Warnings show **type + reason**; redistribution is manual only | `core/health.py` | 2 | TODO |
+| R10 | Everything editable from the dashboard, no code changes | `pages/Settings.jsx` | 9 | TODO |
+
+---
+
+## B. Agent tasks — spec §6 (all 17, in execution order)
+
+| ID | Task | Detail that must not be lost | File | Phase | Status |
+|----|------|------------------------------|------|-------|--------|
+| T1 | Boot &amp; load config | Loads niche, location, language, targets, style, style duration, proxy creds **+ the full previously-contacted list (dedup)** + the re-contact-eligible list | `main.py` | 2 | TODO |
+| T2 | Health check &amp; session open | Warning **type + specific reason** (not generic); pause account; wait for Hussein on redistribution; isolated context per proxy IP | `core/health.py`, `core/session.py` | 2 | TODO |
+| T3 | LinkedIn discovery | Search by niche/industry/company size/location/activity; 30/account; reads company name, description, headcount, website, recent posts, public contact info; **prioritises recently active over dormant**; adapts search terms if results are weak | `discovery/linkedin.py` | 3 | TODO |
+| T4 | Instagram discovery | Hashtags + explore + location tags; 20/account; reads bio, followers, post count, engagement, story signals; skips inactive/irrelevant; **reads only, sends nothing** | `discovery/instagram.py` | 3 | TODO |
+| T5 | Business qualification | Reasoning decision, **not a keyword filter**; skip personal/inactive/no clear service/wrong niche | `discovery/qualify.py` | 3 | TODO |
+| T6 | Deep profile analysis | Company size · revenue tier · industry · **website analysis (design quality, booking flow, CTA, load speed)** · ads activity · all social platforms active on · **full weak points list** · AI opportunities. Stored and shown **in full**, never summarised | `analysis/analyze.py` | 4 | TODO |
+| T7 | Founder detection | Phrases: &quot;founder of X&quot;, &quot;co-founder&quot;, &quot;CEO &amp; founder&quot;, &quot;established by&quot;, &quot;created by&quot;, &quot;owner of&quot;, + any equivalent wording. Stores founder name **and the matched bio phrase**. Dashboard shows **two flags** on one card (company messaged + founder found). Fires WhatsApp alert | `analysis/founder.py` | 4 | TODO |
+| T8 | WhatsApp number detection | Checks bio, profile description, website link, contact section — on **both** platforms. Public listed numbers only, **never guessed or scraped**. Fires WhatsApp channel **in addition to**, not instead of, the primary channel | `analysis/whatsapp_detect.py` | 4 | TODO |
+| T9 | Lead scoring | 1–10 from **fit + pain + budget potential**; Hot 8–10 / Warm 5–7 / Cold 1–4; **written reasoning always present** | `analysis/score.py` | 4 | TODO |
+| T10 | Save to Client History | Happens **before** any message is generated; permanent; saved whether or not outreach ever happens | `db/repositories.py` | 4 | TODO |
+| T11 | Message generation | Sonnet; human tone; greeting uses business/team/**founder** name; references that lead&#x27;s specific weak points; Direct vs Discovery style; style holds for the configured duration then rotates | `messaging/generate.py`, `messaging/style.py` | 5 | TODO |
+| T12 | Queue for approval | All of the day&#x27;s messages queued; Mahmoud edits/approves/holds; nothing sends on **any** channel until approved | `crm/` + `pages/ApprovalQueue.jsx` | 6 | TODO |
+| T13 | Route &amp; send | LinkedIn auto · WhatsApp auto · Instagram to manual queue. Every send logged with **timestamp, account used, platform, message text** | `sending/*` | 7 | TODO |
+| T14 | Hot lead instant alert | Fires **immediately on scoring**, not at end of run. Includes name, platform, score, reasoning, **dashboard deep-link** | `notifications/whatsapp_notify.py` | 8 | TODO |
+| T15 | CRM record + pipeline entry | New → Contacted → Replied → Interested → Meeting Booked → Deal Closed → Lost. Auto-move on reply; manual moves allowed; **every change timestamped** | `crm/pipeline.py` | 8 | TODO |
+| T16 | Follow-up &amp; re-engagement | **Per-lead** on/off + timing set by Hussein (agent never picks the delay); re-engagement for replied-then-cold; **pauses instantly on reply**; max 2 contacts; per-lead re-contact gap | `crm/followup.py` | 8 | TODO |
+| T17 | Daily summary | WhatsApp to both numbers: leads found by platform, messages sent by platform, hot/warm/cold breakdown, warnings that occurred, **exact finish time, total duration** | `notifications/whatsapp_notify.py` | 8 | TODO |
+
+---
+
+## C. Dashboard sections — spec §7 (all 10)
+
+| ID | Section | Every element required | Phase | Status |
+|----|---------|------------------------|-------|--------|
+| D1 | Daily Live Feed | Card per lead: business name, platform badge, profile photo, follower/headcount, industry, score, temperature badge (colour-coded), **ALL weak points — full list, not hidden**, AI opportunities, founder flag (two-part), generated message **copyable in one tap**, pipeline status. Hot leads **highlighted and pinned to top**. Filters: platform, score range, temperature, date. Click → Lead Detail | 9 | TODO |
+| D2 | Instagram Manual Send | Separate section; shows **only post-approval** IG leads; name, score, temperature, copyable message, founder flag, **&quot;Mark as Sent&quot;** → enters pipeline as Contacted; shows pending vs sent today; **must work on iPhone** | 9 | TODO |
+| D3 | Approval Section | Per item: name, platform, score, temperature, full message text, **Edit + Approve**; individual approve **and Approve All**; **count badge** (&quot;14 awaiting&quot;); mobile-first | 9 | TODO |
+| D4 | CRM Pipeline Board | 7 kanban columns; card shows name, platform, score, temperature, last activity; **drag and drop**; auto-move on reply; click → Lead Detail | 9 | TODO |
+| D5 | Lead Detail | Everything: profile data, website, all social platforms, full weak points, AI opportunities, founder name + flag, WhatsApp number, score + **full reasoning**, temperature, **all messages ever sent with dates**, **all replies with dates**, stage + **full stage history with timestamps**, follow-up settings, contact count, first contact date, **editable notes**. Edit follow-up here. Move stage here | 9 | TODO |
+| D6 | Client History | **Permanent, never resets.** Search/filter by name, industry, platform, score, temperature, date range, contacted y/n, founder y/n, stage. Totals at top: ever analysed, contacted, hot/warm/cold | 9 | TODO |
+| D7 | Analytics &amp; KPIs | **Headline cards:** businesses reached (all/month/week/today), messages sent, replies + reply rate %, meetings booked, deals closed, hot leads found. **Charts:** reached per platform (bar), per account (bar), sent vs pending approval, leads per stage (funnel), hot/warm/cold (donut), reply rate per platform (bar), founders detected + founders contacted, IG-specific (found / sent manually / pending). **Daily activity timeline (line).** Filters: date range, platform, account. **Real-time updates** | 9 | TODO |
+| D8 | Account Health | 3 accounts: Active/Warned/Paused; **specific warning type + reason**; per-account **redistribute toggle** (manual); usage today vs limit; last active time; **proxy status: connected/missing/error** | 9 | TODO |
+| D9 | Run Status | Running/Idle/Error; which account is active and **what task it&#x27;s on**; start + **finish time**; **total duration** (&quot;Completed in 2h 14m&quot;); progress &quot;X of 150 processed&quot; | 9 | TODO |
+| D10 | Settings | Every control in section D below | 9 | TODO |
+| D11 | PWA | `manifest.json` + icons; installable via Safari → Add to Home Screen; full-screen on iPhone | 9 | TODO |
+
+---
+
+## D. Editable settings — spec §8 (nothing here may require a code change)
+
+| ID | Setting | Phase | Status |
+|----|---------|-------|--------|
+| S1 | Target niche / industry / business type | 1 (schema) → 9 (UI) | TODO |
+| S2 | Target location / country / market — **geography-configurable, not hardcoded** | 1 → 9 | TODO |
+| S3 | Outreach language(s) | 1 → 9 | TODO |
+| S4 | Instagram leads/day per account (default 20) | 1 → 9 | TODO |
+| S5 | LinkedIn leads/day per account (default 30) | 1 → 9 | TODO |
+| S6 | Run time — **per account, set independently** (not one shared time) | 1 → 9 | TODO |
+| S7 | Active message style (Direct / Discovery / extensible) | 1 → 9 | TODO |
+| S8 | Style duration before rotation | 1 → 9 | TODO |
+| S9 | Per-lead follow-up on/off + timing (from Lead Detail) | 8 → 9 | TODO |
+| S10 | Re-contact gap per lead | 8 → 9 | TODO |
+| S11 | Contact cap = 2 — **deliberately NOT user-editable** | 8 | TODO |
+| S12 | Proxy IP/credentials per account × 3 — **editable slot, may be empty at launch** | 2 → 9 | TODO |
+| S13 | Redistribution toggle per account — **never automatic** | 2 → 9 | TODO |
+| S14 | WhatsApp recipient number 1 + number 2 | 1 → 9 | TODO |
+| S15 | Optional per-type alert routing (e.g. approval reminders → Mahmoud only) — spec says &quot;finalise during build&quot; | 8 | OPEN |
+
+---
+
+## E. WhatsApp notifications — spec §9 (all 5)
+
+| ID | Alert | Trigger | Recipients | Must include | Phase | Status |
+|----|-------|---------|------------|--------------|-------|--------|
+| N1 | Hot lead | Score 8–10, **immediately on scoring** | Both | name, platform, score, reasoning, dashboard link | 8 | TODO |
+| N2 | Founder found | Founder detected alongside company message | Both | name, founder name, platform, dashboard link | 8 | TODO |
+| N3 | Account warning | Immediately on account problem | Both | which account, warning type, **specific reason** | 8 | TODO |
+| N4 | Approval reminder | Day&#x27;s messages queued | Mahmoud | count waiting | 8 | TODO |
+| N5 | Daily summary | Run completion | Both | leads by platform, messages by platform, hot/warm/cold, warnings, **finish time, duration** | 8 | TODO |
+
+---
+
+## F. Account safety &amp; proxy plan — spec §11
+
+| ID | Requirement | Phase | Status |
+|----|-------------|-------|--------|
+| P1 | Sticky proxies only — **rotating proxies must never be used** | 2 | TODO |
+| P2 | Residential (or mobile for IG) — **datacenter proxies must never be used** | 2/10 | TODO |
+| P3 | Account → IP is a permanent 1:1 assignment; contexts never mix | 2 | TODO |
+| P4 | Proxy config slot exists from day one even when empty; filling it later is **settings-only, zero code change** | 2 | TODO |
+| P5 | Warm-up: start 5–10/day per account, ramp over 2–4 weeks to 20 IG + 30 LI | 10 | TODO |
+| P6 | Auto warm-up schedule — increments weekly toward the configured max (`core/warmup.py`) | 2/10 | TODO |
+| P7 | **Vary timing/pattern between the 3 accounts** — identical parallel behaviour re-creates the &quot;one operator&quot; signal even on separate IPs | 10 | TODO |
+
+---
+
+## G. Explicitly OUT of scope — spec §15 (listed so they are never accidentally added)
+
+`N/A` for this build. Revisit as a future Phase 2 project.
+
+| ID | Excluded | Note |
+|----|----------|------|
+| X1 | Automated appointment setter / Calendly | Pipeline stage exists, booking is **manually logged** |
+| X2 | Automated meeting-booked alerts | Manual logging only |
+| X3 | Meeting preparation agent | — |
+| X4 | Call summary agent | — |
+| X5 | Proposal generator | — |
+| X6 | Post-meeting nurture sequences (Day 1/3/5/7/14) | — |
+| X7 | Customer support mode | — |
+| X8 | Industry-wide campaign blasting | — |
+| X9 | Meta Ad Library ad-spend detection | Basic &quot;are they running ads&quot; **is** in scope (T6) |
+| X10 | Multi-version messaging (3 tones per lead) | One message per lead |
+| X11 | Smart context-aware re-engagement on live activity | **Basic** re-engagement under follow-up controls **is** in scope (T16) |
+
+---
+
+## H. Open decisions — need Hussein&#x27;s answer before the phase that consumes them
+
+| ID | Question | Needed by | Default I&#x27;ll use if you don&#x27;t specify |
+|----|----------|-----------|---------------------------------------|
+| Q1 | WhatsApp sending method: Twilio, 360dialog, or the informal method? | Phase 7 | Build behind an interface so the provider is swappable; pick Twilio as the reference implementation |
+| Q2 | WhatsApp **notifications** — same provider as sending, or separate? | Phase 8 | Same provider, separate config |
+| Q3 | Reply detection for LinkedIn — poll the inbox via Playwright? | Phase 8 | Poll on each run |
+| Q4 | S15 alert routing per type | Phase 8 | All 5 to both numbers; approval reminder to Mahmoud only |
+| Q5 | Which market/niche for the first real run? | Phase 10 | Left empty in settings, you fill it in |
+| Q6 | Supabase project — created yet? URL + keys | Phase 1 | Blocks Phase 1 |
+| Q7 | Claude API key | Phase 4 | Blocks Phase 4 |
+
+---
+
+## Deviations from the source documents (flagged, not silent)
+
+1. **`runs` table** is created by `02_SUPABASE_SCHEMA.sql` but is missing from the Phase 1
+   verification list in the build plan. It is the data source for D9 (Run Status) and T17
+   (finish time in the daily summary). Treated as a 9th table and verified in Phase 1.
+2. **Build order conflict.** Spec §14 bundles analysis + message generation into one step and
+   orders approval before sending. `01_PHASED_BUILD_PLAN.md` splits them (Phase 4 analysis /
+   Phase 5 messages). The phased build plan wins — the master prompt names it authoritative.
+   No requirement is dropped by either ordering.
+3. **Repo root.** `03_PROJECT_STRUCTURE.md` shows a `nexaris-outreach-agent/` wrapper folder.
+   Built in place instead so the planning documents sit alongside the code rather than in a
+   sibling directory. Structure below that level is exactly as specified.
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">.env.example</span>
+    <span class="file-meta">67 lines &middot; text</span>
+  </div>
+  <p class="filenote">Every environment variable, documented, no real secrets</p>
+  <pre><code># =============================================================================
+# NEXARIS AI OUTREACH AGENT — environment variables
+# =============================================================================
+# This file is committed and contains NO real secrets. Copy the relevant section
+# into agent/.env and dashboard/.env, then fill in real values. Those two files
+# are gitignored and must never be committed.
+#
+#   cp .env.example agent/.env
+#   cp .env.example dashboard/.env
+#
+# The &quot;needed by&quot; note on each block tells you which phase actually requires it —
+# you do not need everything filled in to start.
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# AGENT (agent/.env) — the Python agent, runs on the always-on server
+# -----------------------------------------------------------------------------
+
+# --- Supabase --- needed by: Phase 1 ---
+# Project URL and the SERVICE ROLE key (Settings &gt; API in the Supabase dashboard).
+# The service role key bypasses Row Level Security. It is safe here because the
+# agent runs on a trusted server. NEVER put it in the dashboard.
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_SERVICE_KEY=
+
+# --- Claude API --- needed by: Phase 4 ---
+# From console.anthropic.com. Haiku handles analysis/scoring/founder detection
+# (high volume, cost-efficient); Sonnet writes the messages (better quality).
+ANTHROPIC_API_KEY=
+MODEL_ANALYSIS=claude-haiku-4-5-20251001
+MODEL_MESSAGES=claude-sonnet-5
+
+# --- WhatsApp --- needed by: Phase 7 (sending) and Phase 8 (notifications) ---
+# Provider not finalised yet — see open decision Q1 in REQUIREMENTS_COVERAGE.md.
+WHATSAPP_PROVIDER=twilio
+WHATSAPP_API_KEY=
+WHATSAPP_API_SECRET=
+WHATSAPP_FROM_NUMBER=
+
+# --- Runtime --- needed by: Phase 2 ---
+# Timezone that each account&#x27;s run time is interpreted in.
+TIMEZONE=Asia/Beirut
+# HEADLESS=false shows a visible browser — useful while building discovery in
+# Phase 3. Must be true on the server.
+HEADLESS=true
+# Safety brake for local testing: caps leads per account regardless of the
+# dashboard setting. Leave empty in production.
+DEV_MAX_LEADS_PER_ACCOUNT=
+
+# --- Proxies --- needed by: Phase 10 ---
+# NOTE: proxy credentials are stored PER ACCOUNT in the Supabase `accounts` table
+# and edited from the dashboard — not here. Listed only so you know where they
+# live. Each account gets one dedicated sticky residential IP, never shared, and
+# rotating or datacenter proxies must never be used.
+
+
+# -----------------------------------------------------------------------------
+# DASHBOARD (dashboard/.env) — the React PWA, deployed to Vercel
+# -----------------------------------------------------------------------------
+# Only VITE_-prefixed vars reach the browser. Use the ANON key here, never the
+# service role key — anything in this file is publicly visible in the built app.
+# Row Level Security is what protects the data.
+
+VITE_SUPABASE_URL=https://your-project-ref.supabase.co
+VITE_SUPABASE_ANON_KEY=
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">.gitignore</span>
+    <span class="file-meta">47 lines &middot; text</span>
+  </div>
+  <p class="filenote">What Git is told to never track</p>
+  <pre><code># ── SECRETS — never commit ──
+.env
+.env.local
+.env.*.local
+agent/.env
+dashboard/.env
+*.pem
+*.key
+
+# ── Python ──
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# ── Playwright ──
+playwright-report/
+test-results/
+.playwright/
+browser_profiles/
+
+# ── Node / Vite ──
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.local
+
+# ── Claude Code personal overrides (model/effort per this project) ──
+.claude/settings.local.json
+
+# ── Editors / OS ──
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Logs ──
+*.log
+npm-debug.log*
+logs/
+</code></pre>
+</div>
+
+<h2 class="section-h2">B2. Database (SQL)</h2>
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">02_SUPABASE_SCHEMA.sql</span>
+    <span class="file-meta">229 lines &middot; sql</span>
+  </div>
+  <p class="filenote">The full schema — 9 tables, indexes, seed data</p>
+  <pre><code>-- ============================================================
+-- NEXARIS AI OUTREACH AGENT — SUPABASE SCHEMA
+-- Run this in the Supabase SQL editor.
+-- Walk Hussein through it table by table before running.
+-- ============================================================
+
+-- Enable UUID generation
+create extension if not exists &quot;uuid-ossp&quot;;
+
+-- ============================================================
+-- ACCOUNTS — the 3 outreach accounts, each with its own proxy
+-- ============================================================
+create table if not exists accounts (
+    id                uuid primary key default uuid_generate_v4(),
+    label             text not null,                 -- e.g. &quot;Account 1&quot;
+    platform_handles  jsonb default &#x27;{}&#x27;::jsonb,     -- {linkedin: &quot;...&quot;, instagram: &quot;...&quot;}
+    run_time          time not null default &#x27;09:00&#x27;, -- individual daily run time
+    ig_daily_limit    int  not null default 20,      -- editable
+    linkedin_daily_limit int not null default 30,    -- editable
+    proxy_host        text,                          -- proxy config slot (nullable — can be empty at launch)
+    proxy_port        text,
+    proxy_username    text,
+    proxy_password    text,
+    warmup_current_limit int default 5,              -- current warm-up cap, ramps up over weeks
+    status            text not null default &#x27;active&#x27;,-- active | warned | paused
+    warning_type      text,                          -- e.g. &quot;captcha&quot;, &quot;login_challenge&quot;, &quot;limit_reached&quot;
+    warning_reason    text,                          -- human-readable explanation
+    redistribute_flag boolean default false,         -- Hussein&#x27;s manual decision when paused
+    last_active_at    timestamptz,
+    created_at        timestamptz default now()
+);
+
+-- ============================================================
+-- SETTINGS — single-row global config, editable from dashboard
+-- ============================================================
+create table if not exists settings (
+    id                uuid primary key default uuid_generate_v4(),
+    -- targeting
+    target_niche      text default &#x27;&#x27;,
+    target_industry   text default &#x27;&#x27;,
+    target_location   text default &#x27;&#x27;,               -- country / market
+    target_business_type text default &#x27;&#x27;,
+    outreach_languages text[] default array[&#x27;English&#x27;],
+    -- message style
+    message_style     text default &#x27;discovery&#x27;,      -- direct | discovery
+    style_duration_days int default 7,                -- rotate style after N days
+    style_last_rotated_at timestamptz default now(),
+    -- follow-up / contact rules
+    default_recontact_gap_days int default 30,        -- default gap before 2nd touch
+    max_contacts_per_lead int default 2,              -- HARD RULE — do not exceed
+    -- notifications
+    whatsapp_recipient_1 text,                        -- e.g. Hussein
+    whatsapp_recipient_2 text,                        -- e.g. Mahmoud
+    -- approval
+    approval_required boolean default true,           -- permanent hard gate
+    updated_at        timestamptz default now()
+);
+
+-- ============================================================
+-- LEADS — every business the agent discovers
+-- ============================================================
+create table if not exists leads (
+    id                uuid primary key default uuid_generate_v4(),
+    account_id        uuid references accounts(id),  -- which account found it
+    platform          text not null,                 -- linkedin | instagram
+    -- profile basics
+    business_name     text,
+    profile_url       text,
+    profile_photo_url text,
+    follower_count    int,
+    industry          text,
+    website           text,
+    social_platforms  jsonb default &#x27;[]&#x27;::jsonb,      -- all platforms they&#x27;re active on
+    -- deep analysis
+    company_size      text,
+    revenue_tier      text,
+    ads_running       boolean,
+    weak_points       jsonb default &#x27;[]&#x27;::jsonb,      -- full list, shown in dashboard
+    ai_opportunities  jsonb default &#x27;[]&#x27;::jsonb,
+    -- founder detection
+    founder_found     boolean default false,
+    founder_name      text,
+    founder_source_phrase text,                       -- the bio phrase that matched
+    -- whatsapp detection
+    whatsapp_found    boolean default false,
+    whatsapp_number   text,
+    -- scoring
+    score             int,                            -- 1-10
+    temperature       text,                           -- hot | warm | cold
+    score_reasoning   text,                           -- the WHY
+    -- message
+    generated_message text,
+    message_style_used text,
+    -- lifecycle
+    status            text not null default &#x27;discovered&#x27;,
+                      -- discovered | analyzed | awaiting_approval | approved
+                      -- | manual_send_pending | contacted | replied | interested
+                      -- | meeting_booked | deal_closed | lost
+    contact_count     int default 0,                  -- 0, 1, or 2 (max 2)
+    first_contacted_at timestamptz,
+    notes             text,
+    created_at        timestamptz default now(),
+    updated_at        timestamptz default now()
+);
+
+-- ============================================================
+-- MESSAGES — every message sent/queued per lead
+-- ============================================================
+create table if not exists messages (
+    id                uuid primary key default uuid_generate_v4(),
+    lead_id           uuid references leads(id) on delete cascade,
+    channel           text not null,                 -- linkedin | whatsapp | instagram
+    body              text not null,
+    is_followup       boolean default false,
+    is_reengagement   boolean default false,
+    -- approval
+    approval_status   text default &#x27;awaiting&#x27;,       -- awaiting | approved | held | edited
+    approved_by       text,                          -- Mahmoud
+    approved_at       timestamptz,
+    edited_body       text,                          -- if Mahmoud edited it
+    -- send
+    send_status       text default &#x27;pending&#x27;,        -- pending | sent | manual_pending | failed
+    sent_at           timestamptz,
+    sent_via_account  uuid references accounts(id),
+    created_at        timestamptz default now()
+);
+
+-- ============================================================
+-- PIPELINE_HISTORY — every stage change, timestamped
+-- ============================================================
+create table if not exists pipeline_history (
+    id                uuid primary key default uuid_generate_v4(),
+    lead_id           uuid references leads(id) on delete cascade,
+    from_stage        text,
+    to_stage          text not null,
+    changed_by        text default &#x27;agent&#x27;,          -- agent | hussein | mahmoud
+    changed_at        timestamptz default now()
+);
+
+-- ============================================================
+-- FOLLOW_UPS — scheduled follow-ups / re-engagements per lead
+-- ============================================================
+create table if not exists follow_ups (
+    id                uuid primary key default uuid_generate_v4(),
+    lead_id           uuid references leads(id) on delete cascade,
+    enabled           boolean default false,          -- per-lead on/off (Hussein&#x27;s choice)
+    scheduled_for     timestamptz,                    -- Hussein sets the timing
+    is_reengagement   boolean default false,
+    status            text default &#x27;scheduled&#x27;,       -- scheduled | sent | cancelled | paused
+    created_at        timestamptz default now()
+);
+
+-- ============================================================
+-- CLIENT_HISTORY — permanent record of EVERY analyzed lead
+-- (never resets; separate from the live feed)
+-- ============================================================
+create table if not exists client_history (
+    id                uuid primary key default uuid_generate_v4(),
+    lead_id           uuid references leads(id) on delete set null,
+    business_name     text,
+    platform          text,
+    industry          text,
+    score             int,
+    temperature       text,
+    weak_points       jsonb,
+    founder_found     boolean,
+    founder_name      text,
+    contacted         boolean default false,
+    snapshot          jsonb,                          -- full lead snapshot at analysis time
+    analyzed_at       timestamptz default now()
+);
+
+-- ============================================================
+-- NOTIFICATIONS_LOG — every WhatsApp alert sent
+-- ============================================================
+create table if not exists notifications_log (
+    id                uuid primary key default uuid_generate_v4(),
+    type              text not null,                 -- hot_lead | founder | warning | approval_reminder | daily_summary
+    recipients        text[],                        -- numbers it was sent to
+    body              text,
+    related_lead_id   uuid references leads(id) on delete set null,
+    sent_at           timestamptz default now()
+);
+
+-- ============================================================
+-- RUNS — one row per daily agent run (for finish-time tracking)
+-- ============================================================
+create table if not exists runs (
+    id                uuid primary key default uuid_generate_v4(),
+    account_id        uuid references accounts(id),
+    started_at        timestamptz default now(),
+    finished_at       timestamptz,
+    leads_found       int default 0,
+    messages_sent     int default 0,
+    status            text default &#x27;running&#x27;,        -- running | completed | error
+    notes             text
+);
+
+-- ============================================================
+-- HELPFUL INDEXES
+-- ============================================================
+create index if not exists idx_leads_status      on leads(status);
+create index if not exists idx_leads_temperature on leads(temperature);
+create index if not exists idx_leads_platform    on leads(platform);
+create index if not exists idx_leads_account     on leads(account_id);
+create index if not exists idx_messages_lead     on messages(lead_id);
+create index if not exists idx_messages_approval on messages(approval_status);
+create index if not exists idx_pipeline_lead     on pipeline_history(lead_id);
+create index if not exists idx_followups_sched   on follow_ups(scheduled_for);
+
+-- ============================================================
+-- SEED — insert the 3 accounts and one settings row
+-- (Hussein: replace the handles later with real account info)
+-- ============================================================
+insert into accounts (label, run_time, ig_daily_limit, linkedin_daily_limit, warmup_current_limit)
+values
+  (&#x27;Account 1&#x27;, &#x27;09:00&#x27;, 20, 30, 5),
+  (&#x27;Account 2&#x27;, &#x27;11:00&#x27;, 20, 30, 5),
+  (&#x27;Account 3&#x27;, &#x27;13:00&#x27;, 20, 30, 5)
+on conflict do nothing;
+
+insert into settings (message_style, style_duration_days, default_recontact_gap_days)
+select &#x27;discovery&#x27;, 7, 30
+where not exists (select 1 from settings);
+
+-- ============================================================
+-- END OF SCHEMA
+-- ============================================================
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">database/policies.sql</span>
+    <span class="file-meta">95 lines &middot; sql</span>
+  </div>
+  <p class="filenote">Row Level Security for all 9 tables</p>
+  <pre><code>-- ============================================================
+-- NEXARIS AI OUTREACH AGENT — ROW LEVEL SECURITY
+-- Run this in the Supabase SQL editor AFTER 02_SUPABASE_SCHEMA.sql.
+-- ============================================================
+--
+-- WHY THIS FILE EXISTS
+-- Creating a table does not protect it. Until Row Level Security (RLS) is
+-- enabled, the access rules are wide open at the policy layer and Supabase
+-- will warn you that every table is unprotected.
+--
+-- THE MODEL (deliberately simple — only 2 users)
+-- This system has exactly two people: Hussein and Mahmoud. Both log in through
+-- Supabase Auth, so both carry the built-in `authenticated` role. There is no
+-- &quot;public visitor&quot; who should ever see a lead or a message.
+--
+-- So the rule for every table is the same:
+--   * Enable RLS.
+--   * Allow the `authenticated` role to do everything (select/insert/update/delete).
+--   * Everyone else (the `anon` role) gets nothing.
+--
+-- The AGENT is unaffected by these policies: it connects with the SERVICE ROLE
+-- key, which bypasses RLS entirely. RLS only governs the DASHBOARD, which uses
+-- the anon key + a logged-in session.
+--
+-- If later you want finer control (e.g. Mahmoud can approve but not delete
+-- leads), you replace the blanket policy on a specific table with per-command
+-- policies. For now, both users are trusted owners.
+-- ============================================================
+
+
+-- Helper: enable RLS and grant authenticated users full access on one table.
+-- Postgres has no &quot;apply to all tables&quot; shortcut for policies, so we repeat the
+-- same three statements per table. Kept explicit so it is easy to read and to
+-- later override a single table without touching the rest.
+
+-- ---- accounts ----
+alter table accounts enable row level security;
+drop policy if exists &quot;authenticated full access&quot; on accounts;
+create policy &quot;authenticated full access&quot; on accounts
+  for all to authenticated using (true) with check (true);
+
+-- ---- settings ----
+alter table settings enable row level security;
+drop policy if exists &quot;authenticated full access&quot; on settings;
+create policy &quot;authenticated full access&quot; on settings
+  for all to authenticated using (true) with check (true);
+
+-- ---- leads ----
+alter table leads enable row level security;
+drop policy if exists &quot;authenticated full access&quot; on leads;
+create policy &quot;authenticated full access&quot; on leads
+  for all to authenticated using (true) with check (true);
+
+-- ---- messages ----
+alter table messages enable row level security;
+drop policy if exists &quot;authenticated full access&quot; on messages;
+create policy &quot;authenticated full access&quot; on messages
+  for all to authenticated using (true) with check (true);
+
+-- ---- pipeline_history ----
+alter table pipeline_history enable row level security;
+drop policy if exists &quot;authenticated full access&quot; on pipeline_history;
+create policy &quot;authenticated full access&quot; on pipeline_history
+  for all to authenticated using (true) with check (true);
+
+-- ---- follow_ups ----
+alter table follow_ups enable row level security;
+drop policy if exists &quot;authenticated full access&quot; on follow_ups;
+create policy &quot;authenticated full access&quot; on follow_ups
+  for all to authenticated using (true) with check (true);
+
+-- ---- client_history ----
+alter table client_history enable row level security;
+drop policy if exists &quot;authenticated full access&quot; on client_history;
+create policy &quot;authenticated full access&quot; on client_history
+  for all to authenticated using (true) with check (true);
+
+-- ---- notifications_log ----
+alter table notifications_log enable row level security;
+drop policy if exists &quot;authenticated full access&quot; on notifications_log;
+create policy &quot;authenticated full access&quot; on notifications_log
+  for all to authenticated using (true) with check (true);
+
+-- ---- runs ----
+alter table runs enable row level security;
+drop policy if exists &quot;authenticated full access&quot; on runs;
+create policy &quot;authenticated full access&quot; on runs
+  for all to authenticated using (true) with check (true);
+
+-- ============================================================
+-- VERIFY (optional): after running, this should list 9 rows, all rowsecurity=true
+--   select tablename, rowsecurity from pg_tables
+--   where schemaname = &#x27;public&#x27; order by tablename;
+-- ============================================================
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">database/schema.sql</span>
+    <span class="file-meta">229 lines &middot; sql</span>
+  </div>
+  <p class="filenote">Reference copy of the schema (identical to 02_SUPABASE_SCHEMA.sql)</p>
+  <pre><code>-- ============================================================
+-- NEXARIS AI OUTREACH AGENT — SUPABASE SCHEMA
+-- Run this in the Supabase SQL editor.
+-- Walk Hussein through it table by table before running.
+-- ============================================================
+
+-- Enable UUID generation
+create extension if not exists &quot;uuid-ossp&quot;;
+
+-- ============================================================
+-- ACCOUNTS — the 3 outreach accounts, each with its own proxy
+-- ============================================================
+create table if not exists accounts (
+    id                uuid primary key default uuid_generate_v4(),
+    label             text not null,                 -- e.g. &quot;Account 1&quot;
+    platform_handles  jsonb default &#x27;{}&#x27;::jsonb,     -- {linkedin: &quot;...&quot;, instagram: &quot;...&quot;}
+    run_time          time not null default &#x27;09:00&#x27;, -- individual daily run time
+    ig_daily_limit    int  not null default 20,      -- editable
+    linkedin_daily_limit int not null default 30,    -- editable
+    proxy_host        text,                          -- proxy config slot (nullable — can be empty at launch)
+    proxy_port        text,
+    proxy_username    text,
+    proxy_password    text,
+    warmup_current_limit int default 5,              -- current warm-up cap, ramps up over weeks
+    status            text not null default &#x27;active&#x27;,-- active | warned | paused
+    warning_type      text,                          -- e.g. &quot;captcha&quot;, &quot;login_challenge&quot;, &quot;limit_reached&quot;
+    warning_reason    text,                          -- human-readable explanation
+    redistribute_flag boolean default false,         -- Hussein&#x27;s manual decision when paused
+    last_active_at    timestamptz,
+    created_at        timestamptz default now()
+);
+
+-- ============================================================
+-- SETTINGS — single-row global config, editable from dashboard
+-- ============================================================
+create table if not exists settings (
+    id                uuid primary key default uuid_generate_v4(),
+    -- targeting
+    target_niche      text default &#x27;&#x27;,
+    target_industry   text default &#x27;&#x27;,
+    target_location   text default &#x27;&#x27;,               -- country / market
+    target_business_type text default &#x27;&#x27;,
+    outreach_languages text[] default array[&#x27;English&#x27;],
+    -- message style
+    message_style     text default &#x27;discovery&#x27;,      -- direct | discovery
+    style_duration_days int default 7,                -- rotate style after N days
+    style_last_rotated_at timestamptz default now(),
+    -- follow-up / contact rules
+    default_recontact_gap_days int default 30,        -- default gap before 2nd touch
+    max_contacts_per_lead int default 2,              -- HARD RULE — do not exceed
+    -- notifications
+    whatsapp_recipient_1 text,                        -- e.g. Hussein
+    whatsapp_recipient_2 text,                        -- e.g. Mahmoud
+    -- approval
+    approval_required boolean default true,           -- permanent hard gate
+    updated_at        timestamptz default now()
+);
+
+-- ============================================================
+-- LEADS — every business the agent discovers
+-- ============================================================
+create table if not exists leads (
+    id                uuid primary key default uuid_generate_v4(),
+    account_id        uuid references accounts(id),  -- which account found it
+    platform          text not null,                 -- linkedin | instagram
+    -- profile basics
+    business_name     text,
+    profile_url       text,
+    profile_photo_url text,
+    follower_count    int,
+    industry          text,
+    website           text,
+    social_platforms  jsonb default &#x27;[]&#x27;::jsonb,      -- all platforms they&#x27;re active on
+    -- deep analysis
+    company_size      text,
+    revenue_tier      text,
+    ads_running       boolean,
+    weak_points       jsonb default &#x27;[]&#x27;::jsonb,      -- full list, shown in dashboard
+    ai_opportunities  jsonb default &#x27;[]&#x27;::jsonb,
+    -- founder detection
+    founder_found     boolean default false,
+    founder_name      text,
+    founder_source_phrase text,                       -- the bio phrase that matched
+    -- whatsapp detection
+    whatsapp_found    boolean default false,
+    whatsapp_number   text,
+    -- scoring
+    score             int,                            -- 1-10
+    temperature       text,                           -- hot | warm | cold
+    score_reasoning   text,                           -- the WHY
+    -- message
+    generated_message text,
+    message_style_used text,
+    -- lifecycle
+    status            text not null default &#x27;discovered&#x27;,
+                      -- discovered | analyzed | awaiting_approval | approved
+                      -- | manual_send_pending | contacted | replied | interested
+                      -- | meeting_booked | deal_closed | lost
+    contact_count     int default 0,                  -- 0, 1, or 2 (max 2)
+    first_contacted_at timestamptz,
+    notes             text,
+    created_at        timestamptz default now(),
+    updated_at        timestamptz default now()
+);
+
+-- ============================================================
+-- MESSAGES — every message sent/queued per lead
+-- ============================================================
+create table if not exists messages (
+    id                uuid primary key default uuid_generate_v4(),
+    lead_id           uuid references leads(id) on delete cascade,
+    channel           text not null,                 -- linkedin | whatsapp | instagram
+    body              text not null,
+    is_followup       boolean default false,
+    is_reengagement   boolean default false,
+    -- approval
+    approval_status   text default &#x27;awaiting&#x27;,       -- awaiting | approved | held | edited
+    approved_by       text,                          -- Mahmoud
+    approved_at       timestamptz,
+    edited_body       text,                          -- if Mahmoud edited it
+    -- send
+    send_status       text default &#x27;pending&#x27;,        -- pending | sent | manual_pending | failed
+    sent_at           timestamptz,
+    sent_via_account  uuid references accounts(id),
+    created_at        timestamptz default now()
+);
+
+-- ============================================================
+-- PIPELINE_HISTORY — every stage change, timestamped
+-- ============================================================
+create table if not exists pipeline_history (
+    id                uuid primary key default uuid_generate_v4(),
+    lead_id           uuid references leads(id) on delete cascade,
+    from_stage        text,
+    to_stage          text not null,
+    changed_by        text default &#x27;agent&#x27;,          -- agent | hussein | mahmoud
+    changed_at        timestamptz default now()
+);
+
+-- ============================================================
+-- FOLLOW_UPS — scheduled follow-ups / re-engagements per lead
+-- ============================================================
+create table if not exists follow_ups (
+    id                uuid primary key default uuid_generate_v4(),
+    lead_id           uuid references leads(id) on delete cascade,
+    enabled           boolean default false,          -- per-lead on/off (Hussein&#x27;s choice)
+    scheduled_for     timestamptz,                    -- Hussein sets the timing
+    is_reengagement   boolean default false,
+    status            text default &#x27;scheduled&#x27;,       -- scheduled | sent | cancelled | paused
+    created_at        timestamptz default now()
+);
+
+-- ============================================================
+-- CLIENT_HISTORY — permanent record of EVERY analyzed lead
+-- (never resets; separate from the live feed)
+-- ============================================================
+create table if not exists client_history (
+    id                uuid primary key default uuid_generate_v4(),
+    lead_id           uuid references leads(id) on delete set null,
+    business_name     text,
+    platform          text,
+    industry          text,
+    score             int,
+    temperature       text,
+    weak_points       jsonb,
+    founder_found     boolean,
+    founder_name      text,
+    contacted         boolean default false,
+    snapshot          jsonb,                          -- full lead snapshot at analysis time
+    analyzed_at       timestamptz default now()
+);
+
+-- ============================================================
+-- NOTIFICATIONS_LOG — every WhatsApp alert sent
+-- ============================================================
+create table if not exists notifications_log (
+    id                uuid primary key default uuid_generate_v4(),
+    type              text not null,                 -- hot_lead | founder | warning | approval_reminder | daily_summary
+    recipients        text[],                        -- numbers it was sent to
+    body              text,
+    related_lead_id   uuid references leads(id) on delete set null,
+    sent_at           timestamptz default now()
+);
+
+-- ============================================================
+-- RUNS — one row per daily agent run (for finish-time tracking)
+-- ============================================================
+create table if not exists runs (
+    id                uuid primary key default uuid_generate_v4(),
+    account_id        uuid references accounts(id),
+    started_at        timestamptz default now(),
+    finished_at       timestamptz,
+    leads_found       int default 0,
+    messages_sent     int default 0,
+    status            text default &#x27;running&#x27;,        -- running | completed | error
+    notes             text
+);
+
+-- ============================================================
+-- HELPFUL INDEXES
+-- ============================================================
+create index if not exists idx_leads_status      on leads(status);
+create index if not exists idx_leads_temperature on leads(temperature);
+create index if not exists idx_leads_platform    on leads(platform);
+create index if not exists idx_leads_account     on leads(account_id);
+create index if not exists idx_messages_lead     on messages(lead_id);
+create index if not exists idx_messages_approval on messages(approval_status);
+create index if not exists idx_pipeline_lead     on pipeline_history(lead_id);
+create index if not exists idx_followups_sched   on follow_ups(scheduled_for);
+
+-- ============================================================
+-- SEED — insert the 3 accounts and one settings row
+-- (Hussein: replace the handles later with real account info)
+-- ============================================================
+insert into accounts (label, run_time, ig_daily_limit, linkedin_daily_limit, warmup_current_limit)
+values
+  (&#x27;Account 1&#x27;, &#x27;09:00&#x27;, 20, 30, 5),
+  (&#x27;Account 2&#x27;, &#x27;11:00&#x27;, 20, 30, 5),
+  (&#x27;Account 3&#x27;, &#x27;13:00&#x27;, 20, 30, 5)
+on conflict do nothing;
+
+insert into settings (message_style, style_duration_days, default_recontact_gap_days)
+select &#x27;discovery&#x27;, 7, 30
+where not exists (select 1 from settings);
+
+-- ============================================================
+-- END OF SCHEMA
+-- ============================================================
+</code></pre>
+</div>
+
+<h2 class="section-h2">B3. Backend — Python Agent: Core</h2>
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/config.py</span>
+    <span class="file-meta">69 lines &middot; python</span>
+  </div>
+  <p class="filenote">The single place every secret/setting is read from</p>
+  <pre><code>&quot;&quot;&quot;
+Central configuration for the agent.
+
+Every secret and environment-specific value is read here and nowhere else, so there is
+exactly one place to look when something is misconfigured. Values come from agent/.env
+(never committed) — see .env.example in the repo root for the full list.
+&quot;&quot;&quot;
+
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# agent/.env sits next to this file. load_dotenv is a no-op if the file doesn&#x27;t exist,
+# which is what we want on the server where real env vars are set by the OS instead.
+AGENT_DIR = Path(__file__).parent
+load_dotenv(AGENT_DIR / &quot;.env&quot;)
+
+
+def _get(key: str, default: str | None = None) -&gt; str | None:
+    &quot;&quot;&quot;Read an env var, treating an empty string the same as missing.&quot;&quot;&quot;
+    value = os.getenv(key, default)
+    return value if value else default
+
+
+# ── Supabase ──────────────────────────────────────────────────────────────────
+# The agent uses the SERVICE ROLE key (full read/write, bypasses RLS) because it runs
+# on a trusted server. The dashboard uses the anon key instead — never swap these.
+SUPABASE_URL = _get(&quot;SUPABASE_URL&quot;)
+SUPABASE_SERVICE_KEY = _get(&quot;SUPABASE_SERVICE_KEY&quot;)
+
+# ── Claude API ────────────────────────────────────────────────────────────────
+ANTHROPIC_API_KEY = _get(&quot;ANTHROPIC_API_KEY&quot;)
+
+# Model split per the spec: Haiku for the high-volume analysis work (cost-efficient),
+# Sonnet for message generation (better writing quality drives reply rates).
+MODEL_ANALYSIS = _get(&quot;MODEL_ANALYSIS&quot;, &quot;claude-haiku-4-5-20251001&quot;)
+MODEL_MESSAGES = _get(&quot;MODEL_MESSAGES&quot;, &quot;claude-sonnet-5&quot;)
+
+# ── WhatsApp (sending + the 5 notification types) ─────────────────────────────
+# Provider is not finalised yet (open decision Q1 in REQUIREMENTS_COVERAGE.md).
+# Phase 7 will build behind an interface so this can be swapped without code changes.
+WHATSAPP_PROVIDER = _get(&quot;WHATSAPP_PROVIDER&quot;, &quot;twilio&quot;)
+WHATSAPP_API_KEY = _get(&quot;WHATSAPP_API_KEY&quot;)
+WHATSAPP_API_SECRET = _get(&quot;WHATSAPP_API_SECRET&quot;)
+WHATSAPP_FROM_NUMBER = _get(&quot;WHATSAPP_FROM_NUMBER&quot;)
+
+# ── Runtime ───────────────────────────────────────────────────────────────────
+# Timezone that per-account run times are interpreted in.
+TIMEZONE = _get(&quot;TIMEZONE&quot;, &quot;Asia/Beirut&quot;)
+
+# When true, Playwright shows a visible browser window. Useful while building
+# discovery in Phase 3; must be false on the headless server.
+HEADLESS = _get(&quot;HEADLESS&quot;, &quot;true&quot;).lower() == &quot;true&quot;
+
+# Safety brake for local testing — caps leads per account regardless of the dashboard
+# setting. Leave empty in production so the dashboard limits apply.
+DEV_MAX_LEADS_PER_ACCOUNT = _get(&quot;DEV_MAX_LEADS_PER_ACCOUNT&quot;)
+
+
+def missing_required(keys: list[str]) -&gt; list[str]:
+    &quot;&quot;&quot;
+    Return which of the given config keys are unset.
+
+    Each phase calls this with only the keys it actually needs, so Phase 0 can run
+    with an empty .env while Phase 4 can refuse to start without a Claude API key.
+    &quot;&quot;&quot;
+    return [key for key in keys if not globals().get(key)]
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/main.py</span>
+    <span class="file-meta">87 lines &middot; python</span>
+  </div>
+  <p class="filenote">Entry point — currently the Phase 0 self-check</p>
+  <pre><code>&quot;&quot;&quot;
+Nexaris AI Outreach Agent — entry point.
+
+Phase 0: this runs a self-check and reports what is configured and what isn&#x27;t.
+It does no real work yet — no browsing, no Claude calls, no sending.
+
+From Phase 2 onward this becomes the daily run loop: for each account, at its own
+scheduled time, open a session and work through Tasks 1-17 from the spec.
+
+Run it with:   python -m agent.main
+&quot;&quot;&quot;
+
+import sys
+
+from agent import config
+from agent.db import client as db
+
+
+def _status(ok: bool) -&gt; str:
+    &quot;&quot;&quot;Green tick / grey dash, so the output is scannable at a glance.&quot;&quot;&quot;
+    return &quot;[ok]  &quot; if ok else &quot;[--]  &quot;
+
+
+def self_check() -&gt; bool:
+    &quot;&quot;&quot;
+    Report which parts of the system are configured.
+
+    Nothing here is fatal in Phase 0 — an empty .env is the expected state right after
+    setup. The point is to show Hussein exactly what still needs filling in and which
+    phase will need it.
+    &quot;&quot;&quot;
+    print(&quot;=&quot; * 62)
+    print(&quot;  NEXARIS AI OUTREACH AGENT - setup self-check&quot;)
+    print(&quot;=&quot; * 62)
+    print()
+
+    checks = [
+        (&quot;Python runtime&quot;, True, f&quot;Python {sys.version.split()[0]}&quot;),
+        (
+            &quot;Supabase credentials&quot;,
+            db.is_configured(),
+            &quot;set&quot; if db.is_configured() else &quot;not set - needed for Phase 1&quot;,
+        ),
+        (
+            &quot;Claude API key&quot;,
+            bool(config.ANTHROPIC_API_KEY),
+            &quot;set&quot; if config.ANTHROPIC_API_KEY else &quot;not set - needed for Phase 4&quot;,
+        ),
+        (
+            &quot;WhatsApp credentials&quot;,
+            bool(config.WHATSAPP_API_KEY),
+            &quot;set&quot; if config.WHATSAPP_API_KEY else &quot;not set - needed for Phase 7&quot;,
+        ),
+    ]
+
+    for label, ok, detail in checks:
+        print(f&quot;  {_status(ok)}{label:&lt;24} {detail}&quot;)
+
+    # Only attempt a live connection when credentials exist, otherwise the error is
+    # just noise repeating what the check above already said.
+    if db.is_configured():
+        ok, message = db.check_connection()
+        print(f&quot;  {_status(ok)}{&#x27;Database reachable&#x27;:&lt;24} {message}&quot;)
+
+    print()
+    print(f&quot;  Models:    analysis={config.MODEL_ANALYSIS}&quot;)
+    print(f&quot;             messages={config.MODEL_MESSAGES}&quot;)
+    print(f&quot;  Timezone:  {config.TIMEZONE}&quot;)
+    print(f&quot;  Headless:  {config.HEADLESS}&quot;)
+    print()
+    print(&quot;-&quot; * 62)
+    print(&quot;  Phase 0 complete: the agent runs. It does no real work yet.&quot;)
+    print(&quot;  Next: Phase 1 - create the database schema in Supabase.&quot;)
+    print(&quot;-&quot; * 62)
+
+    return True
+
+
+def main() -&gt; int:
+    &quot;&quot;&quot;Entry point. Returns a process exit code.&quot;&quot;&quot;
+    self_check()
+    return 0
+
+
+if __name__ == &quot;__main__&quot;:
+    raise SystemExit(main())
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/requirements.txt</span>
+    <span class="file-meta">32 lines &middot; text</span>
+  </div>
+  <p class="filenote">Python dependencies</p>
+  <pre><code># ── Nexaris Outreach Agent — Python dependencies ──
+# Install:  pip install -r requirements.txt
+#           playwright install chromium
+
+# Pins are minimum-version (&gt;=) rather than exact (==) because supabase and anthropic
+# each constrain httpx to their own range — exact pins made the set unresolvable.
+
+# Database — Supabase (Postgres + Auth + Realtime)
+supabase&gt;=2.10.0
+
+# Claude API — Haiku for analysis/scoring, Sonnet for message generation
+anthropic&gt;=0.42.0
+
+# Browser automation — LinkedIn/Instagram discovery + LinkedIn sending
+playwright&gt;=1.49.1
+
+# Environment variables from agent/.env
+python-dotenv&gt;=1.0.1
+
+# Per-account scheduling (each account runs at its own time)
+APScheduler&gt;=3.11.0
+
+# HTTP — website analysis, WhatsApp API calls.
+# Unpinned: supabase and anthropic both depend on it and pick a compatible version.
+httpx
+
+# HTML parsing for website weak-point analysis (Phase 4)
+beautifulsoup4&gt;=4.12.3
+
+# Timezone handling for per-account run times
+pytz&gt;=2024.2
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/scheduler.py</span>
+    <span class="file-meta">10 lines &middot; python</span>
+  </div>
+  <p class="filenote">Stub — Phase 2</p>
+  <pre><code>&quot;&quot;&quot;
+Runs each account at its own configured time.
+
+Built in Phase 2. Not implemented yet.
+
+Each of the 3 accounts has an independent run time, staggered through the day
+and editable from the dashboard. Opens a row in `runs` at start and closes it
+with the finish time -- that&#x27;s what the dashboard Run Status panel displays.
+&quot;&quot;&quot;
+</code></pre>
+</div>
+
+<h2 class="section-h2">B4. Backend — Python Agent: Database Layer</h2>
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/db/client.py</span>
+    <span class="file-meta">63 lines &middot; python</span>
+  </div>
+  <p class="filenote">Lazy Supabase client, service-role key</p>
+  <pre><code>&quot;&quot;&quot;
+Supabase connection for the agent.
+
+One shared client for the whole process. Created lazily on first use so that importing
+this module never fails when credentials aren&#x27;t set yet (Phase 0 runs without them).
+&quot;&quot;&quot;
+
+from supabase import Client, create_client
+
+from agent import config
+
+# Module-level cache — create_client opens a connection pool, so we make exactly one.
+_client: Client | None = None
+
+
+class SupabaseNotConfigured(RuntimeError):
+    &quot;&quot;&quot;Raised when the agent needs the database but credentials are missing.&quot;&quot;&quot;
+
+
+def get_client() -&gt; Client:
+    &quot;&quot;&quot;
+    Return the shared Supabase client, creating it on first call.
+
+    Uses the service role key: the agent runs on a trusted server and needs full
+    read/write access across all tables, bypassing Row Level Security.
+    &quot;&quot;&quot;
+    global _client
+
+    if _client is None:
+        missing = config.missing_required([&quot;SUPABASE_URL&quot;, &quot;SUPABASE_SERVICE_KEY&quot;])
+        if missing:
+            raise SupabaseNotConfigured(
+                f&quot;Missing {&#x27;, &#x27;.join(missing)} in agent/.env — &quot;
+                &quot;copy .env.example and fill in your Supabase project details.&quot;
+            )
+        _client = create_client(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY)
+
+    return _client
+
+
+def is_configured() -&gt; bool:
+    &quot;&quot;&quot;True when Supabase credentials are present. Lets callers degrade gracefully.&quot;&quot;&quot;
+    return not config.missing_required([&quot;SUPABASE_URL&quot;, &quot;SUPABASE_SERVICE_KEY&quot;])
+
+
+def check_connection() -&gt; tuple[bool, str]:
+    &quot;&quot;&quot;
+    Verify the agent can actually reach the database.
+
+    Returns (ok, message) rather than raising, because this is used by the Phase 0
+    health check where a failure is informational, not fatal.
+    &quot;&quot;&quot;
+    if not is_configured():
+        return False, &quot;Supabase credentials not set in agent/.env&quot;
+
+    try:
+        # settings is a single-row table that exists from the schema onward. Selecting
+        # one row is the cheapest possible proof that the connection and keys work.
+        get_client().table(&quot;settings&quot;).select(&quot;id&quot;).limit(1).execute()
+        return True, &quot;Connected to Supabase&quot;
+    except Exception as exc:  # noqa: BLE001 — surface any connection problem verbatim
+        return False, f&quot;Supabase connection failed: {exc}&quot;
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/db/repositories.py</span>
+    <span class="file-meta">317 lines &middot; python</span>
+  </div>
+  <p class="filenote">The data-access layer — 25 functions across all 9 tables</p>
+  <pre><code>&quot;&quot;&quot;
+Data-access layer — the ONLY place that reads or writes Supabase tables.
+
+Every other module in the agent goes through the functions here instead of
+touching the database directly. Two payoffs:
+
+  1. If the schema changes, this one file changes — not every caller.
+  2. Callers read like plain English: `repositories.insert_lead(...)`,
+     `repositories.get_settings()`. No SQL leaks into the business logic.
+
+The module is organised one section per table, in the same order as
+02_SUPABASE_SCHEMA.sql: accounts, settings, leads, messages, pipeline_history,
+follow_ups, client_history, notifications_log, runs.
+
+All functions use the shared service-role client from db/client.py, so they run
+on the trusted server with full access and bypass Row Level Security.
+&quot;&quot;&quot;
+
+from __future__ import annotations
+
+from typing import Any
+
+from agent.db.client import get_client
+
+# Type alias: a database row is just a dict of column -&gt; value.
+Row = dict[str, Any]
+
+
+# ════════════════════════════════════════════════════════════════════════
+# ACCOUNTS — the 3 outreach accounts, each with its own proxy slot
+# ════════════════════════════════════════════════════════════════════════
+
+def list_accounts() -&gt; list[Row]:
+    &quot;&quot;&quot;All accounts, oldest first. Used by the account pool at run start.&quot;&quot;&quot;
+    res = get_client().table(&quot;accounts&quot;).select(&quot;*&quot;).order(&quot;created_at&quot;).execute()
+    return res.data
+
+
+def get_account(account_id: str) -&gt; Row | None:
+    &quot;&quot;&quot;One account by id, or None if it doesn&#x27;t exist.&quot;&quot;&quot;
+    res = get_client().table(&quot;accounts&quot;).select(&quot;*&quot;).eq(&quot;id&quot;, account_id).limit(1).execute()
+    return res.data[0] if res.data else None
+
+
+def update_account(account_id: str, fields: Row) -&gt; Row:
+    &quot;&quot;&quot;Patch one account (e.g. status, warning fields, proxy creds, warm-up cap).&quot;&quot;&quot;
+    res = get_client().table(&quot;accounts&quot;).update(fields).eq(&quot;id&quot;, account_id).execute()
+    return res.data[0]
+
+
+def set_account_warning(account_id: str, warning_type: str, reason: str) -&gt; Row:
+    &quot;&quot;&quot;
+    Record an account warning and pause it.
+
+    Core rule R9: warnings carry a specific TYPE and REASON, never generic, and
+    the account is paused. Quota is never redistributed automatically — that stays
+    a manual decision, so we only raise the flag, we don&#x27;t act on it.
+    &quot;&quot;&quot;
+    return update_account(account_id, {
+        &quot;status&quot;: &quot;paused&quot;,
+        &quot;warning_type&quot;: warning_type,
+        &quot;warning_reason&quot;: reason,
+    })
+
+
+# ════════════════════════════════════════════════════════════════════════
+# SETTINGS — single global row, edited from the dashboard
+# ════════════════════════════════════════════════════════════════════════
+
+def get_settings() -&gt; Row | None:
+    &quot;&quot;&quot;
+    The one settings row. The agent loads this at the start of every run (Task 1)
+    to pick up niche, location, language, targets, message style, and so on.
+    &quot;&quot;&quot;
+    res = get_client().table(&quot;settings&quot;).select(&quot;*&quot;).limit(1).execute()
+    return res.data[0] if res.data else None
+
+
+def update_settings(fields: Row) -&gt; Row:
+    &quot;&quot;&quot;Patch the settings row. `id` is looked up so callers don&#x27;t have to pass it.&quot;&quot;&quot;
+    current = get_settings()
+    if current is None:
+        raise RuntimeError(&quot;No settings row exists — run the schema seed first.&quot;)
+    res = get_client().table(&quot;settings&quot;).update(fields).eq(&quot;id&quot;, current[&quot;id&quot;]).execute()
+    return res.data[0]
+
+
+# ════════════════════════════════════════════════════════════════════════
+# LEADS — every business the agent discovers
+# ════════════════════════════════════════════════════════════════════════
+
+def insert_lead(lead: Row) -&gt; Row:
+    &quot;&quot;&quot;Insert a freshly discovered lead. Returns the row with its generated id.&quot;&quot;&quot;
+    res = get_client().table(&quot;leads&quot;).insert(lead).execute()
+    return res.data[0]
+
+
+def update_lead(lead_id: str, fields: Row) -&gt; Row:
+    &quot;&quot;&quot;Patch a lead (analysis results, score, generated message, status, ...).&quot;&quot;&quot;
+    res = get_client().table(&quot;leads&quot;).update(fields).eq(&quot;id&quot;, lead_id).execute()
+    return res.data[0]
+
+
+def get_lead(lead_id: str) -&gt; Row | None:
+    res = get_client().table(&quot;leads&quot;).select(&quot;*&quot;).eq(&quot;id&quot;, lead_id).limit(1).execute()
+    return res.data[0] if res.data else None
+
+
+def leads_by_status(status: str) -&gt; list[Row]:
+    &quot;&quot;&quot;All leads in a given lifecycle status (e.g. &#x27;awaiting_approval&#x27;).&quot;&quot;&quot;
+    res = get_client().table(&quot;leads&quot;).select(&quot;*&quot;).eq(&quot;status&quot;, status).execute()
+    return res.data
+
+
+def contacted_profile_urls() -&gt; set[str]:
+    &quot;&quot;&quot;
+    Profile URLs of every lead already contacted at least once.
+
+    Task 1 deduplication: loaded at run start so no business is ever contacted
+    twice unintentionally. Returned as a set for O(1) membership checks during
+    discovery.
+    &quot;&quot;&quot;
+    res = (
+        get_client()
+        .table(&quot;leads&quot;)
+        .select(&quot;profile_url&quot;)
+        .gt(&quot;contact_count&quot;, 0)
+        .execute()
+    )
+    return {r[&quot;profile_url&quot;] for r in res.data if r.get(&quot;profile_url&quot;)}
+
+
+# ════════════════════════════════════════════════════════════════════════
+# MESSAGES — every message queued/sent per lead
+# ════════════════════════════════════════════════════════════════════════
+
+def insert_message(message: Row) -&gt; Row:
+    res = get_client().table(&quot;messages&quot;).insert(message).execute()
+    return res.data[0]
+
+
+def update_message(message_id: str, fields: Row) -&gt; Row:
+    res = get_client().table(&quot;messages&quot;).update(fields).eq(&quot;id&quot;, message_id).execute()
+    return res.data[0]
+
+
+def messages_awaiting_approval() -&gt; list[Row]:
+    &quot;&quot;&quot;
+    Everything Mahmoud still needs to approve. Feeds the approval queue badge and
+    the hard send-gate (nothing sends while this is non-empty for a given lead).
+    &quot;&quot;&quot;
+    res = (
+        get_client()
+        .table(&quot;messages&quot;)
+        .select(&quot;*&quot;)
+        .eq(&quot;approval_status&quot;, &quot;awaiting&quot;)
+        .execute()
+    )
+    return res.data
+
+
+def messages_for_lead(lead_id: str) -&gt; list[Row]:
+    res = (
+        get_client()
+        .table(&quot;messages&quot;)
+        .select(&quot;*&quot;)
+        .eq(&quot;lead_id&quot;, lead_id)
+        .order(&quot;created_at&quot;)
+        .execute()
+    )
+    return res.data
+
+
+# ════════════════════════════════════════════════════════════════════════
+# PIPELINE_HISTORY — every stage change, timestamped audit trail
+# ════════════════════════════════════════════════════════════════════════
+
+def record_stage_change(
+    lead_id: str, from_stage: str | None, to_stage: str, changed_by: str = &quot;agent&quot;
+) -&gt; Row:
+    &quot;&quot;&quot;
+    Append one row to the audit trail. Called by pipeline.py whenever a lead moves,
+    whether the move was automatic (reply detected) or manual (drag on the board).
+    &quot;&quot;&quot;
+    res = get_client().table(&quot;pipeline_history&quot;).insert({
+        &quot;lead_id&quot;: lead_id,
+        &quot;from_stage&quot;: from_stage,
+        &quot;to_stage&quot;: to_stage,
+        &quot;changed_by&quot;: changed_by,
+    }).execute()
+    return res.data[0]
+
+
+def stage_history(lead_id: str) -&gt; list[Row]:
+    &quot;&quot;&quot;Full ordered stage history for the Lead Detail page.&quot;&quot;&quot;
+    res = (
+        get_client()
+        .table(&quot;pipeline_history&quot;)
+        .select(&quot;*&quot;)
+        .eq(&quot;lead_id&quot;, lead_id)
+        .order(&quot;changed_at&quot;)
+        .execute()
+    )
+    return res.data
+
+
+# ════════════════════════════════════════════════════════════════════════
+# FOLLOW_UPS — per-lead follow-up / re-engagement schedule
+# ════════════════════════════════════════════════════════════════════════
+
+def insert_follow_up(follow_up: Row) -&gt; Row:
+    res = get_client().table(&quot;follow_ups&quot;).insert(follow_up).execute()
+    return res.data[0]
+
+
+def update_follow_up(follow_up_id: str, fields: Row) -&gt; Row:
+    res = get_client().table(&quot;follow_ups&quot;).update(fields).eq(&quot;id&quot;, follow_up_id).execute()
+    return res.data[0]
+
+
+def due_follow_ups(now_iso: str) -&gt; list[Row]:
+    &quot;&quot;&quot;
+    Enabled follow-ups whose scheduled time has arrived and are still pending.
+    The agent runs these at exactly the time Hussein set per lead.
+    &quot;&quot;&quot;
+    res = (
+        get_client()
+        .table(&quot;follow_ups&quot;)
+        .select(&quot;*&quot;)
+        .eq(&quot;enabled&quot;, True)
+        .eq(&quot;status&quot;, &quot;scheduled&quot;)
+        .lte(&quot;scheduled_for&quot;, now_iso)
+        .execute()
+    )
+    return res.data
+
+
+# ════════════════════════════════════════════════════════════════════════
+# CLIENT_HISTORY — permanent record of every analysed lead (never resets)
+# ════════════════════════════════════════════════════════════════════════
+
+def insert_client_history(entry: Row) -&gt; Row:
+    &quot;&quot;&quot;
+    Save a permanent snapshot. Task 10: this happens BEFORE any message is
+    generated, so a lead lives here forever whether or not it is ever contacted.
+    &quot;&quot;&quot;
+    res = get_client().table(&quot;client_history&quot;).insert(entry).execute()
+    return res.data[0]
+
+
+def mark_client_history_contacted(lead_id: str) -&gt; None:
+    &quot;&quot;&quot;Flip the `contacted` flag once outreach actually goes out for this lead.&quot;&quot;&quot;
+    get_client().table(&quot;client_history&quot;).update({&quot;contacted&quot;: True}).eq(
+        &quot;lead_id&quot;, lead_id
+    ).execute()
+
+
+# ════════════════════════════════════════════════════════════════════════
+# NOTIFICATIONS_LOG — every WhatsApp alert sent
+# ════════════════════════════════════════════════════════════════════════
+
+def log_notification(
+    notif_type: str, recipients: list[str], body: str, related_lead_id: str | None = None
+) -&gt; Row:
+    &quot;&quot;&quot;
+    Record a sent alert. One of the 5 types: hot_lead, founder, warning,
+    approval_reminder, daily_summary.
+    &quot;&quot;&quot;
+    res = get_client().table(&quot;notifications_log&quot;).insert({
+        &quot;type&quot;: notif_type,
+        &quot;recipients&quot;: recipients,
+        &quot;body&quot;: body,
+        &quot;related_lead_id&quot;: related_lead_id,
+    }).execute()
+    return res.data[0]
+
+
+# ════════════════════════════════════════════════════════════════════════
+# RUNS — one row per account per daily run (finish-time tracking)
+# ════════════════════════════════════════════════════════════════════════
+
+def start_run(account_id: str) -&gt; Row:
+    &quot;&quot;&quot;
+    Open a run row when an account begins. `started_at` defaults to now() in the
+    schema. Returns the row so the scheduler can close it later with the id.
+    &quot;&quot;&quot;
+    res = get_client().table(&quot;runs&quot;).insert({
+        &quot;account_id&quot;: account_id,
+        &quot;status&quot;: &quot;running&quot;,
+    }).execute()
+    return res.data[0]
+
+
+def finish_run(
+    run_id: str,
+    leads_found: int,
+    messages_sent: int,
+    status: str = &quot;completed&quot;,
+    finished_at_iso: str | None = None,
+    notes: str | None = None,
+) -&gt; Row:
+    &quot;&quot;&quot;
+    Close a run with its results and finish time. The finish time feeds both the
+    dashboard Run Status panel and the daily WhatsApp summary.
+    &quot;&quot;&quot;
+    fields: Row = {
+        &quot;leads_found&quot;: leads_found,
+        &quot;messages_sent&quot;: messages_sent,
+        &quot;status&quot;: status,
+    }
+    if finished_at_iso is not None:
+        fields[&quot;finished_at&quot;] = finished_at_iso
+    if notes is not None:
+        fields[&quot;notes&quot;] = notes
+    res = get_client().table(&quot;runs&quot;).update(fields).eq(&quot;id&quot;, run_id).execute()
+    return res.data[0]
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/db/smoke_test.py</span>
+    <span class="file-meta">108 lines &middot; python</span>
+  </div>
+  <p class="filenote">The Phase 1 checkpoint test</p>
+  <pre><code>&quot;&quot;&quot;
+Phase 1 checkpoint proof — verifies the database is real and read/write works.
+
+Run this AFTER creating the Supabase project, filling agent/.env, and running
+both SQL files (02_SUPABASE_SCHEMA.sql then database/policies.sql):
+
+    agent/venv/Scripts/python.exe -m agent.db.smoke_test
+
+It checks, in order:
+  1. Connection works (credentials + network).
+  2. All 9 tables exist and are queryable.
+  3. The seed data is present (3 accounts + 1 settings row).
+  4. A round-trip write works: insert a throwaway lead, read it back, delete it.
+
+Step 4 cleans up after itself, so running this leaves the database exactly as it
+was. Nothing here touches your real accounts or sends anything.
+&quot;&quot;&quot;
+
+from __future__ import annotations
+
+from agent.db import repositories as repo
+from agent.db.client import check_connection, get_client
+
+# Every table the schema creates. `runs` is included even though the Phase 1
+# checklist omitted it — it&#x27;s the data source for the Run Status panel.
+TABLES = [
+    &quot;accounts&quot;, &quot;settings&quot;, &quot;leads&quot;, &quot;messages&quot;, &quot;pipeline_history&quot;,
+    &quot;follow_ups&quot;, &quot;client_history&quot;, &quot;notifications_log&quot;, &quot;runs&quot;,
+]
+
+PASS = &quot;[PASS]&quot;
+FAIL = &quot;[FAIL]&quot;
+
+
+def _line(ok: bool, label: str, detail: str = &quot;&quot;) -&gt; bool:
+    &quot;&quot;&quot;Print one result line and return ok so callers can accumulate failures.&quot;&quot;&quot;
+    print(f&quot;  {PASS if ok else FAIL}  {label}&quot; + (f&quot;  — {detail}&quot; if detail else &quot;&quot;))
+    return ok
+
+
+def run() -&gt; int:
+    print(&quot;=&quot; * 60)
+    print(&quot;  PHASE 1 SMOKE TEST — database verification&quot;)
+    print(&quot;=&quot; * 60)
+    print()
+
+    ok = True
+
+    # ---- 1. Connection ----
+    connected, message = check_connection()
+    ok &amp;= _line(connected, &quot;Connection&quot;, message)
+    if not connected:
+        print(&quot;\n  Cannot continue without a connection. Check agent/.env.&quot;)
+        return 1
+
+    # ---- 2. All 9 tables exist ----
+    print(&quot;\n  Tables:&quot;)
+    client = get_client()
+    for table in TABLES:
+        try:
+            client.table(table).select(&quot;*&quot;, count=&quot;exact&quot;).limit(0).execute()
+            _line(True, table)
+        except Exception as exc:  # noqa: BLE001
+            ok &amp;= _line(False, table, str(exc))
+
+    # ---- 3. Seed data present ----
+    print(&quot;\n  Seed data:&quot;)
+    accounts = repo.list_accounts()
+    ok &amp;= _line(len(accounts) == 3, &quot;3 accounts seeded&quot;, f&quot;found {len(accounts)}&quot;)
+    settings = repo.get_settings()
+    ok &amp;= _line(settings is not None, &quot;settings row seeded&quot;,
+                f&quot;style={settings.get(&#x27;message_style&#x27;) if settings else &#x27;MISSING&#x27;}&quot;)
+
+    # ---- 4. Round-trip write/read/delete ----
+    print(&quot;\n  Read/write round-trip:&quot;)
+    test_lead = None
+    try:
+        test_lead = repo.insert_lead({
+            &quot;platform&quot;: &quot;linkedin&quot;,
+            &quot;business_name&quot;: &quot;SMOKE TEST — safe to ignore&quot;,
+            &quot;status&quot;: &quot;discovered&quot;,
+        })
+        ok &amp;= _line(bool(test_lead.get(&quot;id&quot;)), &quot;insert test lead&quot;, test_lead.get(&quot;id&quot;, &quot;&quot;))
+
+        read_back = repo.get_lead(test_lead[&quot;id&quot;])
+        ok &amp;= _line(
+            read_back is not None and read_back[&quot;business_name&quot;] == test_lead[&quot;business_name&quot;],
+            &quot;read it back&quot;,
+        )
+    finally:
+        # Always clean up, even if a check above failed mid-way.
+        if test_lead and test_lead.get(&quot;id&quot;):
+            get_client().table(&quot;leads&quot;).delete().eq(&quot;id&quot;, test_lead[&quot;id&quot;]).execute()
+            _line(True, &quot;deleted test lead (DB left clean)&quot;)
+
+    print()
+    print(&quot;-&quot; * 60)
+    if ok:
+        print(&quot;  ALL CHECKS PASSED — Phase 1 database is ready.&quot;)
+    else:
+        print(&quot;  SOME CHECKS FAILED — see the [FAIL] lines above.&quot;)
+    print(&quot;-&quot; * 60)
+    return 0 if ok else 1
+
+
+if __name__ == &quot;__main__&quot;:
+    raise SystemExit(run())
+</code></pre>
+</div>
+
+<h2 class="section-h2">B5. Backend — Python Agent: Stub Modules (future phases)</h2>
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/core/account_pool.py</span>
+    <span class="file-meta">9 lines &middot; python</span>
+  </div>
+  <p class="filenote">Stub — Phase 2</p>
+  <pre><code>&quot;&quot;&quot;
+Loads the 3 outreach accounts and manages selection by run time.
+
+Built in Phase 2. Not implemented yet.
+
+Each account carries its own run time, IG/LinkedIn daily limits, warm-up cap,
+and proxy slot (which may be empty). One agent, one pool -- not 3 agents.
+&quot;&quot;&quot;
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/core/session.py</span>
+    <span class="file-meta">10 lines &middot; python</span>
+  </div>
+  <p class="filenote">Stub — Phase 2</p>
+  <pre><code>&quot;&quot;&quot;
+One isolated Playwright browser context per account, on that account&#x27;s proxy.
+
+Built in Phase 2. Not implemented yet.
+
+HARD RULE: contexts and proxy IPs never mix between accounts. Each account is
+permanently assigned one dedicated sticky residential IP. Rotating proxies are
+never used -- a new IP per request looks like a bot.
+&quot;&quot;&quot;
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/core/health.py</span>
+    <span class="file-meta">10 lines &middot; python</span>
+  </div>
+  <p class="filenote">Stub — Phase 2</p>
+  <pre><code>&quot;&quot;&quot;
+Detects account problems and records warning TYPE plus specific REASON.
+
+Built in Phase 2. Not implemented yet.
+
+Warnings must be specific (&#x27;CAPTCHA triggered&#x27;, &#x27;Login challenge detected&#x27;),
+never generic. On warning: pause the account and set the redistribute flag for
+Hussein to decide. Quota is NEVER redistributed automatically.
+&quot;&quot;&quot;
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/core/warmup.py</span>
+    <span class="file-meta">10 lines &middot; python</span>
+  </div>
+  <p class="filenote">Stub — Phase 2</p>
+  <pre><code>&quot;&quot;&quot;
+Per-account warm-up ramp: start at 5-10/day, climb weekly to the full target.
+
+Built in Phase 2. Not implemented yet.
+
+Steady state is 20 Instagram + 30 LinkedIn per account. Starting there on day
+one gets accounts banned. Timing is also varied between accounts so the three
+don&#x27;t look like one operator.
+&quot;&quot;&quot;
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/discovery/linkedin.py</span>
+    <span class="file-meta">10 lines &middot; python</span>
+  </div>
+  <p class="filenote">Stub — Phase 3</p>
+  <pre><code>&quot;&quot;&quot;
+LinkedIn search and profile reading. Target 30/account/day.
+
+Built in Phase 3. Not implemented yet.
+
+Reads company name, description, headcount, website, recent posts, public
+contact info. Prioritises recently active companies over dormant ones.
+Adapts its search terms when results come back weak -- agentic, not fixed.
+&quot;&quot;&quot;
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/discovery/instagram.py</span>
+    <span class="file-meta">10 lines &middot; python</span>
+  </div>
+  <p class="filenote">Stub — Phase 3</p>
+  <pre><code>&quot;&quot;&quot;
+Instagram search and profile reading. Target 20/account/day. READ ONLY.
+
+Built in Phase 3. Not implemented yet.
+
+Hashtags, explore pages, location tags. Reads bio, followers, post count,
+engagement, story signals. This module NEVER sends -- Instagram&#x27;s ToS bans
+automated cold outreach and it risks the account.
+&quot;&quot;&quot;
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/discovery/qualify.py</span>
+    <span class="file-meta">9 lines &middot; python</span>
+  </div>
+  <p class="filenote">Stub — Phase 3</p>
+  <pre><code>&quot;&quot;&quot;
+Decides whether a discovered profile is a real business worth pursuing.
+
+Built in Phase 3. Not implemented yet.
+
+A reasoning decision, not a keyword filter. Skips personal accounts, inactive
+pages, anything with no clear product or service, and obvious niche misses.
+&quot;&quot;&quot;
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/analysis/analyze.py</span>
+    <span class="file-meta">10 lines &middot; python</span>
+  </div>
+  <p class="filenote">Stub — Phase 4</p>
+  <pre><code>&quot;&quot;&quot;
+Deep company analysis via Claude Haiku.
+
+Built in Phase 4. Not implemented yet.
+
+Company size, revenue tier, industry, website analysis (design, booking flow,
+CTA, load speed), ads activity, all social platforms, the FULL weak points
+list, and AI opportunities. Stored in full -- never summarised or truncated.
+&quot;&quot;&quot;
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/analysis/founder.py</span>
+    <span class="file-meta">10 lines &middot; python</span>
+  </div>
+  <p class="filenote">Stub — Phase 4</p>
+  <pre><code>&quot;&quot;&quot;
+Founder detection from profile bios.
+
+Built in Phase 4. Not implemented yet.
+
+Matches &#x27;founder of X&#x27;, &#x27;co-founder&#x27;, &#x27;CEO &amp; founder&#x27;, &#x27;established by&#x27;,
+&#x27;created by&#x27;, &#x27;owner of&#x27;, and equivalents. Stores the founder name AND the
+phrase that matched. Founder outreach itself is always manual.
+&quot;&quot;&quot;
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/analysis/whatsapp_detect.py</span>
+    <span class="file-meta">10 lines &middot; python</span>
+  </div>
+  <p class="filenote">Stub — Phase 4</p>
+  <pre><code>&quot;&quot;&quot;
+Finds a public WhatsApp number in bio, description, website, or contact info.
+
+Built in Phase 4. Not implemented yet.
+
+Only publicly listed business numbers -- never guessed, never scraped from
+private sources. A hit opens WhatsApp as an ADDITIONAL channel alongside the
+primary one, not as a replacement.
+&quot;&quot;&quot;
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/analysis/score.py</span>
+    <span class="file-meta">10 lines &middot; python</span>
+  </div>
+  <p class="filenote">Stub — Phase 4</p>
+  <pre><code>&quot;&quot;&quot;
+Scores every qualified lead 1-10 with written reasoning.
+
+Built in Phase 4. Not implemented yet.
+
+Components: fit (match to Nexaris services), pain (number and severity of
+solvable problems), budget potential (revenue signals). Hot 8-10 / Warm 5-7 /
+Cold 1-4. The written WHY is always present -- it was an original requirement.
+&quot;&quot;&quot;
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/analysis/prompts.py</span>
+    <span class="file-meta">10 lines &middot; python</span>
+  </div>
+  <p class="filenote">Stub — Phase 4</p>
+  <pre><code>&quot;&quot;&quot;
+All Claude prompt templates, structured for prompt caching.
+
+Built in Phase 4. Not implemented yet.
+
+The long instruction blocks are identical across every lead, so they are marked
+as cacheable and only the per-lead data varies. This is the main cost lever on
+an estimated 4,500 leads/month.
+&quot;&quot;&quot;
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/messaging/generate.py</span>
+    <span class="file-meta">10 lines &middot; python</span>
+  </div>
+  <p class="filenote">Stub — Phase 5</p>
+  <pre><code>&quot;&quot;&quot;
+Personalised message generation via Claude Sonnet.
+
+Built in Phase 5. Not implemented yet.
+
+Must read as human, not AI. Greeting uses whichever name exists: business,
+team, or founder. Body references that specific lead&#x27;s weak points. Tone adapts
+per platform -- LinkedIn more formal, WhatsApp more direct.
+&quot;&quot;&quot;
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/messaging/style.py</span>
+    <span class="file-meta">10 lines &middot; python</span>
+  </div>
+  <p class="filenote">Stub — Phase 5</p>
+  <pre><code>&quot;&quot;&quot;
+Message style selection and rotation.
+
+Built in Phase 5. Not implemented yet.
+
+Direct style names the weak points outright. Discovery style is softer and
+curiosity-driven. The active style holds for the configured duration, then
+rotates. Both are editable from the dashboard at any time.
+&quot;&quot;&quot;
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/sending/linkedin_send.py</span>
+    <span class="file-meta">9 lines &middot; python</span>
+  </div>
+  <p class="filenote">Stub — Phase 7</p>
+  <pre><code>&quot;&quot;&quot;
+Sends approved messages on LinkedIn via the account&#x27;s own session.
+
+Built in Phase 7. Not implemented yet.
+
+Logs timestamp, account used, platform, and message text. Moves the lead to
+Contacted. Respects the account&#x27;s daily limit and current warm-up cap.
+&quot;&quot;&quot;
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/sending/whatsapp_send.py</span>
+    <span class="file-meta">9 lines &middot; python</span>
+  </div>
+  <p class="filenote">Stub — Phase 7</p>
+  <pre><code>&quot;&quot;&quot;
+Sends approved messages on WhatsApp when a public number was found.
+
+Built in Phase 7. Not implemented yet.
+
+Fires for leads from either platform. Provider is swappable (Twilio /
+360dialog / other) -- open decision Q1.
+&quot;&quot;&quot;
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/sending/instagram_queue.py</span>
+    <span class="file-meta">10 lines &middot; python</span>
+  </div>
+  <p class="filenote">Stub — Phase 7</p>
+  <pre><code>&quot;&quot;&quot;
+Pushes approved Instagram messages to the dashboard&#x27;s manual-send queue.
+
+Built in Phase 7. Not implemented yet.
+
+THIS MODULE NEVER SENDS. It marks messages &#x27;manual_send_pending&#x27; so a human
+sends them by hand and taps &#x27;Mark as Sent&#x27;, which enters the lead into the
+pipeline exactly as an automated LinkedIn send would.
+&quot;&quot;&quot;
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/crm/pipeline.py</span>
+    <span class="file-meta">10 lines &middot; python</span>
+  </div>
+  <p class="filenote">Stub — Phase 8</p>
+  <pre><code>&quot;&quot;&quot;
+Pipeline stage movement and timestamped history.
+
+Built in Phase 8. Not implemented yet.
+
+New -&gt; Contacted -&gt; Replied -&gt; Interested -&gt; Meeting Booked -&gt; Deal Closed -&gt;
+Lost. The agent auto-moves on send and on reply detection; everything else is
+manual. Every single move is timestamped for the audit trail.
+&quot;&quot;&quot;
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/crm/followup.py</span>
+    <span class="file-meta">10 lines &middot; python</span>
+  </div>
+  <p class="filenote">Stub — Phase 8</p>
+  <pre><code>&quot;&quot;&quot;
+Follow-up and re-engagement scheduling. Enforces the 2-contact maximum.
+
+Built in Phase 8. Not implemented yet.
+
+Follow-up is a PER-LEAD decision -- Hussein sets on/off and the exact timing
+himself; the agent never picks a delay. Re-engagement covers leads who replied
+then went cold. Everything pauses the instant a lead replies. Max 2 contacts.
+&quot;&quot;&quot;
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/crm/reply_detection.py</span>
+    <span class="file-meta">9 lines &middot; python</span>
+  </div>
+  <p class="filenote">Stub — Phase 8</p>
+  <pre><code>&quot;&quot;&quot;
+Checks LinkedIn and WhatsApp for replies and advances the pipeline.
+
+Built in Phase 8. Not implemented yet.
+
+A detected reply moves the lead Contacted -&gt; Replied and immediately cancels
+any scheduled follow-up or re-engagement for that lead.
+&quot;&quot;&quot;
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/notifications/whatsapp_notify.py</span>
+    <span class="file-meta">10 lines &middot; python</span>
+  </div>
+  <p class="filenote">Stub — Phase 8</p>
+  <pre><code>&quot;&quot;&quot;
+The 5 WhatsApp alert types, sent to the configured recipient numbers.
+
+Built in Phase 8. Not implemented yet.
+
+1. Hot lead (score 8-10) -- fires immediately on scoring, not at end of run.
+2. Founder found. 3. Account warning (with type and reason). 4. Approval
+reminder to Mahmoud. 5. Daily summary with exact finish time and duration.
+&quot;&quot;&quot;
+</code></pre>
+</div>
+
+<h2 class="section-h2">B6. Backend — Package Init Files (9)</h2>
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/__init__.py</span>
+    <span class="file-meta">2 lines &middot; python</span>
+  </div>
+  
+  <pre><code>&quot;&quot;&quot;Nexaris AI Outreach Agent — Python agent package.&quot;&quot;&quot;
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/core/__init__.py</span>
+    <span class="file-meta">2 lines &middot; python</span>
+  </div>
+  
+  <pre><code>&quot;&quot;&quot;Account pool, browser sessions, health checks, warm-up ramp. (Phase 2)&quot;&quot;&quot;
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/discovery/__init__.py</span>
+    <span class="file-meta">2 lines &middot; python</span>
+  </div>
+  
+  <pre><code>&quot;&quot;&quot;LinkedIn + Instagram lead discovery and qualification. (Phase 3)&quot;&quot;&quot;
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/analysis/__init__.py</span>
+    <span class="file-meta">2 lines &middot; python</span>
+  </div>
+  
+  <pre><code>&quot;&quot;&quot;Claude-powered analysis, founder detection, scoring. (Phase 4)&quot;&quot;&quot;
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/messaging/__init__.py</span>
+    <span class="file-meta">2 lines &middot; python</span>
+  </div>
+  
+  <pre><code>&quot;&quot;&quot;Claude Sonnet message generation and style rotation. (Phase 5)&quot;&quot;&quot;
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/sending/__init__.py</span>
+    <span class="file-meta">2 lines &middot; python</span>
+  </div>
+  
+  <pre><code>&quot;&quot;&quot;Channel routing: LinkedIn auto, WhatsApp auto, Instagram manual. (Phase 7)&quot;&quot;&quot;
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/crm/__init__.py</span>
+    <span class="file-meta">2 lines &middot; python</span>
+  </div>
+  
+  <pre><code>&quot;&quot;&quot;Pipeline, follow-up scheduling, reply detection. (Phase 8)&quot;&quot;&quot;
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/notifications/__init__.py</span>
+    <span class="file-meta">2 lines &middot; python</span>
+  </div>
+  
+  <pre><code>&quot;&quot;&quot;The 5 WhatsApp alert types. (Phase 8)&quot;&quot;&quot;
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">agent/db/__init__.py</span>
+    <span class="file-meta">2 lines &middot; python</span>
+  </div>
+  
+  <pre><code>&quot;&quot;&quot;Supabase connection and per-table read/write functions.&quot;&quot;&quot;
+</code></pre>
+</div>
+
+<h2 class="section-h2">B7. Frontend — Dashboard Configuration</h2>
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">dashboard/package.json</span>
+    <span class="file-meta">25 lines &middot; json</span>
+  </div>
+  <p class="filenote">Dependencies and scripts</p>
+  <pre><code>{
+  &quot;name&quot;: &quot;nexaris-dashboard&quot;,
+  &quot;private&quot;: true,
+  &quot;version&quot;: &quot;0.1.0&quot;,
+  &quot;type&quot;: &quot;module&quot;,
+  &quot;description&quot;: &quot;Nexaris AI Outreach Agent — responsive PWA dashboard (laptop + iPhone)&quot;,
+  &quot;scripts&quot;: {
+    &quot;dev&quot;: &quot;vite&quot;,
+    &quot;build&quot;: &quot;vite build&quot;,
+    &quot;preview&quot;: &quot;vite preview&quot;
+  },
+  &quot;dependencies&quot;: {
+    &quot;@supabase/supabase-js&quot;: &quot;^2.47.10&quot;,
+    &quot;react&quot;: &quot;^18.3.1&quot;,
+    &quot;react-dom&quot;: &quot;^18.3.1&quot;,
+    &quot;react-router-dom&quot;: &quot;^7.1.1&quot;
+  },
+  &quot;devDependencies&quot;: {
+    &quot;@tailwindcss/vite&quot;: &quot;^4.0.0&quot;,
+    &quot;@vitejs/plugin-react&quot;: &quot;^4.3.4&quot;,
+    &quot;tailwindcss&quot;: &quot;^4.0.0&quot;,
+    &quot;vite&quot;: &quot;^6.0.7&quot;
+  }
+}
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">dashboard/vite.config.js</span>
+    <span class="file-meta">23 lines &middot; javascript</span>
+  </div>
+  <p class="filenote">Build configuration</p>
+  <pre><code>import { defineConfig } from &#x27;vite&#x27;
+import react from &#x27;@vitejs/plugin-react&#x27;
+import tailwindcss from &#x27;@tailwindcss/vite&#x27;
+
+export default defineConfig({
+  // Tailwind v4 runs as a Vite plugin — no tailwind.config.js or postcss.config.js
+  // needed. Theme customisation lives in src/index.css via @theme.
+  plugins: [react(), tailwindcss()],
+  css: {
+    // Empty inline PostCSS config. Without this, Vite walks UP the folder tree
+    // looking for a postcss.config.js and finds an unrelated Tailwind v3 project
+    // sitting on the Desktop, which breaks the build. Declaring it here stops the
+    // search and keeps this app self-contained wherever the folder lives.
+    postcss: {},
+  },
+  server: {
+    // Exposes the dev server on the local network so the dashboard can be opened
+    // on an iPhone during development, not just on the laptop.
+    host: true,
+    port: 5173,
+  },
+})
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">dashboard/public/manifest.json</span>
+    <span class="file-meta">25 lines &middot; json</span>
+  </div>
+  <p class="filenote">PWA manifest</p>
+  <pre><code>{
+  &quot;name&quot;: &quot;Nexaris Outreach Agent&quot;,
+  &quot;short_name&quot;: &quot;Nexaris&quot;,
+  &quot;description&quot;: &quot;Lead discovery, approval, and CRM pipeline for Nexaris outreach&quot;,
+  &quot;start_url&quot;: &quot;/&quot;,
+  &quot;display&quot;: &quot;standalone&quot;,
+  &quot;orientation&quot;: &quot;portrait&quot;,
+  &quot;background_color&quot;: &quot;#020617&quot;,
+  &quot;theme_color&quot;: &quot;#0f172a&quot;,
+  &quot;icons&quot;: [
+    {
+      &quot;src&quot;: &quot;/icons/icon-192.png&quot;,
+      &quot;sizes&quot;: &quot;192x192&quot;,
+      &quot;type&quot;: &quot;image/png&quot;,
+      &quot;purpose&quot;: &quot;any maskable&quot;
+    },
+    {
+      &quot;src&quot;: &quot;/icons/icon-512.png&quot;,
+      &quot;sizes&quot;: &quot;512x512&quot;,
+      &quot;type&quot;: &quot;image/png&quot;,
+      &quot;purpose&quot;: &quot;any maskable&quot;
+    }
+  ]
+}
+</code></pre>
+</div>
+
+<h2 class="section-h2">B8. Frontend — Dashboard Application Code</h2>
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">dashboard/index.html</span>
+    <span class="file-meta">26 lines &middot; html</span>
+  </div>
+  <p class="filenote">Page shell, PWA meta tags</p>
+  <pre><code>&lt;!doctype html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+  &lt;head&gt;
+    &lt;meta charset=&quot;UTF-8&quot; /&gt;
+    &lt;link rel=&quot;icon&quot; type=&quot;image/svg+xml&quot; href=&quot;/icons/icon.svg&quot; /&gt;
+
+    &lt;!-- viewport-fit=cover lets the app draw into the iPhone safe areas when it&#x27;s
+         launched full-screen from the home screen --&gt;
+    &lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1.0, viewport-fit=cover&quot; /&gt;
+
+    &lt;!-- PWA: these three are what make &quot;Add to Home Screen&quot; open full-screen on iOS --&gt;
+    &lt;link rel=&quot;manifest&quot; href=&quot;/manifest.json&quot; /&gt;
+    &lt;meta name=&quot;apple-mobile-web-app-capable&quot; content=&quot;yes&quot; /&gt;
+    &lt;meta name=&quot;apple-mobile-web-app-status-bar-style&quot; content=&quot;black-translucent&quot; /&gt;
+    &lt;meta name=&quot;apple-mobile-web-app-title&quot; content=&quot;Nexaris&quot; /&gt;
+    &lt;link rel=&quot;apple-touch-icon&quot; href=&quot;/icons/icon-180.png&quot; /&gt;
+
+    &lt;meta name=&quot;theme-color&quot; content=&quot;#0f172a&quot; /&gt;
+    &lt;title&gt;Nexaris Outreach&lt;/title&gt;
+  &lt;/head&gt;
+  &lt;body&gt;
+    &lt;div id=&quot;root&quot;&gt;&lt;/div&gt;
+    &lt;script type=&quot;module&quot; src=&quot;/src/main.jsx&quot;&gt;&lt;/script&gt;
+  &lt;/body&gt;
+&lt;/html&gt;
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">dashboard/src/main.jsx</span>
+    <span class="file-meta">11 lines &middot; jsx</span>
+  </div>
+  <p class="filenote">Mounts React into the page</p>
+  <pre><code>import { StrictMode } from &#x27;react&#x27;
+import { createRoot } from &#x27;react-dom/client&#x27;
+import App from &#x27;./App.jsx&#x27;
+import &#x27;./index.css&#x27;
+
+createRoot(document.getElementById(&#x27;root&#x27;)).render(
+  &lt;StrictMode&gt;
+    &lt;App /&gt;
+  &lt;/StrictMode&gt;,
+)
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">dashboard/src/App.jsx</span>
+    <span class="file-meta">105 lines &middot; jsx</span>
+  </div>
+  <p class="filenote">The Phase 0 status page</p>
+  <pre><code>import { isConfigured } from &#x27;./lib/supabase&#x27;
+
+/**
+ * Phase 0 placeholder.
+ *
+ * Confirms the dashboard builds, Tailwind works, and Supabase credentials are wired
+ * up. The real sections (live feed, approval queue, pipeline board, etc.) arrive in
+ * Phase 9 — they&#x27;re listed below so the build order is visible.
+ */
+
+// The 10 sections from spec §7, each mapped to the file that will hold it.
+const SECTIONS = [
+  [&#x27;Daily Live Feed&#x27;, &quot;Today&#x27;s leads with full weak points and copyable message&quot;],
+  [&#x27;Instagram Manual Send&#x27;, &#x27;Approved IG messages a human sends by hand&#x27;],
+  [&quot;Mahmoud&#x27;s Approval&quot;, &#x27;Edit + approve — nothing sends until this is cleared&#x27;],
+  [&#x27;CRM Pipeline Board&#x27;, &#x27;Kanban across the 7 stages, drag and drop&#x27;],
+  [&#x27;Lead Detail&#x27;, &#x27;Complete record, editable follow-up and notes&#x27;],
+  [&#x27;Client History&#x27;, &#x27;Permanent searchable database of every lead analysed&#x27;],
+  [&#x27;Analytics &amp; KPIs&#x27;, &#x27;Every metric, filterable by date, platform, account&#x27;],
+  [&#x27;Account Health&#x27;, &#x27;3 accounts — status, warning type and reason, proxy state&#x27;],
+  [&#x27;Run Status&#x27;, &#x27;Running / idle, current task, start and finish time, duration&#x27;],
+  [&#x27;Settings&#x27;, &#x27;Every control editable without touching code&#x27;],
+]
+
+function StatusRow({ ok, label, detail }) {
+  return (
+    &lt;div className=&quot;flex items-start gap-3 py-2&quot;&gt;
+      &lt;span
+        className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
+          ok ? &#x27;bg-emerald-500&#x27; : &#x27;bg-slate-600&#x27;
+        }`}
+        aria-hidden=&quot;true&quot;
+      /&gt;
+      &lt;div className=&quot;min-w-0&quot;&gt;
+        &lt;p className=&quot;text-sm font-medium text-slate-200&quot;&gt;{label}&lt;/p&gt;
+        &lt;p className=&quot;text-sm text-slate-400&quot;&gt;{detail}&lt;/p&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+  )
+}
+
+export default function App() {
+  return (
+    &lt;div className=&quot;min-h-full bg-slate-950 text-slate-100&quot;&gt;
+      &lt;div className=&quot;mx-auto max-w-3xl px-5 py-10 sm:px-8 sm:py-14&quot;&gt;
+        &lt;header&gt;
+          &lt;p className=&quot;text-xs font-semibold uppercase tracking-widest text-slate-500&quot;&gt;
+            Nexaris
+          &lt;/p&gt;
+          &lt;h1 className=&quot;mt-2 text-2xl font-semibold sm:text-3xl&quot;&gt;
+            AI Outreach Agent
+          &lt;/h1&gt;
+          &lt;p className=&quot;mt-3 text-slate-400&quot;&gt;
+            Phase 0 — setup complete. The dashboard builds and runs; no real data yet.
+          &lt;/p&gt;
+        &lt;/header&gt;
+
+        &lt;section className=&quot;mt-10 rounded-xl border border-slate-800 bg-slate-900/50 p-5&quot;&gt;
+          &lt;h2 className=&quot;text-sm font-semibold uppercase tracking-wide text-slate-400&quot;&gt;
+            Setup status
+          &lt;/h2&gt;
+          &lt;div className=&quot;mt-3 divide-y divide-slate-800&quot;&gt;
+            &lt;StatusRow ok label=&quot;Dashboard&quot; detail=&quot;React + Tailwind building correctly&quot; /&gt;
+            &lt;StatusRow
+              ok={isConfigured}
+              label=&quot;Supabase connection&quot;
+              detail={
+                isConfigured
+                  ? &#x27;Credentials found in dashboard/.env&#x27;
+                  : &#x27;Not configured — add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to dashboard/.env (Phase 1)&#x27;
+              }
+            /&gt;
+          &lt;/div&gt;
+        &lt;/section&gt;
+
+        &lt;section className=&quot;mt-8&quot;&gt;
+          &lt;h2 className=&quot;text-sm font-semibold uppercase tracking-wide text-slate-400&quot;&gt;
+            Coming in Phase 9
+          &lt;/h2&gt;
+          &lt;ol className=&quot;mt-3 space-y-2.5&quot;&gt;
+            {SECTIONS.map(([name, detail], i) =&gt; (
+              &lt;li
+                key={name}
+                className=&quot;flex gap-3 rounded-lg border border-slate-800/70 bg-slate-900/30 px-4 py-3&quot;
+              &gt;
+                &lt;span className=&quot;w-5 shrink-0 text-sm tabular-nums text-slate-600&quot;&gt;
+                  {i + 1}
+                &lt;/span&gt;
+                &lt;div className=&quot;min-w-0&quot;&gt;
+                  &lt;p className=&quot;text-sm font-medium text-slate-200&quot;&gt;{name}&lt;/p&gt;
+                  &lt;p className=&quot;text-sm text-slate-500&quot;&gt;{detail}&lt;/p&gt;
+                &lt;/div&gt;
+              &lt;/li&gt;
+            ))}
+          &lt;/ol&gt;
+        &lt;/section&gt;
+
+        &lt;footer className=&quot;mt-10 border-t border-slate-800 pt-5 text-sm text-slate-500&quot;&gt;
+          Next up: Phase 1 — create the database schema in Supabase.
+        &lt;/footer&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+  )
+}
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">dashboard/src/index.css</span>
+    <span class="file-meta">28 lines &middot; css</span>
+  </div>
+  <p class="filenote">Tailwind import, theme, safe-area CSS</p>
+  <pre><code>@import &quot;tailwindcss&quot;;
+
+/* Tailwind v4 theme customisation. Extend here rather than in a config file. */
+@theme {
+  /* Temperature colours — used by the Hot/Warm/Cold badges across the whole
+     dashboard (live feed cards, pipeline cards, approval queue, client history).
+     Defined once so every screen agrees on what &quot;hot&quot; looks like. */
+  --color-hot: oklch(0.63 0.22 25);
+  --color-warm: oklch(0.75 0.16 70);
+  --color-cold: oklch(0.68 0.11 235);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  /* Safe-area padding so content clears the notch and home indicator when the
+     PWA is launched full-screen from Mahmoud&#x27;s iPhone home screen. */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right)
+    env(safe-area-inset-bottom) env(safe-area-inset-left);
+
+  /* Stops iOS Safari from auto-enlarging text in landscape. */
+  -webkit-text-size-adjust: 100%;
+}
+</code></pre>
+</div>
+
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">dashboard/src/lib/supabase.js</span>
+    <span class="file-meta">27 lines &middot; javascript</span>
+  </div>
+  <p class="filenote">Browser Supabase client, anon key</p>
+  <pre><code>import { createClient } from &#x27;@supabase/supabase-js&#x27;
+
+/**
+ * Supabase client for the dashboard.
+ *
+ * Uses the ANON key, never the service role key. The anon key is safe to ship in
+ * frontend code because Row Level Security (set up in Phase 1) is what actually
+ * restricts access — only Hussein and Mahmoud can read or write.
+ *
+ * The agent uses the service role key instead. Never mix the two up.
+ */
+
+const url = import.meta.env.VITE_SUPABASE_URL
+const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+
+/** True when the dashboard has credentials. Lets the UI show a helpful setup message
+ *  instead of crashing on a blank .env, which is the expected state in Phase 0. */
+export const isConfigured = Boolean(url &amp;&amp; anonKey)
+
+export const supabase = isConfigured
+  ? createClient(url, anonKey, {
+      // Realtime keeps the live feed, run status, and analytics updating as the
+      // agent works, without the dashboard polling.
+      realtime: { params: { eventsPerSecond: 5 } },
+    })
+  : null
+</code></pre>
+</div>
+
+<h2 class="section-h2">B9. Tooling</h2>
+
+<div class="file-block">
+  <div class="file-header">
+    <span class="file-path">tools/make_pdf.py</span>
+    <span class="file-meta">72 lines &middot; python</span>
+  </div>
+  <p class="filenote">Renders these phase documents to PDF</p>
+  <pre><code>&quot;&quot;&quot;
+HTML -&gt; PDF renderer for the phase documentation.
+
+Every phase ends with a document in docs/ explaining what was built. This script
+turns the HTML source into a PDF using the Chromium that Playwright already
+installs for the agent, so there is no extra dependency to manage.
+
+Usage:
+    agent/venv/Scripts/python.exe tools/make_pdf.py docs/PHASE_0_EXPLAINED.html
+
+The PDF is written next to the HTML with the same name.
+&quot;&quot;&quot;
+
+import sys
+from pathlib import Path
+
+from playwright.sync_api import sync_playwright
+
+
+def render(html_path: Path) -&gt; Path:
+    &quot;&quot;&quot;Render one HTML file to a PDF beside it. Returns the PDF path.&quot;&quot;&quot;
+    if not html_path.exists():
+        raise FileNotFoundError(html_path)
+
+    pdf_path = html_path.with_suffix(&quot;.pdf&quot;)
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+
+        # file:// so relative assets resolve. wait_until=&quot;load&quot; makes sure fonts and
+        # any images are in place before we snapshot the page.
+        page.goto(html_path.resolve().as_uri(), wait_until=&quot;load&quot;)
+
+        page.pdf(
+            path=str(pdf_path),
+            format=&quot;A4&quot;,
+            # print_background keeps the code blocks and callout boxes from rendering
+            # as plain white, which is most of what makes the document readable.
+            print_background=True,
+            margin={&quot;top&quot;: &quot;14mm&quot;, &quot;bottom&quot;: &quot;16mm&quot;, &quot;left&quot;: &quot;12mm&quot;, &quot;right&quot;: &quot;12mm&quot;},
+            display_header_footer=True,
+            header_template=&quot;&lt;div&gt;&lt;/div&gt;&quot;,
+            footer_template=(
+                &#x27;&lt;div style=&quot;width:100%;font-size:8px;color:#94a3b8;&#x27;
+                &#x27;padding:0 12mm;display:flex;justify-content:space-between;&quot;&gt;&#x27;
+                &quot;&lt;span&gt;Nexaris AI Outreach Agent&lt;/span&gt;&quot;
+                &#x27;&lt;span class=&quot;pageNumber&quot;&gt;&lt;/span&gt;&#x27;
+                &quot;&lt;/div&gt;&quot;
+            ),
+        )
+        browser.close()
+
+    return pdf_path
+
+
+def main() -&gt; int:
+    if len(sys.argv) &lt; 2:
+        print(__doc__)
+        return 1
+
+    for arg in sys.argv[1:]:
+        out = render(Path(arg))
+        size_kb = out.stat().st_size / 1024
+        print(f&quot;wrote {out}  ({size_kb:.0f} KB)&quot;)
+
+    return 0
+
+
+if __name__ == &quot;__main__&quot;:
+    raise SystemExit(main())
+</code></pre>
+</div>
+
+
+<div class="page-break"></div>
+<h2 id="workflow">C. How everything connects — the system as built after Phase 1</h2>
+<p>
+The diagram below shows the real, live shape of the system today: two independent
+applications, connected only through the shared database, plus the version-control flow
+that gets code from this machine onto GitHub. Grey boxes are not built yet — they show where
+future phases attach.
+</p>
+
+<div class="diagram-wrap">
+<svg viewBox="0 0 800 660" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#334155"/>
+    </marker>
+    <marker id="arrowGrey" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#94a3b8"/>
+    </marker>
+  </defs>
+
+  <!-- ===== Row 1: version control flow ===== -->
+  <rect x="20" y="20" width="150" height="50" rx="7" fill="#f8fafc" stroke="#0f172a" stroke-width="1.5"/>
+  <text x="95" y="42" text-anchor="middle" font-size="11" font-weight="700" fill="#0f172a">Hussein</text>
+  <text x="95" y="58" text-anchor="middle" font-size="8" fill="#64748b">commits &amp; pushes</text>
+
+  <line x1="170" y1="45" x2="228" y2="45" stroke="#334155" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <rect x="230" y="20" width="170" height="50" rx="7" fill="#f8fafc" stroke="#0f172a" stroke-width="1.5"/>
+  <text x="315" y="42" text-anchor="middle" font-size="11" font-weight="700" fill="#0f172a">Local Git Repository</text>
+  <text x="315" y="58" text-anchor="middle" font-size="8" fill="#64748b">.git history on this machine</text>
+
+  <line x1="400" y1="45" x2="458" y2="45" stroke="#334155" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <rect x="460" y="20" width="220" height="50" rx="7" fill="#eef2ff" stroke="#1d4ed8" stroke-width="1.5"/>
+  <text x="570" y="42" text-anchor="middle" font-size="11" font-weight="700" fill="#1d4ed8">GitHub — AiOutreachAgent</text>
+  <text x="570" y="58" text-anchor="middle" font-size="8" fill="#64748b">public repository</text>
+
+  <!-- ===== Row 2: the two applications ===== -->
+  <rect x="40" y="130" width="230" height="90" rx="8" fill="#f8fafc" stroke="#0f172a" stroke-width="1.5"/>
+  <text x="155" y="158" text-anchor="middle" font-size="12" font-weight="700" fill="#0f172a">Dashboard</text>
+  <text x="155" y="174" text-anchor="middle" font-size="8.5" fill="#334155">React + Tailwind v4 (Vite)</text>
+  <text x="155" y="188" text-anchor="middle" font-size="8.5" fill="#334155">PWA — installable on iPhone</text>
+  <text x="155" y="204" text-anchor="middle" font-size="8" fill="#7c3aed" font-weight="700">uses: anon key</text>
+
+  <rect x="530" y="130" width="230" height="90" rx="8" fill="#f8fafc" stroke="#0f172a" stroke-width="1.5"/>
+  <text x="645" y="158" text-anchor="middle" font-size="12" font-weight="700" fill="#0f172a">Agent</text>
+  <text x="645" y="174" text-anchor="middle" font-size="8.5" fill="#334155">Python (isolated venv)</text>
+  <text x="645" y="188" text-anchor="middle" font-size="8.5" fill="#334155">runs on a server, no UI</text>
+  <text x="645" y="204" text-anchor="middle" font-size="8" fill="#b91c1c" font-weight="700">uses: service_role key</text>
+
+  <!-- ===== center: Supabase ===== -->
+  <rect x="290" y="280" width="220" height="100" rx="8" fill="#ecfdf5" stroke="#047857" stroke-width="1.8"/>
+  <text x="400" y="308" text-anchor="middle" font-size="12" font-weight="700" fill="#047857">Supabase</text>
+  <text x="400" y="325" text-anchor="middle" font-size="8.5" fill="#334155">PostgreSQL — 9 tables</text>
+  <text x="400" y="340" text-anchor="middle" font-size="8.5" fill="#334155">Row Level Security enabled</text>
+  <text x="400" y="355" text-anchor="middle" font-size="8.5" fill="#334155">Auth &middot; Realtime &middot; PostgREST API</text>
+  <text x="400" y="370" text-anchor="middle" font-size="7.5" fill="#64748b">ref: xtesxgezongzpdgppobm (Singapore)</text>
+
+  <!-- connectors dashboard/agent -> supabase -->
+  <line x1="200" y1="220" x2="330" y2="278" stroke="#7c3aed" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="215" y="255" font-size="7.8" fill="#7c3aed">read/write, RLS-checked</text>
+
+  <line x1="610" y1="220" x2="475" y2="278" stroke="#b91c1c" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="545" y="255" font-size="7.8" fill="#b91c1c">full access, bypasses RLS</text>
+
+  <!-- ===== Row 4: future phases, greyed ===== -->
+  <g opacity="0.55">
+    <rect x="530" y="420" width="105" height="46" rx="6" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="4,3"/>
+    <text x="582" y="440" text-anchor="middle" font-size="8" fill="#475569">LinkedIn</text>
+    <text x="582" y="452" text-anchor="middle" font-size="7" fill="#94a3b8">Phase 3/7</text>
+
+    <rect x="655" y="420" width="105" height="46" rx="6" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="4,3"/>
+    <text x="707" y="440" text-anchor="middle" font-size="8" fill="#475569">Instagram</text>
+    <text x="707" y="452" text-anchor="middle" font-size="7" fill="#94a3b8">Phase 3</text>
+
+    <rect x="530" y="478" width="105" height="46" rx="6" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="4,3"/>
+    <text x="582" y="498" text-anchor="middle" font-size="8" fill="#475569">Claude API</text>
+    <text x="582" y="510" text-anchor="middle" font-size="7" fill="#94a3b8">Phase 4/5</text>
+
+    <rect x="655" y="478" width="105" height="46" rx="6" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="4,3"/>
+    <text x="707" y="498" text-anchor="middle" font-size="8" fill="#475569">WhatsApp</text>
+    <text x="707" y="510" text-anchor="middle" font-size="7" fill="#94a3b8">Phase 7/8</text>
+
+    <line x1="645" y1="220" x2="600" y2="418" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="3,3" marker-end="url(#arrowGrey)"/>
+    <line x1="660" y1="220" x2="700" y2="418" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="3,3" marker-end="url(#arrowGrey)"/>
+  </g>
+
+  <!-- ===== Phase progress strip ===== -->
+  <text x="20" y="580" font-size="9.5" font-weight="700" fill="#0f172a">Phase progress</text>
+  <g font-size="8">
+    <!-- 11 boxes for phases 0-10 -->
+    <rect x="20"  y="592" width="66" height="30" rx="4" fill="#047857"/>
+    <text x="53"  y="611" text-anchor="middle" fill="#fff" font-weight="700">0 done</text>
+    <rect x="90"  y="592" width="66" height="30" rx="4" fill="#047857"/>
+    <text x="123" y="611" text-anchor="middle" fill="#fff" font-weight="700">1 done</text>
+    <rect x="160" y="592" width="60" height="30" rx="4" fill="#e2e8f0"/>
+    <text x="190" y="611" text-anchor="middle" fill="#475569">2</text>
+    <rect x="224" y="592" width="60" height="30" rx="4" fill="#e2e8f0"/>
+    <text x="254" y="611" text-anchor="middle" fill="#475569">3</text>
+    <rect x="288" y="592" width="60" height="30" rx="4" fill="#e2e8f0"/>
+    <text x="318" y="611" text-anchor="middle" fill="#475569">4</text>
+    <rect x="352" y="592" width="60" height="30" rx="4" fill="#e2e8f0"/>
+    <text x="382" y="611" text-anchor="middle" fill="#475569">5</text>
+    <rect x="416" y="592" width="60" height="30" rx="4" fill="#e2e8f0"/>
+    <text x="446" y="611" text-anchor="middle" fill="#475569">6</text>
+    <rect x="480" y="592" width="60" height="30" rx="4" fill="#e2e8f0"/>
+    <text x="510" y="611" text-anchor="middle" fill="#475569">7</text>
+    <rect x="544" y="592" width="60" height="30" rx="4" fill="#e2e8f0"/>
+    <text x="574" y="611" text-anchor="middle" fill="#475569">8</text>
+    <rect x="608" y="592" width="60" height="30" rx="4" fill="#e2e8f0"/>
+    <text x="638" y="611" text-anchor="middle" fill="#475569">9</text>
+    <rect x="672" y="592" width="66" height="30" rx="4" fill="#e2e8f0"/>
+    <text x="705" y="611" text-anchor="middle" fill="#475569">10</text>
+  </g>
+</svg>
+</div>
+
+<div class="legend">
+  <span><span class="swatch" style="background:#047857"></span> Complete &amp; verified</span>
+  <span><span class="swatch" style="background:#e2e8f0"></span> Not started</span>
+  <span><span class="swatch" style="background:#7c3aed"></span> Anon key + RLS path</span>
+  <span><span class="swatch" style="background:#b91c1c"></span> Service-role key path (bypasses RLS)</span>
+</div>
+
+<div class="ok-box" style="margin-top:20px">
+  <strong>In plain terms:</strong> the dashboard and the agent never talk to each other directly
+  — the only thing connecting them is the Supabase database, reached two different ways with two
+  different levels of trust. Version control (Git/GitHub) is a completely separate flow that
+  moves code, not data. Every box on the right, in grey, is where the next phases attach.
+</div>
+
+<hr style="margin:34px 0 14px;border:none;border-top:1px solid var(--line)">
+<p class="small">
+  Full technical appendix — Phases 0 &amp; 1, 58 files reproduced in full &middot; Generated 24 July 2026<br>
+  Source: <code>docs/FULL_TECHNICAL_APPENDIX_PHASE_0_1.html</code> · Rendered by <code>tools/make_pdf.py</code>
+</p>
+
+</body>
+</html>

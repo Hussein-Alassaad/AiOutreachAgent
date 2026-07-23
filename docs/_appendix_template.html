@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Full Technical Appendix — Phases 0 &amp; 1 — Nexaris AI Outreach Agent</title>
+<style>
+  @page { size: A4; }
+  * { box-sizing: border-box; }
+  :root {
+    --ink:#0f172a; --body:#1e293b; --muted:#64748b; --line:#e2e8f0;
+    --accent:#1d4ed8; --ok:#047857; --warn:#b45309; --bg-soft:#f8fafc; --purple:#7c3aed;
+  }
+  body { margin:0; font-family:"Segoe UI",-apple-system,system-ui,sans-serif; font-size:10.2pt; line-height:1.55; color:var(--body); }
+  h1,h2,h3,h4 { color:var(--ink); line-height:1.25; }
+  h1 { font-size:24pt; margin:0 0 4px; letter-spacing:-0.5px; }
+  h2 { font-size:14.5pt; margin:30px 0 12px; padding-bottom:6px; border-bottom:2px solid var(--ink); page-break-after:avoid; }
+  h2.section-h2 { margin-top:36px; page-break-before:always; }
+  h3 { font-size:11pt; margin:18px 0 6px; page-break-after:avoid; color:var(--accent); }
+  p { margin:0 0 9px; } ul,ol { margin:0 0 10px; padding-left:20px; } li { margin-bottom:4px; }
+  code { font-family:Consolas,"Courier New",monospace; font-size:8.5pt; background:#eef2f7; padding:1px 4px; border-radius:3px; color:#0f172a; }
+  pre { background:#0f172a; color:#e2e8f0; padding:10px 12px; border-radius:5px; font-family:Consolas,"Courier New",monospace; font-size:7.6pt; line-height:1.45; overflow-x:auto; white-space:pre-wrap; word-break:break-word; margin:6px 0 4px; }
+  pre code { background:none; padding:0; color:inherit; font-size:inherit; }
+  table { width:100%; border-collapse:collapse; font-size:9pt; margin:8px 0 14px; page-break-inside:avoid; }
+  th { background:var(--ink); color:#fff; text-align:left; padding:6px 8px; font-weight:600; }
+  td { padding:5px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  tr:nth-child(even) td { background:var(--bg-soft); }
+  .concept { border:1px solid var(--line); border-left:3px solid var(--purple); border-radius:4px; padding:10px 13px; margin:10px 0; page-break-inside:avoid; background:#fff; }
+  .concept h4 { margin:0 0 4px; color:var(--purple); font-size:9.8pt; }
+  .note,.ok-box { border-radius:4px; padding:10px 13px; margin:12px 0; font-size:9.5pt; page-break-inside:avoid; }
+  .note { background:#eff6ff; border-left:3px solid var(--accent); }
+  .ok-box { background:#ecfdf5; border-left:3px solid var(--ok); }
+  .cover { text-align:center; padding:56px 0 36px; border-bottom:3px solid var(--ink); margin-bottom:26px; }
+  .cover .eyebrow { font-size:9pt; letter-spacing:3px; text-transform:uppercase; color:var(--muted); margin-bottom:14px; }
+  .cover .sub { font-size:12pt; color:var(--muted); margin-top:8px; }
+  .cover .meta { margin-top:22px; font-size:9pt; color:var(--muted); }
+  .page-break { page-break-before:always; }
+  .toc a { color:var(--body); text-decoration:none; } .toc li { margin-bottom:3px; }
+  .toc .part { font-weight:700; margin-top:10px; color:var(--ink); }
+  .small { font-size:9pt; color:var(--muted); }
+  .file-block { page-break-inside:avoid; margin-bottom:14px; }
+  .file-header { display:flex; justify-content:space-between; align-items:baseline; background:var(--ink); color:#fff; padding:6px 10px; border-radius:4px 4px 0 0; font-family:Consolas,monospace; }
+  .file-path { font-size:9.3pt; font-weight:700; }
+  .file-meta { font-size:8pt; color:#94a3b8; }
+  .filenote { font-size:8.8pt; color:var(--muted); font-style:italic; margin:4px 0 4px 2px; }
+  .file-block pre { border-radius:0 0 5px 5px; margin-top:0; }
+  .diagram-wrap { text-align:center; margin:20px 0; }
+  .legend { display:flex; gap:18px; justify-content:center; margin-top:10px; font-size:8.5pt; color:var(--muted); flex-wrap:wrap; }
+  .legend span { display:inline-flex; align-items:center; gap:5px; }
+  .swatch { width:11px; height:11px; border-radius:2px; display:inline-block; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="eyebrow">Nexaris &middot; AI Outreach Agent</div>
+  <h1>Full Technical Appendix</h1>
+  <div class="sub">Phases 0 &amp; 1 — every document, every line of code, every concept, and the system as built</div>
+  <div class="meta">24 July 2026 &nbsp;·&nbsp; {{FILECOUNT}} files reproduced in full &nbsp;·&nbsp; Standalone reference</div>
+</div>
+
+<h2>Contents</h2>
+<ol class="toc">
+  <li class="part">Part A — Concepts implemented in Phases 0 &amp; 1</li>
+  <li><a href="#concepts">A. All concepts, condensed</a></li>
+  <li class="part">Part B — Every document and every line of code</li>
+  <li><a href="#b1">B1. Planning &amp; reference documents</a></li>
+  <li><a href="#b2">B2. Database (SQL)</a></li>
+  <li><a href="#b3">B3. Backend — Python agent: core</a></li>
+  <li><a href="#b4">B4. Backend — Python agent: database layer</a></li>
+  <li><a href="#b5">B5. Backend — Python agent: stub modules</a></li>
+  <li><a href="#b6">B6. Backend — package init files</a></li>
+  <li><a href="#b7">B7. Frontend — dashboard configuration</a></li>
+  <li><a href="#b8">B8. Frontend — dashboard application code</a></li>
+  <li><a href="#b9">B9. Tooling</a></li>
+  <li class="part">Part C — Visual workflow</li>
+  <li><a href="#workflow">C. How everything connects</a></li>
+</ol>
+
+<div class="page-break"></div>
+<h2 id="concepts">A. All concepts implemented in Phases 0 &amp; 1, condensed</h2>
+<p>
+Each concept below was applied for real somewhere in the files that follow in Part B — this
+is the "why," collected in one place before the "what."
+</p>
+
+<h3>Phase 0 concepts</h3>
+<div class="concept"><h4>Version control (Git)</h4><p>Every change tracked as a chain of commits; a staging area lets a commit be built deliberately; a local repo and the GitHub remote are separate, connected only by an explicit <code>origin</code> pointer.</p></div>
+<div class="concept"><h4>Secret hygiene before first commit</h4><p><code>.gitignore</code> was written before anything else specifically because this repository is public — a committed secret is recoverable from history forever, even after later deletion.</p></div>
+<div class="concept"><h4>Python virtual environments</h4><p>An isolated, project-scoped copy of the interpreter and its packages, so this project's dependencies can never collide with any other Python project on the machine.</p></div>
+<div class="concept"><h4>Dependency resolution</h4><p>Exact version pins (<code>==</code>) left no room for two packages' conflicting sub-requirements to be reconciled; minimum pins (<code>&gt;=</code>) gave the solver room to find a version that satisfies everyone.</p></div>
+<div class="concept"><h4>Python packages and modules</h4><p><code>__init__.py</code> marks a folder as importable; dot-notation imports (<code>agent.db.repositories</code>) walk that package structure.</p></div>
+<div class="concept"><h4>Centralised configuration</h4><p>Exactly one file (<code>config.py</code>) reads environment variables; every other module asks it for a named value, never the OS directly.</p></div>
+<div class="concept"><h4>Node.js / npm / package.json</h4><p>The JavaScript equivalent of the Python venv + requirements.txt pairing — an isolated runtime and a declared, reproducible dependency list.</p></div>
+<div class="concept"><h4>Build tools (Vite)</h4><p>Transforms JSX/ES-module source into plain JS/CSS/HTML a browser can run; instant reload in development, a fixed optimised bundle for production.</p></div>
+<div class="concept"><h4>Component-based UI (React) &amp; SPA</h4><p>The interface is built from small functions returning markup (JSX); one HTML page loads once, and JavaScript swaps content in afterward without full reloads.</p></div>
+<div class="concept"><h4>Utility-first CSS (Tailwind v4)</h4><p>Styling composed from small utility classes in markup; v4's plugin-based integration removed the separate config files earlier versions required.</p></div>
+<div class="concept"><h4>Progressive Web Apps</h4><p>A manifest, icon set, and iOS-specific meta tags make a website installable and launchable full-screen from a phone's home screen.</p></div>
+<div class="concept"><h4>Binary file formats (PNG)</h4><p>Icons were generated with a hand-written PNG encoder — signature bytes, chunked structure (IHDR/IDAT/IEND), CRC32 checksums, zlib-compressed pixel data — with zero external image libraries.</p></div>
+<div class="concept"><h4>Backend-as-a-Service</h4><p>Supabase supplies a managed Postgres database, an auto-generated REST API over it, authentication, and a realtime layer, replacing a hand-built backend server.</p></div>
+<div class="concept"><h4>JWTs and least-privilege API keys</h4><p>Both Supabase keys are signed JSON Web Tokens declaring a role; the low-privilege anon key is safe to expose publicly only because Row Level Security constrains what it can do, while the powerful service-role key is confined to the trusted server-side agent only.</p></div>
+
+<h3>Phase 1 concepts</h3>
+<div class="concept"><h4>Relational database structure</h4><p>Nine tables, each one entity, related to one another rather than duplicating data.</p></div>
+<div class="concept"><h4>SQL DDL vs DML</h4><p><code>CREATE TABLE</code> statements define structure (DDL); the day-to-day reads and writes the agent performs are DML, generated for us by the client library.</p></div>
+<div class="concept"><h4>UUID primary keys</h4><p>128-bit identifiers generated independently by any process with no central coordination and negligible collision risk — chosen over auto-incrementing integers because both the agent and dashboard can create rows concurrently.</p></div>
+<div class="concept"><h4>Foreign keys &amp; referential integrity</h4><p><code>references</code> constraints, with explicit <code>on delete cascade</code> / <code>on delete set null</code> behaviour, so the database itself refuses to let a relationship point at nothing.</p></div>
+<div class="concept"><h4>JSONB columns</h4><p>Variable-shaped data (a lead's weak-points list) stored as a queryable JSON document inside one column, rather than forcing a rigid extra table for a simple list.</p></div>
+<div class="concept"><h4>Indexes</h4><p>Separate lookup structures built on the columns queried most often (status, temperature, platform), trading a little storage/write cost for much faster reads.</p></div>
+<div class="concept"><h4>Row Level Security</h4><p>Enabling RLS flips a table's default from open to closed; explicit policies then grant back exactly the access needed — here, full access for any <code>authenticated</code> user, none for anyone else. The service-role key bypasses this layer entirely by design.</p></div>
+<div class="concept"><h4>Repository design pattern</h4><p>Every database read/write funnelled through one file of small, purpose-named functions, so a schema change only ever requires editing one place.</p></div>
+<div class="concept"><h4>REST over Postgres (PostgREST)</h4><p>The Python client never writes raw SQL during normal operation — it builds HTTP requests against an API Supabase auto-generates directly from the schema.</p></div>
+<div class="concept"><h4>Smoke testing &amp; round-trip verification</h4><p>A fast, broad check (connection, tables, seed data) plus a genuine round-trip: insert, read back, confirm an exact match, then delete — leaving no trace.</p></div>
+<div class="concept"><h4>DNS, IPv4 vs IPv6, connection pooling</h4><p>A hostname must resolve via DNS before it's reachable; Supabase's direct-connection host is IPv6-only, unreachable on an IPv4-only network, which is exactly what was hit — solved by switching to the IPv4-reachable session-pooler endpoint instead.</p></div>
+<div class="concept"><h4>Least privilege</h4><p>Every component was given only the access it needs — anon+RLS for the public dashboard, service-role for the trusted agent, and a one-time DB password used only transiently and then discarded rather than stored anywhere permanent.</p></div>
+
+{{BODY}}
+
+<div class="page-break"></div>
+<h2 id="workflow">C. How everything connects — the system as built after Phase 1</h2>
+<p>
+The diagram below shows the real, live shape of the system today: two independent
+applications, connected only through the shared database, plus the version-control flow
+that gets code from this machine onto GitHub. Grey boxes are not built yet — they show where
+future phases attach.
+</p>
+
+<div class="diagram-wrap">
+<svg viewBox="0 0 800 660" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#334155"/>
+    </marker>
+    <marker id="arrowGrey" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#94a3b8"/>
+    </marker>
+  </defs>
+
+  <!-- ===== Row 1: version control flow ===== -->
+  <rect x="20" y="20" width="150" height="50" rx="7" fill="#f8fafc" stroke="#0f172a" stroke-width="1.5"/>
+  <text x="95" y="42" text-anchor="middle" font-size="11" font-weight="700" fill="#0f172a">Hussein</text>
+  <text x="95" y="58" text-anchor="middle" font-size="8" fill="#64748b">commits &amp; pushes</text>
+
+  <line x1="170" y1="45" x2="228" y2="45" stroke="#334155" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <rect x="230" y="20" width="170" height="50" rx="7" fill="#f8fafc" stroke="#0f172a" stroke-width="1.5"/>
+  <text x="315" y="42" text-anchor="middle" font-size="11" font-weight="700" fill="#0f172a">Local Git Repository</text>
+  <text x="315" y="58" text-anchor="middle" font-size="8" fill="#64748b">.git history on this machine</text>
+
+  <line x1="400" y1="45" x2="458" y2="45" stroke="#334155" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <rect x="460" y="20" width="220" height="50" rx="7" fill="#eef2ff" stroke="#1d4ed8" stroke-width="1.5"/>
+  <text x="570" y="42" text-anchor="middle" font-size="11" font-weight="700" fill="#1d4ed8">GitHub — AiOutreachAgent</text>
+  <text x="570" y="58" text-anchor="middle" font-size="8" fill="#64748b">public repository</text>
+
+  <!-- ===== Row 2: the two applications ===== -->
+  <rect x="40" y="130" width="230" height="90" rx="8" fill="#f8fafc" stroke="#0f172a" stroke-width="1.5"/>
+  <text x="155" y="158" text-anchor="middle" font-size="12" font-weight="700" fill="#0f172a">Dashboard</text>
+  <text x="155" y="174" text-anchor="middle" font-size="8.5" fill="#334155">React + Tailwind v4 (Vite)</text>
+  <text x="155" y="188" text-anchor="middle" font-size="8.5" fill="#334155">PWA — installable on iPhone</text>
+  <text x="155" y="204" text-anchor="middle" font-size="8" fill="#7c3aed" font-weight="700">uses: anon key</text>
+
+  <rect x="530" y="130" width="230" height="90" rx="8" fill="#f8fafc" stroke="#0f172a" stroke-width="1.5"/>
+  <text x="645" y="158" text-anchor="middle" font-size="12" font-weight="700" fill="#0f172a">Agent</text>
+  <text x="645" y="174" text-anchor="middle" font-size="8.5" fill="#334155">Python (isolated venv)</text>
+  <text x="645" y="188" text-anchor="middle" font-size="8.5" fill="#334155">runs on a server, no UI</text>
+  <text x="645" y="204" text-anchor="middle" font-size="8" fill="#b91c1c" font-weight="700">uses: service_role key</text>
+
+  <!-- ===== center: Supabase ===== -->
+  <rect x="290" y="280" width="220" height="100" rx="8" fill="#ecfdf5" stroke="#047857" stroke-width="1.8"/>
+  <text x="400" y="308" text-anchor="middle" font-size="12" font-weight="700" fill="#047857">Supabase</text>
+  <text x="400" y="325" text-anchor="middle" font-size="8.5" fill="#334155">PostgreSQL — 9 tables</text>
+  <text x="400" y="340" text-anchor="middle" font-size="8.5" fill="#334155">Row Level Security enabled</text>
+  <text x="400" y="355" text-anchor="middle" font-size="8.5" fill="#334155">Auth &middot; Realtime &middot; PostgREST API</text>
+  <text x="400" y="370" text-anchor="middle" font-size="7.5" fill="#64748b">ref: xtesxgezongzpdgppobm (Singapore)</text>
+
+  <!-- connectors dashboard/agent -> supabase -->
+  <line x1="200" y1="220" x2="330" y2="278" stroke="#7c3aed" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="215" y="255" font-size="7.8" fill="#7c3aed">read/write, RLS-checked</text>
+
+  <line x1="610" y1="220" x2="475" y2="278" stroke="#b91c1c" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="545" y="255" font-size="7.8" fill="#b91c1c">full access, bypasses RLS</text>
+
+  <!-- ===== Row 4: future phases, greyed ===== -->
+  <g opacity="0.55">
+    <rect x="530" y="420" width="105" height="46" rx="6" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="4,3"/>
+    <text x="582" y="440" text-anchor="middle" font-size="8" fill="#475569">LinkedIn</text>
+    <text x="582" y="452" text-anchor="middle" font-size="7" fill="#94a3b8">Phase 3/7</text>
+
+    <rect x="655" y="420" width="105" height="46" rx="6" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="4,3"/>
+    <text x="707" y="440" text-anchor="middle" font-size="8" fill="#475569">Instagram</text>
+    <text x="707" y="452" text-anchor="middle" font-size="7" fill="#94a3b8">Phase 3</text>
+
+    <rect x="530" y="478" width="105" height="46" rx="6" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="4,3"/>
+    <text x="582" y="498" text-anchor="middle" font-size="8" fill="#475569">Claude API</text>
+    <text x="582" y="510" text-anchor="middle" font-size="7" fill="#94a3b8">Phase 4/5</text>
+
+    <rect x="655" y="478" width="105" height="46" rx="6" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="4,3"/>
+    <text x="707" y="498" text-anchor="middle" font-size="8" fill="#475569">WhatsApp</text>
+    <text x="707" y="510" text-anchor="middle" font-size="7" fill="#94a3b8">Phase 7/8</text>
+
+    <line x1="645" y1="220" x2="600" y2="418" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="3,3" marker-end="url(#arrowGrey)"/>
+    <line x1="660" y1="220" x2="700" y2="418" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="3,3" marker-end="url(#arrowGrey)"/>
+  </g>
+
+  <!-- ===== Phase progress strip ===== -->
+  <text x="20" y="580" font-size="9.5" font-weight="700" fill="#0f172a">Phase progress</text>
+  <g font-size="8">
+    <!-- 11 boxes for phases 0-10 -->
+    <rect x="20"  y="592" width="66" height="30" rx="4" fill="#047857"/>
+    <text x="53"  y="611" text-anchor="middle" fill="#fff" font-weight="700">0 done</text>
+    <rect x="90"  y="592" width="66" height="30" rx="4" fill="#047857"/>
+    <text x="123" y="611" text-anchor="middle" fill="#fff" font-weight="700">1 done</text>
+    <rect x="160" y="592" width="60" height="30" rx="4" fill="#e2e8f0"/>
+    <text x="190" y="611" text-anchor="middle" fill="#475569">2</text>
+    <rect x="224" y="592" width="60" height="30" rx="4" fill="#e2e8f0"/>
+    <text x="254" y="611" text-anchor="middle" fill="#475569">3</text>
+    <rect x="288" y="592" width="60" height="30" rx="4" fill="#e2e8f0"/>
+    <text x="318" y="611" text-anchor="middle" fill="#475569">4</text>
+    <rect x="352" y="592" width="60" height="30" rx="4" fill="#e2e8f0"/>
+    <text x="382" y="611" text-anchor="middle" fill="#475569">5</text>
+    <rect x="416" y="592" width="60" height="30" rx="4" fill="#e2e8f0"/>
+    <text x="446" y="611" text-anchor="middle" fill="#475569">6</text>
+    <rect x="480" y="592" width="60" height="30" rx="4" fill="#e2e8f0"/>
+    <text x="510" y="611" text-anchor="middle" fill="#475569">7</text>
+    <rect x="544" y="592" width="60" height="30" rx="4" fill="#e2e8f0"/>
+    <text x="574" y="611" text-anchor="middle" fill="#475569">8</text>
+    <rect x="608" y="592" width="60" height="30" rx="4" fill="#e2e8f0"/>
+    <text x="638" y="611" text-anchor="middle" fill="#475569">9</text>
+    <rect x="672" y="592" width="66" height="30" rx="4" fill="#e2e8f0"/>
+    <text x="705" y="611" text-anchor="middle" fill="#475569">10</text>
+  </g>
+</svg>
+</div>
+
+<div class="legend">
+  <span><span class="swatch" style="background:#047857"></span> Complete &amp; verified</span>
+  <span><span class="swatch" style="background:#e2e8f0"></span> Not started</span>
+  <span><span class="swatch" style="background:#7c3aed"></span> Anon key + RLS path</span>
+  <span><span class="swatch" style="background:#b91c1c"></span> Service-role key path (bypasses RLS)</span>
+</div>
+
+<div class="ok-box" style="margin-top:20px">
+  <strong>In plain terms:</strong> the dashboard and the agent never talk to each other directly
+  — the only thing connecting them is the Supabase database, reached two different ways with two
+  different levels of trust. Version control (Git/GitHub) is a completely separate flow that
+  moves code, not data. Every box on the right, in grey, is where the next phases attach.
+</div>
+
+<hr style="margin:34px 0 14px;border:none;border-top:1px solid var(--line)">
+<p class="small">
+  Full technical appendix — Phases 0 &amp; 1, {{FILECOUNT}} files reproduced in full &middot; Generated 24 July 2026<br>
+  Source: <code>docs/FULL_TECHNICAL_APPENDIX_PHASE_0_1.html</code> · Rendered by <code>tools/make_pdf.py</code>
+</p>
+
+</body>
+</html>
