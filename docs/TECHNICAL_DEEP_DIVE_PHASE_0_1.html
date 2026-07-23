@@ -1,0 +1,715 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Technical Deep Dive — Phases 0 &amp; 1 — Nexaris AI Outreach Agent</title>
+<style>
+  @page { size: A4; }
+  * { box-sizing: border-box; }
+  :root {
+    --ink: #0f172a; --body: #1e293b; --muted: #64748b; --line: #e2e8f0;
+    --accent: #1d4ed8; --ok: #047857; --warn: #b45309; --bg-soft: #f8fafc; --purple: #7c3aed;
+  }
+  body { margin:0; font-family:"Segoe UI",-apple-system,system-ui,sans-serif; font-size:10.3pt; line-height:1.58; color:var(--body); }
+  h1,h2,h3,h4 { color:var(--ink); line-height:1.25; }
+  h1 { font-size:25pt; margin:0 0 4px; letter-spacing:-0.5px; }
+  h2 { font-size:15pt; margin:32px 0 12px; padding-bottom:6px; border-bottom:2px solid var(--ink); page-break-after:avoid; }
+  h3 { font-size:11.5pt; margin:20px 0 7px; page-break-after:avoid; color:var(--accent); }
+  h4 { font-size:10.3pt; margin:13px 0 4px; page-break-after:avoid; font-style:italic; }
+  p { margin:0 0 9px; }
+  ul,ol { margin:0 0 10px; padding-left:20px; } li { margin-bottom:4px; }
+  code { font-family:Consolas,"Courier New",monospace; font-size:8.8pt; background:#eef2f7; padding:1px 4px; border-radius:3px; color:#0f172a; }
+  pre { background:#0f172a; color:#e2e8f0; padding:11px 13px; border-radius:5px; font-family:Consolas,"Courier New",monospace; font-size:8.3pt; line-height:1.5; overflow-x:auto; white-space:pre-wrap; word-break:break-word; page-break-inside:avoid; margin:8px 0 12px; }
+  pre code { background:none; padding:0; color:inherit; font-size:inherit; }
+  table { width:100%; border-collapse:collapse; font-size:8.9pt; margin:8px 0 14px; page-break-inside:avoid; }
+  th { background:var(--ink); color:#fff; text-align:left; padding:6px 8px; font-weight:600; }
+  td { padding:5px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  tr:nth-child(even) td { background:var(--bg-soft); }
+  .concept { border:1px solid var(--line); border-left:3px solid var(--purple); border-radius:4px; padding:11px 14px; margin:12px 0; page-break-inside:avoid; background:#fff; }
+  .concept h4 { margin-top:0; color:var(--purple); font-style:normal; font-weight:700; }
+  .file-card { border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:4px; padding:11px 14px; margin:12px 0; page-break-inside:avoid; background:#fff; }
+  .file-card h4 { margin-top:0; font-family:Consolas,monospace; font-size:9.8pt; font-style:normal; color:var(--accent); }
+  .note,.warn-box,.ok-box { border-radius:4px; padding:10px 13px; margin:12px 0; font-size:9.6pt; page-break-inside:avoid; }
+  .note { background:#eff6ff; border-left:3px solid var(--accent); }
+  .warn-box { background:#fffbeb; border-left:3px solid var(--warn); }
+  .ok-box { background:#ecfdf5; border-left:3px solid var(--ok); }
+  .cover { text-align:center; padding:58px 0 38px; border-bottom:3px solid var(--ink); margin-bottom:26px; }
+  .cover .eyebrow { font-size:9pt; letter-spacing:3px; text-transform:uppercase; color:var(--muted); margin-bottom:14px; }
+  .cover .sub { font-size:12pt; color:var(--muted); margin-top:8px; }
+  .cover .meta { margin-top:24px; font-size:9pt; color:var(--muted); }
+  .page-break { page-break-before:always; }
+  .toc a { color:var(--body); text-decoration:none; }
+  .toc li { margin-bottom:3px; }
+  .toc .part { font-weight:700; margin-top:8px; color: var(--ink); }
+  .small { font-size:9pt; color:var(--muted); }
+  .term { font-weight:700; color:var(--ink); }
+  .glossary dt { font-weight:700; color:var(--ink); margin-top:10px; font-family:Consolas,monospace; font-size:9.5pt; }
+  .glossary dd { margin:2px 0 0 0; padding-left:0; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="eyebrow">Nexaris &middot; AI Outreach Agent</div>
+  <h1>Technical Deep Dive</h1>
+  <div class="sub">Phases 0 &amp; 1, explained as computer science — every concept, every term, every step</div>
+  <div class="meta">24 July 2026 &nbsp;·&nbsp; Standalone reference document</div>
+</div>
+
+<h2>Contents</h2>
+<ol class="toc">
+  <li class="part">Part I — System Architecture</li>
+  <li><a href="#arch">1. How the whole system is shaped, and why</a></li>
+  <li class="part">Part II — Phase 0 Concepts</li>
+  <li><a href="#git">2. Version control with Git</a></li>
+  <li><a href="#venv">3. Python virtual environments</a></li>
+  <li><a href="#deps">4. Dependency management and version resolution</a></li>
+  <li><a href="#pkgstruct">5. Python packages and modules</a></li>
+  <li><a href="#env">6. Environment variables and configuration</a></li>
+  <li><a href="#npm">7. Node.js, npm, and package.json</a></li>
+  <li><a href="#vite">8. Vite as a build tool</a></li>
+  <li><a href="#react">9. React and component-based UI</a></li>
+  <li><a href="#tailwind">10. Tailwind CSS v4's plugin architecture</a></li>
+  <li><a href="#pwa">11. Progressive Web Apps</a></li>
+  <li><a href="#png">12. The PNG file format, from first principles</a></li>
+  <li><a href="#baas">13. Client-server architecture and Backend-as-a-Service</a></li>
+  <li><a href="#jwt">14. API keys and JSON Web Tokens</a></li>
+  <li class="part">Part III — Phase 1 Concepts</li>
+  <li><a href="#rdb">15. Relational database fundamentals</a></li>
+  <li><a href="#ddl">16. SQL DDL — building the schema</a></li>
+  <li><a href="#uuid">17. UUIDs as primary keys</a></li>
+  <li><a href="#fk">18. Foreign keys and referential integrity</a></li>
+  <li><a href="#jsonb">19. JSONB columns</a></li>
+  <li><a href="#index">20. Indexes</a></li>
+  <li><a href="#rls">21. Row Level Security, in depth</a></li>
+  <li><a href="#repo">22. The Repository Pattern</a></li>
+  <li><a href="#postgrest">23. REST over Postgres — how the client actually talks to the database</a></li>
+  <li><a href="#testing">24. Testing: smoke tests and round-trip verification</a></li>
+  <li><a href="#network">25. Networking — DNS, IPv4 vs IPv6, connection pooling</a></li>
+  <li><a href="#security">26. Credential hygiene and the principle of least privilege</a></li>
+  <li class="part">Part IV — Reference</li>
+  <li><a href="#files">27. Every file created, by category</a></li>
+  <li><a href="#glossary">28. Glossary of every term used</a></li>
+</ol>
+
+<div class="page-break"></div>
+<h2 id="arch">1. How the whole system is shaped, and why</h2>
+<p>
+Before the individual pieces, the overall shape. This project is two separate
+programs that share one database:
+</p>
+<ul>
+  <li>An <span class="term">agent</span> — a Python program with no user interface. It runs
+    on a schedule, on a server, with nobody watching it. It browses websites, calls an AI
+    model, and writes results into the database.</li>
+  <li>A <span class="term">dashboard</span> — a React web application. It has no logic of its
+    own about leads or scoring; it only displays what is in the database and lets a human
+    edit settings or approve messages.</li>
+</ul>
+<p>
+This is a standard pattern called <span class="term">separation of concerns</span>: each
+program has exactly one job, and the only thing connecting them is shared data, not shared
+code. The practical benefit is that either program can be stopped, redeployed, or rewritten
+without touching the other. If the dashboard crashes, the agent keeps running a scheduled job
+unaffected; if the agent needs a code fix, the dashboard stays live for Mahmoud to use.
+</p>
+<div class="concept">
+  <h4>Why not one program?</h4>
+  <p>A single combined program (say, a Python web server that both browsed the internet and
+  served the dashboard) would couple two very different workloads — long-running browser
+  automation and low-latency user requests — onto one process. A crash or a slow browser
+  session would take the dashboard down with it. Splitting them removes that coupling
+  entirely.</p>
+</div>
+
+<div class="page-break"></div>
+<h2 id="git">2. Version control with Git</h2>
+<p>
+<span class="term">Git</span> is a system for tracking changes to a set of files over time.
+Instead of saving "final_v2_FINAL.py" copies, every change is recorded as a
+<span class="term">commit</span> — a snapshot of the entire project at one moment, with a
+message describing what changed and who changed it. Commits form a chain; each one points to
+the commit before it, so the whole history can be walked backwards.
+</p>
+<h3>Local versus remote</h3>
+<p>
+A Git <span class="term">repository</span> (or "repo") starts out entirely on one machine —
+running <code>git init</code> created a hidden <code>.git</code> folder in the project
+directory that stores the entire history. This is the <span class="term">local</span> repo.
+A <span class="term">remote</span> is a copy of that same history hosted somewhere else — in
+this case, GitHub. The two are connected by a named pointer called
+<code>origin</code>, set once with <code>git remote add origin &lt;url&gt;</code>.
+</p>
+<p>
+<code>git commit</code> only ever touches the local repo. <code>git push</code> is the
+separate act of uploading local commits to the remote so they exist on GitHub too. This
+project deliberately keeps those two actions performed by different people: every commit in
+this repository was made and pushed under Hussein's own Git identity, so that the project's
+authorship record on GitHub is accurate.
+</p>
+<h3>The staging area</h3>
+<p>
+Git has an intermediate step between "a file changed on disk" and "a file is part of the next
+commit," called the <span class="term">staging area</span> (or "index"). Running
+<code>git add &lt;file&gt;</code> moves a change into staging; <code>git commit</code> then
+snapshots only what is staged. This exists so a commit can be built up deliberately —
+staging exactly the files that belong to one logical change — rather than always committing
+every modified file at once.
+</p>
+
+<div class="concept">
+  <h4>Why .gitignore was the very first file written</h4>
+  <p>A <code>.gitignore</code> file tells Git which files to never track, by pattern. It was
+  written before the very first <code>git add</code> in this project for one specific reason:
+  this repository is <span class="term">public</span> on GitHub. If a secret (an API key, a
+  database password) is committed even once, it remains recoverable from the project's history
+  forever, even after being deleted in a later commit — anyone can check out an old commit and
+  read it, and automated bots actively scan public GitHub repositories for exactly this
+  pattern. Writing the ignore rules first means a secret file physically cannot enter the
+  staging area by accident.</p>
+</div>
+
+<div class="page-break"></div>
+<h2 id="venv">3. Python virtual environments</h2>
+<p>
+Python packages are normally installed into one shared location per Python installation on a
+machine. This becomes a problem the moment two different projects need two different, and
+possibly incompatible, versions of the same package. A
+<span class="term">virtual environment</span> (venv) solves this by creating an isolated,
+self-contained copy of the Python interpreter and its package directory, scoped to one
+project folder.
+</p>
+<p>
+Running <code>python -m venv agent/venv</code> created <code>agent/venv/</code>, containing
+its own <code>python.exe</code> and its own empty package directory. From that point forward,
+invoking <code>agent/venv/Scripts/python.exe</code> instead of the system's <code>python</code>
+guarantees every package import resolves against this project's isolated set, never anything
+installed globally on the machine or in any other project's venv. This is why every command in
+this project's documentation calls that specific path rather than the bare word
+<code>python</code>.
+</p>
+<p>
+<code>requirements.txt</code> is the declaration of what belongs in that isolated environment.
+Running <code>pip install -r requirements.txt</code> reads that file and installs exactly
+those packages (and their own dependencies) into the venv. Because the venv folder itself is
+never committed to Git (it is large, and entirely regenerable), any machine — a laptop, a
+server — can recreate an identical environment from just the requirements file.
+</p>
+
+<h2 id="deps">4. Dependency management and version resolution</h2>
+<p>
+Each package in <code>requirements.txt</code> can declare which versions of the packages it
+depends on are acceptable — for example, the <code>anthropic</code> package might state it
+needs the <code>httpx</code> package at version 0.27 or higher. When two packages in the same
+environment place <em>conflicting</em> constraints on a shared dependency (one needs
+<code>httpx</code> below version 1, another needs it pinned to exactly 0.28), the installer
+has to find a single version that satisfies both, or fail.
+</p>
+<div class="warn-box">
+  <strong>What actually happened here:</strong> the file originally pinned every package to
+  one <em>exact</em> version using <code>==</code>. That is the strictest possible constraint —
+  it says "only this version, nothing else is acceptable" — and it left no room for
+  <code>pip</code>'s solver to reconcile <code>supabase</code>'s and <code>anthropic</code>'s
+  differing requirements on <code>httpx</code>. The fix was to loosen most pins to
+  <code>&gt;=</code> ("this version or newer") and remove the pin on <code>httpx</code>
+  entirely, letting the solver pick whichever version satisfies every constraint
+  simultaneously. This is a standard trade-off: exact pins give perfect reproducibility but
+  zero flexibility; minimum-version pins give the solver room to work.
+</div>
+
+<h2 id="pkgstruct">5. Python packages and modules</h2>
+<p>
+A folder containing an <code>__init__.py</code> file is treated by Python as a
+<span class="term">package</span> — a namespace that can contain other files
+(<span class="term">modules</span>) and be imported with dot notation, e.g.
+<code>from agent.db import repositories</code> reaches into the <code>agent</code> package, its
+<code>db</code> sub-package, and the <code>repositories</code> module inside it. Without an
+<code>__init__.py</code>, Python has no guarantee the folder is meant to be importable, and in
+some configurations the import simply fails. Nine empty <code>__init__.py</code> files were
+created for exactly this reason — one per folder (<code>agent</code>,
+<code>core</code>, <code>discovery</code>, <code>analysis</code>, <code>messaging</code>,
+<code>sending</code>, <code>crm</code>, <code>notifications</code>, <code>db</code>).
+</p>
+
+<h2 id="env">6. Environment variables and configuration</h2>
+<p>
+An <span class="term">environment variable</span> is a named value that lives outside of any
+source code file, provided by the operating system or process environment at run time. They
+are the standard mechanism for supplying configuration — especially secrets — to a program
+without hard-coding them into files that get committed to version control.
+</p>
+<p>
+This project uses a <code>.env</code> file (loaded by the <code>python-dotenv</code> library)
+to populate environment variables during local development. <code>config.py</code> is the only
+file that calls <code>os.getenv()</code> to read them; everywhere else in the codebase asks
+<code>config</code> for a value by name. This is a deliberate centralisation: if a variable is
+ever renamed, or a new one added, there is exactly one file to change, and every other module
+is unaffected because it never knew the environment variable's name in the first place — it
+only knows <code>config.SUPABASE_URL</code>.
+</p>
+
+<div class="page-break"></div>
+<h2 id="npm">7. Node.js, npm, and package.json</h2>
+<p>
+The dashboard is written in JavaScript, but JavaScript needs a runtime to execute outside a
+browser — that runtime is <span class="term">Node.js</span>. <span class="term">npm</span>
+(Node Package Manager) is both a public registry of reusable JavaScript packages and the CLI
+tool used to install them. <code>package.json</code> is JavaScript's equivalent of
+<code>requirements.txt</code>: it declares which packages the project depends on
+(<code>dependencies</code>, needed when the app actually runs — React, the Supabase client) and
+which are only needed while building it (<code>devDependencies</code> — Vite, Tailwind).
+Running <code>npm install</code> reads this file and downloads every listed package, plus their
+own dependencies, into a folder called <code>node_modules/</code> — the JavaScript equivalent
+of the Python venv, and likewise never committed to Git.
+</p>
+
+<h2 id="vite">8. Vite as a build tool</h2>
+<p>
+Browsers cannot directly run the kind of code a modern React project is written in — it uses
+syntax (JSX, ES module imports of <code>.jsx</code> files) that no browser understands natively.
+A <span class="term">build tool</span> transforms that source code into plain JavaScript,
+HTML, and CSS that a browser can execute. <span class="term">Vite</span> is the build tool used
+here. During development, <code>npm run dev</code> starts a local server that transforms files
+on the fly as they are requested, which is why editing a component updates the browser
+almost instantly. For production, <code>npm run build</code> instead produces a fixed set of
+optimised, minified files in a <code>dist/</code> folder, ready to be uploaded to a static host
+like Vercel.
+</p>
+
+<h2 id="react">9. React and component-based UI</h2>
+<p>
+<span class="term">React</span> is a library for building user interfaces out of
+<span class="term">components</span> — self-contained functions that return a description of
+what should appear on screen, written in <span class="term">JSX</span> (a syntax extension
+that lets HTML-like markup appear directly inside JavaScript code). <code>App.jsx</code> is one
+such component; <code>main.jsx</code> takes that component and mounts it into the single
+<code>&lt;div id="root"&gt;</code> element declared in <code>index.html</code> — this is why the
+HTML file itself is almost empty; React builds the entire visible page at run time inside that
+one div. This pattern is called a
+<span class="term">Single Page Application</span> (SPA): the browser loads one HTML file once,
+and everything the user sees afterward is generated and swapped in by JavaScript, without full
+page reloads.
+</p>
+
+<h2 id="tailwind">10. Tailwind CSS v4's plugin architecture</h2>
+<p>
+Tailwind is a <span class="term">utility-first CSS framework</span> — instead of writing custom
+CSS class names and defining what they mean in a separate stylesheet, elements are styled by
+combining many small, single-purpose classes directly in the markup (e.g.
+<code>class="flex gap-3 rounded-lg"</code>). Version 4, used here, changed how Tailwind
+integrates into a build: earlier versions required a separate <code>tailwind.config.js</code>
+and a <code>postcss.config.js</code> (PostCSS is a general tool for transforming CSS with
+plugins, of which Tailwind is one). Version 4 instead ships as a native Vite plugin, configured
+directly in <code>vite.config.js</code>, with theme customisation moved into the stylesheet
+itself via an <code>@theme</code> block — visible in <code>src/index.css</code>, where the
+hot/warm/cold temperature colours used throughout the dashboard are defined once as CSS custom
+properties.
+</p>
+
+<div class="page-break"></div>
+<h2 id="pwa">11. Progressive Web Apps</h2>
+<p>
+A <span class="term">Progressive Web App</span> (PWA) is a website built to behave like an
+installed native app: it can be added to a phone's home screen, launched without a browser
+address bar, and given its own icon. Three ingredients make this possible:
+</p>
+<ul>
+  <li>A <code>manifest.json</code> file (<code>dashboard/public/manifest.json</code>) — a JSON
+    document describing the app's name, icon set, and <code>display: "standalone"</code> mode,
+    which tells the OS to launch it full-screen with no browser chrome.</li>
+  <li>Icon files at specific sizes (180&times;180 for iOS's home-screen icon, 192 and 512 for the
+    manifest's own reference sizes).</li>
+  <li>iOS-specific <code>&lt;meta&gt;</code> tags in <code>index.html</code> — notably
+    <code>apple-mobile-web-app-capable</code>. Safari on iOS does not fully honour the web
+    manifest standard, so this tag is what actually causes "Add to Home Screen" to open the
+    page full-screen rather than as a bookmark that opens back inside Safari.</li>
+</ul>
+<p>
+Two related but distinct CSS details were also added for the iPhone specifically:
+<code>viewport-fit=cover</code> in the viewport meta tag allows the page to draw underneath
+the physical notch/status bar, and <code>padding: env(safe-area-inset-top) ...</code> in the
+stylesheet then pulls real content back inside the safe, unobstructed area — without the
+second step, content would be drawn but visually cut off by the notch.
+</p>
+<div class="note">
+  <strong>Not yet built:</strong> a full PWA also typically has a
+  <span class="term">service worker</span> — a background script that lets the app work
+  offline and cache assets. That has not been added yet; the manifest and icons alone are
+  enough for "installable, launches full-screen," which was the Phase 0 requirement. Offline
+  support was not part of the spec.
+</div>
+
+<h2 id="png">12. The PNG file format, from first principles</h2>
+<p>
+The app icons needed to exist as real files for the manifest to be valid, but no image editor
+or library was available in this environment. Rather than leave broken image references, a PNG
+file was constructed directly, byte by byte, using only Python's standard library — which is
+possible because the PNG format, while a binary format, has a well-documented and fairly simple
+structure:
+</p>
+<ol>
+  <li>An 8-byte fixed <span class="term">signature</span> that identifies the file as a PNG.</li>
+  <li>A sequence of <span class="term">chunks</span>, each with a 4-byte length, a 4-byte type
+    tag (like <code>IHDR</code>, <code>IDAT</code>, <code>IEND</code>), the chunk's data, and a
+    4-byte <span class="term">CRC32</span> checksum of the type+data, so a corrupted chunk can
+    be detected.</li>
+  <li><code>IHDR</code> declares the image's width, height, colour depth, and colour type.</li>
+  <li><code>IDAT</code> holds the actual pixel data, which PNG always stores
+    <span class="term">zlib-compressed</span> (the same compression algorithm used by
+    <code>.zip</code> files) — Python's built-in <code>zlib</code> module handles this
+    directly.</li>
+  <li><code>IEND</code> marks the end of the file, with no data.</li>
+</ol>
+<p>
+The script computed, for every pixel of every icon size, whether that pixel falls inside a
+simple geometric "N" letterform (two vertical strokes and a diagonal, defined by comparing each
+pixel's coordinates against a few line equations), coloured it accordingly, compressed the
+resulting raw pixel grid, and wrote out the three chunks by hand. This produced valid,
+real PNG files with no external dependency — a placeholder, explicitly meant to be replaced with
+real Nexaris branding later, but a functioning image file rather than a broken link in the
+meantime.
+</p>
+
+<div class="page-break"></div>
+<h2 id="baas">13. Client-server architecture and Backend-as-a-Service</h2>
+<p>
+In a traditional web project, a team writes and hosts its own backend server, which itself
+talks to a database it manages. <span class="term">Backend-as-a-Service</span> (BaaS) replaces
+the custom backend with a managed platform that provides the common pieces —
+a database, user authentication, and often a realtime data feed — as a ready-made API. This
+project uses <span class="term">Supabase</span>, which packages:
+</p>
+<ul>
+  <li>A real, full <span class="term">PostgreSQL</span> database (not a proprietary
+    database — the same open-source relational database used by countless production systems).</li>
+  <li><span class="term">PostgREST</span>, a piece of software that inspects the database's
+    table structure and automatically generates a REST API for it — this is the layer the
+    <code>supabase</code> Python and JavaScript packages actually talk to. No custom API
+    server was written for this project; Supabase generated it directly from the schema.</li>
+  <li>Authentication (email/password or other login methods), which is what the
+    <code>authenticated</code> role referenced throughout the security policies represents.</li>
+  <li>A realtime layer that can push database changes to connected clients over a
+    <span class="term">WebSocket</span> (a persistent, two-way connection, unlike a normal
+    request/response HTTP call) — this is what will let the dashboard update live as the agent
+    works, in a later phase, without the browser needing to repeatedly ask "has anything
+    changed?".</li>
+</ul>
+
+<h2 id="jwt">14. API keys and JSON Web Tokens</h2>
+<p>
+Supabase issues two keys for this project, and both are, technically, a
+<span class="term">JSON Web Token</span> (JWT) — a specific, standard text format for a signed
+piece of data. A JWT is three base64-encoded segments separated by dots:
+<code>header.payload.signature</code>. The middle segment, once decoded, is a plain JSON object;
+for these keys it states which Supabase project the key belongs to and which
+<span class="term">role</span> it grants — either <code>anon</code> or
+<code>service_role</code>. The signature is what stops anyone from editing that payload and
+forging a different role for themselves — it is produced with a secret only Supabase's own
+servers hold, so an altered token fails verification instantly.
+</p>
+<p>
+The <span class="term">anon key</span> identifies the holder as an anonymous, un-elevated
+client — it is meant to be public, and its safety depends entirely on server-side rules (Row
+Level Security, covered in section 21) actually restricting what an anonymous or logged-in
+client can do. The <span class="term">service role key</span> instead identifies the holder as
+the database's own administrator — it bypasses every Row Level Security rule automatically.
+This is why the dashboard's code uses only the anon key and the agent's code uses only the
+service role key: the dashboard runs in a browser, in front of the public, where the key is by
+definition readable by anyone who opens developer tools; the agent runs on a private server
+under Hussein's control, where a powerful key is appropriate.
+</p>
+
+<div class="page-break"></div>
+<h2 id="rdb">15. Relational database fundamentals</h2>
+<p>
+A <span class="term">relational database</span> organises data into
+<span class="term">tables</span> — grids of rows and columns, where every row represents one
+record (one lead, one message) and every column represents one attribute of that record
+(a business name, a score). Tables can reference one another, forming
+<span class="term">relations</span> — a message row can point to the specific lead row it
+belongs to, rather than duplicating that lead's information inside every message. This project
+has nine tables: <code>accounts</code>, <code>settings</code>, <code>leads</code>,
+<code>messages</code>, <code>pipeline_history</code>, <code>follow_ups</code>,
+<code>client_history</code>, <code>notifications_log</code>, and <code>runs</code>.
+</p>
+
+<h2 id="ddl">16. SQL DDL — building the schema</h2>
+<p>
+<span class="term">SQL</span> (Structured Query Language) is the standard language for
+interacting with a relational database. It divides broadly into
+<span class="term">DDL</span> (Data Definition Language — statements like
+<code>CREATE TABLE</code> that define structure) and
+<span class="term">DML</span> (Data Manipulation Language — <code>SELECT</code>,
+<code>INSERT</code>, <code>UPDATE</code>, <code>DELETE</code>, which read and write the data
+inside that structure). <code>02_SUPABASE_SCHEMA.sql</code> is pure DDL plus a small amount of
+seed DML at the end. Each <code>create table if not exists</code> statement lists the table's
+columns, each with a data type (<code>text</code>, <code>int</code>, <code>boolean</code>,
+<code>timestamptz</code>, <code>jsonb</code>, <code>uuid</code>) and optional constraints —
+<code>not null</code> (the value is required), and <code>default</code> (the value used
+automatically if none is supplied on insert).
+</p>
+
+<h2 id="uuid">17. UUIDs as primary keys</h2>
+<p>
+Every table's <code>id</code> column is a <span class="term">UUID</span> (Universally Unique
+Identifier) — a 128-bit number, conventionally written as 32 hexadecimal digits grouped like
+<code>8bda2e52-fedb-4c6f-a3b5-0300a2838ee2</code> (an actual id generated during the Phase 1
+verification test, since deleted). It serves as the table's
+<span class="term">primary key</span> — the column guaranteed to uniquely identify one row. The
+schema's opening line, <code>create extension if not exists "uuid-ossp"</code>, enables a
+Postgres extension providing the function that generates these values automatically
+(<code>uuid_generate_v4()</code>, referenced in every table's <code>id default</code>). UUIDs
+were chosen over a simpler auto-incrementing integer specifically because they can be generated
+independently, by any process, with no coordination needed and no risk of two different rows
+ever colliding on the same id — useful when both the agent and the dashboard might create rows
+concurrently.
+</p>
+
+<h2 id="fk">18. Foreign keys and referential integrity</h2>
+<p>
+A <span class="term">foreign key</span> is a column in one table that holds the primary key
+value of a row in another table, explicitly declared with
+<code>references &lt;table&gt;(&lt;column&gt;)</code>. For example,
+<code>leads.account_id uuid references accounts(id)</code> states that every lead's
+<code>account_id</code> must match a real, existing row in <code>accounts</code> — the database
+itself enforces this, rejecting any insert that would violate it. Several foreign keys in this
+schema add <code>on delete cascade</code> (e.g. on <code>messages.lead_id</code>) or
+<code>on delete set null</code> (e.g. on <code>client_history.lead_id</code>) — these declare
+what should automatically happen to dependent rows if the row they reference is deleted:
+cascade means "delete this row too," set null means "keep this row, but clear the reference."
+This is <span class="term">referential integrity</span> — the guarantee that the relationships
+between tables can never point at something that doesn't exist.
+</p>
+
+<h2 id="jsonb">19. JSONB columns</h2>
+<p>
+Several columns (<code>leads.weak_points</code>, <code>leads.social_platforms</code>) are typed
+<code>jsonb</code> rather than a fixed set of ordinary columns. <span class="term">JSONB</span>
+is Postgres's binary-optimised format for storing an arbitrary JSON document (an object or
+array) inside a single column, while still being queryable and indexable. This is a deliberate
+trade-off against strict relational modelling: a lead might have three weak points or ten, and
+they don't need their own separate table with a foreign key back to the lead — a JSON array in
+one column is simpler here, at the cost of that data being less directly queryable by SQL than
+a normal column would be. This is sometimes called a controlled use of a
+<span class="term">document-style</span> pattern inside an otherwise relational schema.
+</p>
+
+<h2 id="index">20. Indexes</h2>
+<p>
+A plain table lookup by a non-key column normally requires scanning every row.
+An <span class="term">index</span> is a separate, ordered data structure the database maintains
+alongside a table specifically to make lookups on one column fast — conceptually similar to a
+book's index letting you jump straight to a page instead of reading cover to cover. The schema
+creates eight indexes, e.g. <code>create index idx_leads_status on leads(status)</code>, chosen
+on the columns this project will filter by constantly (a lead's lifecycle status, its
+temperature, which platform it came from) — these are the queries the dashboard and agent will
+run most often, so they are the ones worth the (small) extra storage and write cost an index
+carries.
+</p>
+
+<div class="page-break"></div>
+<h2 id="rls">21. Row Level Security, in depth</h2>
+<p>
+Creating a table in Postgres does not, by itself, restrict who can read or write it — access
+control is a separate, explicit layer called <span class="term">Row Level Security</span>
+(RLS). Turning it on for a table (<code>alter table &lt;t&gt; enable row level security</code>)
+flips the table's default from "accessible" to "nothing is accessible until a policy says
+otherwise." A <span class="term">policy</span> then grants a specific carve-out:
+</p>
+<pre><code>create policy "authenticated full access" on accounts
+  for all to authenticated using (true) with check (true);</code></pre>
+<p>
+Read this as: for every operation (<code>for all</code> — select, insert, update, delete), for
+requests authenticated as a logged-in user (<code>to authenticated</code>), allow it
+unconditionally. The <code>using (true)</code> clause governs which existing rows may be
+read/updated/deleted (here, all of them); <code>with check (true)</code> governs which new or
+edited rows are allowed to be written (here, anything). Because there are exactly two trusted
+users on this system, both clauses are simply <code>true</code> — a more selective system might
+instead write <code>using (owner_id = auth.uid())</code>, restricting each user to only their
+own rows.
+</p>
+<p>
+Crucially, RLS is evaluated per request based on which <em>role</em> the connection is using —
+and the service role key (section 14) is defined by Supabase to bypass RLS entirely, by design,
+regardless of any policy written. This is why the same nine <code>enable row level
+security</code> statements that lock the dashboard down completely do not restrict the agent at
+all: the agent authenticates as <code>service_role</code>, never as <code>authenticated</code>.
+</p>
+
+<h2 id="repo">22. The Repository Pattern</h2>
+<p>
+<code>agent/db/repositories.py</code> implements a well-known software design pattern called
+the <span class="term">Repository Pattern</span>: rather than letting every part of a program
+construct its own database queries wherever it needs data, all data access is funnelled through
+one layer of small, purpose-named functions (<code>get_settings()</code>,
+<code>insert_lead(...)</code>). The rest of the codebase depends only on this layer's function
+signatures, never on how the data is actually stored or fetched underneath. The practical
+benefit shows up the moment the schema changes: a renamed column, a new table, or even a switch
+to a different database entirely would only require editing this one file — every caller
+elsewhere in the codebase is unaffected because it never referenced a table or column name
+directly.
+</p>
+
+<h2 id="postgrest">23. REST over Postgres — how the client actually talks to the database</h2>
+<p>
+The Python code never opens a raw database connection or writes SQL by hand during normal
+operation (Phase 1's one-time schema migration, discussed in section 25, was the sole
+exception). Instead, <code>get_client().table("leads").select("*").eq("status",
+"discovered").execute()</code> builds an HTTP request under the hood, sent to the PostgREST API
+that Supabase generates automatically from the schema (section 13). This is a
+<span class="term">REST</span> (Representational State Transfer) style API: resources (tables)
+are addressed by URL, and standard HTTP verbs (GET, POST, PATCH, DELETE) map onto
+read/create/update/delete operations. The Python <code>supabase</code> package is a thin,
+convenient wrapper that constructs these HTTP requests and parses their JSON responses, rather
+than an implementation of the database protocol itself.
+</p>
+
+<h2 id="testing">24. Testing: smoke tests and round-trip verification</h2>
+<p>
+<code>smoke_test.py</code> is what is generally called a <span class="term">smoke test</span> —
+a fast, broad check that the overall system is basically alive and functioning, run before
+investing time in anything more detailed (the name comes from hardware testing: power on a
+device and check that smoke doesn't come out, before testing individual features). It performs
+what is specifically called a <span class="term">round-trip test</span> on write access: insert
+a record, read it back, and assert the two match exactly, which proves not just that a write
+"succeeded" in isolation but that what comes back out is genuinely what went in — then deletes
+that record so the test has no lasting side effect on the real data, a property called being
+<span class="term">idempotent</span>-safe to re-run.
+</p>
+
+<div class="page-break"></div>
+<h2 id="network">25. Networking — DNS, IPv4 vs IPv6, connection pooling</h2>
+<p>
+Connecting directly to the database (rather than through the PostgREST API) required a raw
+Postgres connection string and hit a real networking issue worth explaining properly.
+</p>
+<h3>DNS resolution</h3>
+<p>
+A hostname like <code>db.xtesxgezongzpdgppobm.supabase.co</code> is not itself an address a
+computer can connect to — it must first be translated into a numeric
+<span class="term">IP address</span> via the <span class="term">Domain Name System</span>
+(DNS), the internet's distributed lookup service mapping names to addresses. The error
+encountered, <code>could not translate host name ... to address</code>, is a DNS resolution
+failure specifically — the name could not be turned into any usable address at all on this
+network.
+</p>
+<h3>IPv4 versus IPv6</h3>
+<p>
+There are two addressing schemes in use across the internet: <span class="term">IPv4</span>
+(the older, more universally supported scheme, addresses like <code>192.0.2.1</code>, with a
+limited total address space that has effectively run out) and
+<span class="term">IPv6</span> (the newer scheme designed to have effectively unlimited
+addresses, written like <code>2001:db8::1</code>). Supabase's direct-connection hostname
+resolves only to an IPv6 address. Many home and office networks, including the one this project
+was built on, either have no IPv6 connectivity configured or route it unreliably — so a
+hostname that only exists in IPv6 space is entirely unreachable from such a network, which is
+exactly the failure observed.
+</p>
+<h3>Connection pooling</h3>
+<p>
+The fix was switching to Supabase's <span class="term">session pooler</span> endpoint instead —
+a separate hostname that does resolve over IPv4. A
+<span class="term">connection pooler</span> is a piece of infrastructure sitting between a
+client and the actual database, holding open a smaller, reused set of real database connections
+and multiplexing many client requests across them, rather than every client opening its own
+direct connection to Postgres (each of which carries real memory and CPU overhead on the
+database server). Supabase offers pooling in two modes — session pooler (one pooled connection
+held for the lifetime of a client session) and transaction pooler (a connection is only held for
+the duration of a single transaction, then immediately returned to the pool) — the session mode
+was used here since it is what Supabase's own UI recommended for the equivalent scripted,
+persistent-connection use case.
+</p>
+
+<h2 id="security">26. Credential hygiene and the principle of least privilege</h2>
+<p>
+Several practices in this project follow the general security principle of
+<span class="term">least privilege</span>: every component should hold only the access it
+actually needs, and no more. Concretely:
+</p>
+<ul>
+  <li>The dashboard, which runs in an untrusted context (any visitor's browser), was given only
+    the anon key, restricted further by Row Level Security.</li>
+  <li>The agent, which runs in a trusted context Hussein controls, was given the powerful
+    service role key — but only in a file (<code>agent/.env</code>) that is never transmitted
+    anywhere and is explicitly excluded from version control.</li>
+  <li>The one-time raw database password used to run the initial migration was used inside a
+    single temporary script and then deleted immediately afterward, rather than being written
+    into any permanent project file — it was needed for one administrative action, not for the
+    system's ongoing operation, so it was not given ongoing storage.</li>
+</ul>
+<p>
+The broader habit this reflects: before adding a secret anywhere, ask what the minimum access
+required for the task actually is, and grant exactly that — not the most convenient or most
+powerful credential available.
+</p>
+
+<div class="page-break"></div>
+<h2 id="files">27. Every file created, by category</h2>
+<table>
+  <tr><th style="width:24%">Category</th><th>Files</th></tr>
+  <tr><td>Version control config</td><td><code>.gitignore</code></td></tr>
+  <tr><td>Environment/config</td><td><code>.env.example</code>, <code>agent/config.py</code>, <code>agent/.env</code>, <code>dashboard/.env</code> (both untracked)</td></tr>
+  <tr><td>Python packaging</td><td><code>agent/requirements.txt</code>, 9&nbsp;&times;&nbsp;<code>__init__.py</code></td></tr>
+  <tr><td>Database connectivity (Python)</td><td><code>agent/db/client.py</code>, <code>agent/db/repositories.py</code>, <code>agent/db/smoke_test.py</code></td></tr>
+  <tr><td>SQL — schema and security</td><td><code>02_SUPABASE_SCHEMA.sql</code>, <code>database/policies.sql</code>, <code>database/schema.sql</code></td></tr>
+  <tr><td>Agent entry point</td><td><code>agent/main.py</code></td></tr>
+  <tr><td>Agent stub modules (23)</td><td><code>core/</code>, <code>discovery/</code>, <code>analysis/</code>, <code>messaging/</code>, <code>sending/</code>, <code>crm/</code>, <code>notifications/</code></td></tr>
+  <tr><td>JavaScript packaging</td><td><code>dashboard/package.json</code>, <code>dashboard/vite.config.js</code></td></tr>
+  <tr><td>Frontend application</td><td><code>dashboard/index.html</code>, <code>src/main.jsx</code>, <code>src/App.jsx</code>, <code>src/index.css</code></td></tr>
+  <tr><td>Frontend data layer</td><td><code>dashboard/src/lib/supabase.js</code></td></tr>
+  <tr><td>PWA assets</td><td><code>dashboard/public/manifest.json</code>, 4 generated icon files</td></tr>
+  <tr><td>Tooling</td><td><code>tools/make_pdf.py</code></td></tr>
+  <tr><td>Project documentation</td><td><code>README.md</code>, <code>PROGRESS.md</code>, <code>REQUIREMENTS_COVERAGE.md</code>, this document, and the per-phase PDFs in <code>docs/</code></td></tr>
+</table>
+
+<div class="page-break"></div>
+<h2 id="glossary">28. Glossary of every term used</h2>
+<dl class="glossary">
+  <dt>API (Application Programming Interface)</dt><dd>A defined way for one program to request data or actions from another.</dd>
+  <dt>BaaS (Backend-as-a-Service)</dt><dd>A hosted platform providing ready-made backend building blocks (database, auth, realtime) instead of a custom-built server.</dd>
+  <dt>Build tool</dt><dd>Software that converts source code into the plain form a runtime (e.g. a browser) can execute.</dd>
+  <dt>Commit</dt><dd>A saved snapshot of a project's files in Git, with a message describing the change.</dd>
+  <dt>Component (React)</dt><dd>A self-contained function describing one piece of a user interface.</dd>
+  <dt>Connection pooler</dt><dd>Infrastructure that reuses a small set of database connections across many clients instead of one connection per client.</dd>
+  <dt>CRC32</dt><dd>A checksum algorithm used to detect corrupted data, used inside the PNG format.</dd>
+  <dt>DDL / DML</dt><dd>SQL statements that define structure (DDL: CREATE TABLE) versus statements that read/write data (DML: SELECT, INSERT).</dd>
+  <dt>DNS (Domain Name System)</dt><dd>The internet service that translates hostnames into IP addresses.</dd>
+  <dt>Environment variable</dt><dd>A named configuration value supplied to a program from outside its source code.</dd>
+  <dt>Foreign key</dt><dd>A column whose value must match a primary key in another table, enforcing that a relationship points at something real.</dd>
+  <dt>Git</dt><dd>A version control system that tracks changes to files as a chain of commits.</dd>
+  <dt>Index (database)</dt><dd>An extra data structure that speeds up lookups on a specific column, at the cost of some storage and write overhead.</dd>
+  <dt>IPv4 / IPv6</dt><dd>Two internet addressing schemes; IPv4 is older and more universally reachable, IPv6 has a far larger address space but incomplete network support.</dd>
+  <dt>Idempotent</dt><dd>An operation that can be safely repeated without changing the outcome beyond the first run.</dd>
+  <dt>JSONB</dt><dd>PostgreSQL's binary-optimised column type for storing a JSON document.</dd>
+  <dt>JWT (JSON Web Token)</dt><dd>A signed, three-part text token (header, payload, signature) commonly used to carry identity/role claims.</dd>
+  <dt>Least privilege</dt><dd>The security principle of granting only the minimum access a component actually needs.</dd>
+  <dt>Node.js</dt><dd>A runtime that executes JavaScript outside a browser.</dd>
+  <dt>npm</dt><dd>Node's package manager and public package registry.</dd>
+  <dt>Primary key</dt><dd>The column (or columns) guaranteed to uniquely identify one row in a table.</dd>
+  <dt>PostgREST</dt><dd>Software that auto-generates a REST API directly from a Postgres database's schema.</dd>
+  <dt>PWA (Progressive Web App)</dt><dd>A website built to be installable and to behave like a native app.</dd>
+  <dt>Referential integrity</dt><dd>The database-enforced guarantee that foreign key relationships always point at an existing row.</dd>
+  <dt>Repository pattern</dt><dd>A design pattern centralising all data access behind one set of named functions.</dd>
+  <dt>REST</dt><dd>An API style where resources are addressed by URL and manipulated via standard HTTP verbs.</dd>
+  <dt>RLS (Row Level Security)</dt><dd>A PostgreSQL feature restricting which rows a given database role may read or write, via explicit policies.</dd>
+  <dt>Round-trip test</dt><dd>A test that writes data and reads it back to confirm the two match exactly.</dd>
+  <dt>Separation of concerns</dt><dd>A design principle: each part of a system should have exactly one responsibility.</dd>
+  <dt>Service worker</dt><dd>A background browser script enabling offline behaviour in a web app; not used in this phase.</dd>
+  <dt>Smoke test</dt><dd>A fast, broad check that a system is basically functioning, run before deeper testing.</dd>
+  <dt>SPA (Single Page Application)</dt><dd>A web app that loads one HTML page once and updates the view via JavaScript afterward, without full reloads.</dd>
+  <dt>SQL</dt><dd>Structured Query Language — the standard language for interacting with a relational database.</dd>
+  <dt>Staging area (Git)</dt><dd>The intermediate step where changes are marked for inclusion in the next commit.</dd>
+  <dt>UUID</dt><dd>A 128-bit identifier that can be generated independently, with negligible chance of collision, without central coordination.</dd>
+  <dt>Virtual environment (venv)</dt><dd>An isolated, project-scoped copy of a Python interpreter and its installed packages.</dd>
+  <dt>WebSocket</dt><dd>A persistent, two-way network connection, as opposed to one-off request/response HTTP calls.</dd>
+  <dt>Zlib</dt><dd>A general-purpose compression algorithm, used inside the PNG format for pixel data.</dd>
+</dl>
+
+<hr style="margin:34px 0 14px;border:none;border-top:1px solid var(--line)">
+<p class="small">
+  Technical deep dive covering Phases 0 and 1 · Generated 24 July 2026<br>
+  Source: <code>docs/TECHNICAL_DEEP_DIVE_PHASE_0_1.html</code> · Rendered by <code>tools/make_pdf.py</code>
+</p>
+
+</body>
+</html>
