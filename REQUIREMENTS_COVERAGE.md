@@ -7,8 +7,13 @@ build plan is listed here with an ID, the phase that delivers it, and the file i
 this table is. At the end of every phase, the rows for that phase get marked `DONE` and the
 phase is not closed until all of its rows are marked.
 
-**Status legend:** `TODO` = not started · `WIP` = in progress · `DONE` = built and tested by
-Hussein · `N/A` = deliberately out of scope
+**Status legend:** `TODO` = not started · `WIP` = in progress · `CODE` = code written, not
+yet verified live · `DONE` = built and tested by Hussein · `N/A` = deliberately out of scope
+
+**Phase 1 progress (2026-07-23):** `database/policies.sql` (RLS), `agent/db/repositories.py`
+(25 functions, all 9 tables), and `agent/db/smoke_test.py` are written and import-clean.
+The live run + verify in Supabase is blocked on Hussein's keys (Q6). Settings rows
+S1–S8, S14 get their storage from the schema now; their dashboard UI is Phase 9.
 
 ---
 

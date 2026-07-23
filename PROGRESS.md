@@ -3,8 +3,9 @@
 Updated after every phase. If a session runs out of context, point the next one at
 this file plus `00_MASTER_PROMPT.md` and it can pick up without losing anything.
 
-**Current state:** Phase 0 complete, awaiting Hussein's confirmation.
-**Next:** Phase 1 — database schema in Supabase.
+**Current state:** Phase 1 code built; blocked on Supabase keys for the live run/verify step.
+**Next:** Hussein creates the Supabase project and sends the 3 keys → we run both SQL
+files, then `python -m agent.db.smoke_test` proves the checkpoint.
 
 ---
 
@@ -13,7 +14,7 @@ this file plus `00_MASTER_PROMPT.md` and it can pick up without losing anything.
 | Phase | Name | Status |
 |-------|------|--------|
 | 0 | Project setup & foundations | ✅ Built — awaiting confirmation |
-| 1 | Database schema | ⬜ Not started |
+| 1 | Database schema | 🟡 Code built — blocked on Supabase keys for live verify |
 | 2 | Agent core: account pool & sessions | ⬜ Not started |
 | 3 | Discovery: LinkedIn & Instagram | ⬜ Not started |
 | 4 | Claude analysis pipeline | ⬜ Not started |
@@ -89,6 +90,28 @@ cd dashboard && npm run dev
 - Claude API key not set — blocks Phase 4
 - Playwright browsers not downloaded yet (`playwright install chromium`) — Phase 2
 - Open decisions Q1–Q7 in `REQUIREMENTS_COVERAGE.md`
+
+---
+
+## Phase 1 — Database schema
+
+**Built (code, no live DB yet):**
+
+- `database/policies.sql` — Row Level Security for all 9 tables. Model: RLS on,
+  `authenticated` role gets full access, `anon` gets nothing. Fits the 2-user setup.
+  The agent's service-role key bypasses RLS, so only the dashboard is governed.
+- `agent/db/repositories.py` — the data-access layer. 25 functions across all 9
+  tables, one section per table. The only module that touches the database directly.
+  Verified: imports clean.
+- `agent/db/smoke_test.py` — Phase 1 checkpoint proof. Checks connection, all 9
+  tables, seed data (3 accounts + settings), and a self-cleaning write/read/delete.
+  Verified: fails gracefully with a clear message when keys are absent.
+
+**Blocked (needs Hussein):** create the Supabase project, put the 3 keys in
+`agent/.env` + `dashboard/.env`, run `02_SUPABASE_SCHEMA.sql` then
+`database/policies.sql` in the Supabase SQL editor. Then the smoke test verifies it.
+
+**Phase 1 PDF:** held until the live-verify step is done, so it's one complete doc.
 
 ---
 
