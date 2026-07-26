@@ -314,3 +314,24 @@ def finish_run(
         fields["notes"] = notes
     res = get_client().table("runs").update(fields).eq("id", run_id).execute()
     return res.data[0]
+
+
+def has_run_today(account_id: str, day_start_iso: str) -> bool:
+    """
+    True if this account already has a run row starting on or after `day_start_iso`
+    (midnight of "today" in the caller's timezone, passed in as an ISO timestamp).
+
+    Used by the scheduler to avoid triggering the same account twice in one day —
+    the timezone conversion happens in account_pool.py, which owns the concept of
+    "what day it is" for this system; this function only compares timestamps.
+    """
+    res = (
+        get_client()
+        .table("runs")
+        .select("id")
+        .eq("account_id", account_id)
+        .gte("started_at", day_start_iso)
+        .limit(1)
+        .execute()
+    )
+    return len(res.data) > 0
