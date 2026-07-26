@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Project Progress — Nexaris AI Outreach Agent</title>
+<style>
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; }
+  :root {
+    --ink: #0f172a; --body: #334155; --muted: #64748b;
+    --ok: #047857; --ok-bg: #ecfdf5; --line: #e2e8f0;
+  }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", -apple-system, system-ui, sans-serif;
+    color: var(--body);
+    padding: 26px 34px;
+    font-size: 10.3pt;
+    line-height: 1.42;
+  }
+  header { text-align:center; margin-bottom:16px; }
+  .eyebrow { font-size:9pt; letter-spacing:2.5px; text-transform:uppercase; color:var(--muted); }
+  h1 { font-size:22pt; color:var(--ink); margin:4px 0 2px; letter-spacing:-0.5px; }
+  .sub { font-size:10.5pt; color:var(--muted); }
+  .rule { height:3px; background:var(--ink); border-radius:2px; margin:14px 0 18px; }
+
+  .phase {
+    border:1px solid var(--line);
+    border-left:5px solid var(--ok);
+    border-radius:6px;
+    padding:10px 16px 11px;
+    margin-bottom:10px;
+    background:#fff;
+  }
+  .phase h2 {
+    font-size:12.3pt;
+    color:var(--ink);
+    margin:0 0 6px;
+    display:flex;
+    align-items:center;
+    gap:8px;
+  }
+  .check {
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    width:18px; height:18px;
+    border-radius:50%;
+    background:var(--ok);
+    color:#fff;
+    font-size:11px;
+    font-weight:700;
+    flex-shrink:0;
+  }
+  .phase ul { margin:0; padding-left:19px; }
+  .phase li { margin-bottom:3px; }
+
+  footer {
+    text-align:center;
+    margin-top:14px;
+    font-size:8.8pt;
+    color:var(--muted);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="eyebrow">Nexaris &middot; AI Outreach Agent</div>
+  <h1>Project Progress</h1>
+  <div class="sub">Everything completed so far, at a glance</div>
+</header>
+<div class="rule"></div>
+
+<div class="phase">
+  <h2><span class="check">&#10003;</span>Phase 0 — Project Setup &amp; Foundations</h2>
+  <ul>
+    <li>Set up the complete project structure for both the automated agent and the dashboard</li>
+    <li>Built and connected the Python program that will run the daily outreach process</li>
+    <li>Built the dashboard's foundation using React, designed to work on laptop and iPhone alike</li>
+    <li>Prepared the dashboard so it can be installed as an app on a phone's home screen</li>
+    <li>Set up secure, organised version control for the whole project on GitHub</li>
+  </ul>
+</div>
+
+<div class="phase">
+  <h2><span class="check">&#10003;</span>Phase 1 — Database Setup</h2>
+  <ul>
+    <li>Designed and created the full database: nine organised tables covering leads, messages, accounts, and more</li>
+    <li>Locked the database down with security rules so only approved accounts can ever access it</li>
+    <li>Built the connection layer that lets the program read and write data reliably</li>
+    <li>Tested everything live against the real database and confirmed it works end to end</li>
+  </ul>
+</div>
+
+<div class="phase">
+  <h2><span class="check">&#10003;</span>Phase 2 — Account Safety &amp; Session Isolation</h2>
+  <ul>
+    <li>Built a system that manages all three outreach accounts and keeps track of when each should run</li>
+    <li>Gave each account its own fully separate, private session — verified live with zero mixing between accounts</li>
+    <li>Added automatic problem detection: any issue is paused and clearly explained, with the final decision always left to Hussein</li>
+    <li>Ran full live tests, including a deliberate failure scenario, and confirmed every part worked correctly</li>
+  </ul>
+</div>
+
+<footer>Nexaris AI Outreach Agent &middot; Phases 0&ndash;2 complete &middot; 27 July 2026</footer>
+
+</body>
+</html>
