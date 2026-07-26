@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Phase 2 Summary — Nexaris AI Outreach Agent</title>
+<style>
+  @page { size: A4; }
+  * { box-sizing: border-box; }
+  :root {
+    --ink: #0f172a; --body: #1e293b; --muted: #64748b; --line: #e2e8f0;
+    --accent: #1d4ed8; --ok: #047857; --bg-soft: #f8fafc;
+  }
+  body { margin:0; font-family:"Segoe UI",-apple-system,system-ui,sans-serif; font-size:11pt; line-height:1.7; color:var(--body); }
+  h1,h2 { color:var(--ink); line-height:1.25; }
+  h1 { font-size:27pt; margin:0 0 4px; letter-spacing:-0.5px; }
+  h2 { font-size:14pt; margin:28px 0 10px; padding-bottom:6px; border-bottom:2px solid var(--ink); page-break-after:avoid; }
+  p { margin:0 0 12px; }
+  .cover { text-align:center; padding:70px 0 44px; border-bottom:3px solid var(--ink); margin-bottom:30px; }
+  .cover .eyebrow { font-size:9pt; letter-spacing:3px; text-transform:uppercase; color:var(--muted); margin-bottom:14px; }
+  .cover .sub { font-size:12.5pt; color:var(--muted); margin-top:10px; }
+  .cover .meta { margin-top:28px; font-size:9.5pt; color:var(--muted); }
+  .result { background:var(--bg-soft); border-left:4px solid var(--ok); border-radius:4px; padding:16px 20px; margin:22px 0; }
+  .result strong { color:var(--ok); }
+  .small { font-size:9.5pt; color:var(--muted); }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="eyebrow">Nexaris &middot; AI Outreach Agent</div>
+  <h1>Phase 2 — Agent Core</h1>
+  <div class="sub">A summary of the work completed</div>
+  <div class="meta">27 July 2026</div>
+</div>
+
+<h2>What this phase covered</h2>
+<p>
+With the database in place, this phase focused on making sure the three outreach accounts can
+each run safely, independently, and without ever interfering with one another. This is the
+foundation that protects the accounts themselves before any real activity begins on them.
+</p>
+<p>
+Hussein built a system that keeps track of all three accounts, knows the daily schedule each one
+should run on, and decides automatically which accounts are due to run at any given moment —
+skipping any account that is currently paused, and never running the same account twice in one
+day.
+</p>
+
+<h2>Keeping every account completely separate</h2>
+<p>
+The most important part of this phase was building true isolation between the three accounts.
+Each account now runs inside its own private, self-contained browser session — nothing it does,
+no cookie it stores, no login it holds, can ever cross over into another account's session. This
+was verified directly: three accounts were run at the same time, each was given its own unique
+marker, and every single one came back seeing only its own data, with zero overlap.
+</p>
+<p>
+Each account's session is also remembered between runs, the same way a person's browser stays
+logged in from one day to the next, rather than starting fresh and having to log in again every
+single time — which is exactly the kind of behaviour that draws unwanted attention on real
+platforms.
+</p>
+
+<h2>Watching for trouble, without overreacting</h2>
+<p>
+A monitoring system was built to watch every account's session for signs of a problem —
+anything from the page failing to load at all, to being blocked, to being shown a login
+challenge or a verification screen. When something goes wrong, the specific type of problem and
+the exact reason are recorded, and that one account is safely paused. Nothing else happens
+automatically: no account is ever brought back online, and no workload is ever shifted onto the
+other accounts, without Hussein deciding that himself. This was tested directly by deliberately
+causing a failure and confirming the system caught it, recorded the precise reason, and paused
+only the affected account — while leaving the decision of what to do next entirely in Hussein's
+hands.
+</p>
+
+<h2>Running it for real</h2>
+<p>
+Everything above was tested against the live system, not just in theory. A full run was
+triggered for all three accounts, and each one completed successfully, with an accurate record
+of exactly when it started and when it finished. A second test deliberately introduced a failure,
+and the system correctly detected it, explained why, and paused the right account — then
+Hussein reset everything back to a clean, ready state afterward.
+</p>
+
+<div class="result">
+  <p style="margin-bottom:0"><strong>Result: every check passed.</strong> All three accounts
+  can now run safely, in complete isolation from one another, with automatic problem detection
+  and no risk of one account's activity ever affecting another.</p>
+</div>
+
+<p class="small">Phase 2 of the Nexaris AI Outreach Agent — completed and verified, 27 July 2026.</p>
+
+</body>
+</html>
