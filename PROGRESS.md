@@ -3,8 +3,9 @@
 Updated after every phase. If a session runs out of context, point the next one at
 this file plus `00_MASTER_PROMPT.md` and it can pick up without losing anything.
 
-**Current state:** Phase 1 complete and verified live against the real Supabase project.
-**Next:** Phase 2 — agent core: account pool & browser sessions.
+**Current state:** Phase 2 complete and verified live — account pool, isolated browser
+sessions, health checks, and scheduler all tested against the real Supabase project.
+**Next:** Phase 3 — discovery: LinkedIn & Instagram.
 
 ---
 
@@ -14,7 +15,7 @@ this file plus `00_MASTER_PROMPT.md` and it can pick up without losing anything.
 |-------|------|--------|
 | 0 | Project setup & foundations | ✅ Complete |
 | 1 | Database schema | ✅ Complete — verified live in Supabase |
-| 2 | Agent core: account pool & sessions | ⬜ Not started |
+| 2 | Agent core: account pool & sessions | ✅ Complete — verified live |
 | 3 | Discovery: LinkedIn & Instagram | ⬜ Not started |
 | 4 | Claude analysis pipeline | ⬜ Not started |
 | 5 | Message generation | ⬜ Not started |
@@ -114,6 +115,39 @@ all 9 tables, seed data (3 accounts + settings), and a clean insert/read/delete 
 
 **Phase 1 PDF:** `docs/PHASE_1_EXPLAINED.pdf` — covers all 3 files, the migration process,
 the IPv6/pooler issue, and a security note on the temporary use of the DB password.
+
+---
+
+## Phase 2 — Agent core: account pool & browser sessions
+
+**Built and verified live (2026-07-27):**
+
+- `agent/db/repositories.py` — added `has_run_today()` (extends the Phase 1 data layer)
+- `agent/core/account_pool.py` — loads the 3 accounts, decides which are due to run
+  (active + past run_time + not already run today), with a `force` override for testing
+- `agent/core/session.py` — one shared Chromium process, isolated Playwright context per
+  account, per-account proxy binding (empty slot handled), persistent per-account cookie
+  storage in gitignored `agent/browser_profiles/`
+- `agent/core/health.py` — navigation-level failure detection (tested live) + content-level
+  CAPTCHA/challenge phrase detection (built with real platform wording, ready for Phase 3)
+- `agent/scheduler.py` — `run_cycle()` ties it together; `build_daily_schedule()` wires
+  APScheduler cron triggers per account for Phase 10; manual trigger via
+  `python -m agent.scheduler`
+
+**Live tests, all passed:**
+1. Isolation — 3 simultaneous contexts, each set a unique cookie, zero cross-account leakage
+2. Success path — real `runs` rows written with correct start/finish times
+3. Failure path — invalid domain correctly detected, account paused with specific
+   type + reason, `redistribute_flag` confirmed untouched (core rule R9)
+
+**Bug found and fixed:** `finish_run()` wasn't receiving a `finished_at_iso`, so every run's
+finish time silently stayed `None`. Fixed in `scheduler.py`; re-verified with real data.
+
+**Cleanup:** all 3 accounts reset to active, warnings cleared, 6 test `runs` rows deleted,
+local browser profile files removed — database and machine left clean for Phase 3.
+
+**Phase 2 PDFs:** `docs/PHASE_2_EXPLAINED.pdf` (full technical detail) and
+`docs/PHASE_2_SUMMARY.pdf` (plain-English).
 
 ---
 

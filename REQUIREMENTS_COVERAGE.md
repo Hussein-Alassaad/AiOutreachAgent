@@ -16,6 +16,10 @@ yet verified live · `DONE` = built and tested by Hussein · `N/A` = deliberatel
 smoke test passed end-to-end. Q6 resolved. Settings rows S1–S8, S14 have their storage in
 place; their dashboard UI is still Phase 9.
 
+**Phase 2 — DONE (2026-07-27).** Account pool, isolated Playwright sessions (proxy binding +
+persistent storage), health checks, and scheduler all built and verified live. R6 and R9
+below are now enforced in code, not just planned.
+
 ---
 
 ## A. The 10 core rules (never violated — these are constraints, not features)
@@ -27,10 +31,10 @@ place; their dashboard UI is still Phase 9.
 | R3 | WhatsApp auto-sends **only** when a public number was found | `sending/whatsapp_send.py` | 7 | TODO |
 | R4 | Nothing sends without Mahmoud's approval — hard gate, no bypass | approval gate in `sending/` | 6 | TODO |
 | R5 | Messages are AI-generated per lead, human tone | `messaging/generate.py` | 5 | TODO |
-| R6 | Each account uses its own dedicated sticky proxy IP — never shared | `core/session.py` | 2 | TODO |
+| R6 | Each account uses its own dedicated sticky proxy IP — never shared | `core/session.py` | 2 | DONE — isolation verified live; proxy slot wired, empty until Phase 10 |
 | R7 | Founder detection flags for **manual** outreach — never auto-contacts founder | `analysis/founder.py` | 4 | TODO |
 | R8 | Max **2** contacts per lead, ever | `crm/followup.py` + DB constraint | 8 | TODO |
-| R9 | Warnings show **type + reason**; redistribution is manual only | `core/health.py` | 2 | TODO |
+| R9 | Warnings show **type + reason**; redistribution is manual only | `core/health.py` | 2 | DONE — verified live, redistribute_flag confirmed untouched |
 | R10 | Everything editable from the dashboard, no code changes | `pages/Settings.jsx` | 9 | TODO |
 
 ---
@@ -40,7 +44,7 @@ place; their dashboard UI is still Phase 9.
 | ID | Task | Detail that must not be lost | File | Phase | Status |
 |----|------|------------------------------|------|-------|--------|
 | T1 | Boot & load config | Loads niche, location, language, targets, style, style duration, proxy creds **+ the full previously-contacted list (dedup)** + the re-contact-eligible list | `main.py` | 2 | TODO |
-| T2 | Health check & session open | Warning **type + specific reason** (not generic); pause account; wait for Hussein on redistribution; isolated context per proxy IP | `core/health.py`, `core/session.py` | 2 | TODO |
+| T2 | Health check & session open | Warning **type + specific reason** (not generic); pause account; wait for Hussein on redistribution; isolated context per proxy IP | `core/health.py`, `core/session.py` | 2 | DONE |
 | T3 | LinkedIn discovery | Search by niche/industry/company size/location/activity; 30/account; reads company name, description, headcount, website, recent posts, public contact info; **prioritises recently active over dormant**; adapts search terms if results are weak | `discovery/linkedin.py` | 3 | TODO |
 | T4 | Instagram discovery | Hashtags + explore + location tags; 20/account; reads bio, followers, post count, engagement, story signals; skips inactive/irrelevant; **reads only, sends nothing** | `discovery/instagram.py` | 3 | TODO |
 | T5 | Business qualification | Reasoning decision, **not a keyword filter**; skip personal/inactive/no clear service/wrong niche | `discovery/qualify.py` | 3 | TODO |
