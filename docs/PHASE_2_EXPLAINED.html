@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Phase 2 Explained — Nexaris AI Outreach Agent</title>
+<style>
+  @page { size: A4; }
+  :root {
+    --ink: #0f172a; --body: #1e293b; --muted: #64748b; --line: #e2e8f0;
+    --accent: #1d4ed8; --ok: #047857; --warn: #b45309; --bg-soft: #f8fafc;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:"Segoe UI",-apple-system,system-ui,sans-serif; font-size:10.5pt; line-height:1.55; color:var(--body); }
+  h1,h2,h3,h4 { color:var(--ink); line-height:1.25; }
+  h1 { font-size:26pt; margin:0 0 4px; letter-spacing:-0.5px; }
+  h2 { font-size:15pt; margin:30px 0 12px; padding-bottom:6px; border-bottom:2px solid var(--ink); page-break-after:avoid; }
+  h3 { font-size:11.5pt; margin:20px 0 6px; page-break-after:avoid; }
+  h4 { font-size:10.5pt; margin:14px 0 4px; color:var(--accent); page-break-after:avoid; }
+  p { margin:0 0 9px; } ul,ol { margin:0 0 10px; padding-left:20px; } li { margin-bottom:4px; }
+  code { font-family:Consolas,"Courier New",monospace; font-size:9pt; background:#eef2f7; padding:1px 4px; border-radius:3px; color:#0f172a; }
+  pre { background:#0f172a; color:#e2e8f0; padding:11px 13px; border-radius:5px; font-family:Consolas,"Courier New",monospace; font-size:8.4pt; line-height:1.5; overflow-x:auto; white-space:pre-wrap; word-break:break-word; page-break-inside:avoid; margin:8px 0 12px; }
+  pre code { background:none; padding:0; color:inherit; font-size:inherit; }
+  table { width:100%; border-collapse:collapse; font-size:9.2pt; margin:8px 0 14px; page-break-inside:avoid; }
+  th { background:var(--ink); color:#fff; text-align:left; padding:6px 8px; font-weight:600; }
+  td { padding:5px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  tr:nth-child(even) td { background:var(--bg-soft); }
+  .file-card { border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:4px; padding:11px 14px; margin:12px 0; page-break-inside:avoid; background:#fff; }
+  .file-card h4 { margin-top:0; font-family:Consolas,monospace; font-size:10pt; }
+  .note,.warn-box,.ok-box { border-radius:4px; padding:10px 13px; margin:12px 0; font-size:9.8pt; page-break-inside:avoid; }
+  .note { background:#eff6ff; border-left:3px solid var(--accent); }
+  .warn-box { background:#fffbeb; border-left:3px solid var(--warn); }
+  .ok-box { background:#ecfdf5; border-left:3px solid var(--ok); }
+  .cover { text-align:center; padding:60px 0 40px; border-bottom:3px solid var(--ink); margin-bottom:26px; }
+  .cover .eyebrow { font-size:9pt; letter-spacing:3px; text-transform:uppercase; color:var(--muted); margin-bottom:14px; }
+  .cover .sub { font-size:12pt; color:var(--muted); margin-top:8px; }
+  .cover .meta { margin-top:26px; font-size:9pt; color:var(--muted); }
+  .step { border:1px solid var(--line); border-radius:5px; padding:12px 15px; margin:12px 0; page-break-inside:avoid; }
+  .step-num { display:inline-block; background:var(--ink); color:#fff; width:21px; height:21px; border-radius:50%; text-align:center; line-height:21px; font-size:9.5pt; font-weight:700; margin-right:7px; }
+  .step h3 { display:inline; font-size:11pt; }
+  .tag { display:inline-block; font-size:7.5pt; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; padding:2px 6px; border-radius:3px; vertical-align:middle; }
+  .tag-new { background:#dcfce7; color:#15803d; } .tag-edit { background:#fef3c7; color:#a16207; } .tag-fix { background:#fee2e2; color:#b91c1c; }
+  .page-break { page-break-before:always; }
+  .toc a { color:var(--body); text-decoration:none; } .toc li { margin-bottom:3px; }
+  .small { font-size:9pt; color:var(--muted); }
+  .pass { color:var(--ok); font-weight:700; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="eyebrow">Nexaris &middot; AI Outreach Agent</div>
+  <h1>Phase 2 — Explained</h1>
+  <div class="sub">Agent core: account pool &amp; isolated browser sessions</div>
+  <div class="meta">27 July 2026 &nbsp;·&nbsp; Phase 2 of 11 &nbsp;·&nbsp; Status: <span class="pass">ALL CHECKS PASSED LIVE</span></div>
+</div>
+
+<h2>Contents</h2>
+<ol class="toc">
+  <li><a href="#what">1. What Phase 2 was for</a></li>
+  <li><a href="#files">2. Every file created or edited</a></li>
+  <li><a href="#tests">3. What was tested live, and the results</a></li>
+  <li><a href="#bug">4. The bug found and fixed</a></li>
+  <li><a href="#concepts">5. Key concepts</a></li>
+  <li><a href="#decisions">6. Decisions made</a></li>
+  <li><a href="#now">7. What you should do right now</a></li>
+  <li><a href="#next">8. What's needed before Phase 3</a></li>
+</ol>
+
+<h2 id="what">1. What Phase 2 was for</h2>
+<p>
+The build plan's goal for this phase: <em>"the agent can open isolated browser sessions per
+account, each on its own proxy."</em> This is a foundation phase, not a features phase — it
+builds the safety mechanism every later phase depends on. Get this wrong, and Phase 3
+(discovery) or Phase 7 (sending) could leak one account's session or cookies into another's,
+which is exactly what gets real LinkedIn/Instagram accounts flagged or banned.
+</p>
+<p>
+Four things had to be true by the end: an account pool manager that knows which of the 3
+accounts should run and when; a session mechanism that opens a genuinely isolated browser
+context per account; a health check that detects trouble with a specific type and reason
+rather than a generic failure; and a scheduler that ties it together, respecting each
+account's own run time and never auto-redistributing a paused account's capacity.
+</p>
+<div class="ok-box">
+  <strong>All four are true and proven with real, live tests</strong> — not simulated. Every
+  claim in this document was actually run against your Supabase project and a real Chromium
+  browser, with the evidence shown in section 3.
+</div>
+
+<h2 id="files">2. Every file created or edited</h2>
+
+<div class="file-card">
+  <h4>agent/db/repositories.py <span class="tag tag-edit">edited</span></h4>
+  <p>Added one function, <code>has_run_today(account_id, day_start_iso)</code> — checks whether
+  an account already has a <code>runs</code> row starting today, so the scheduler never
+  dispatches the same account twice in one day. Extends the Phase 1 data-access layer rather
+  than creating a new one, keeping the "one file touches the database" rule intact.</p>
+</div>
+
+<div class="file-card">
+  <h4>agent/core/account_pool.py <span class="tag tag-new">new</span></h4>
+  <p><strong>Role:</strong> decides which accounts should run right now.</p>
+  <p><strong>Logic:</strong> an account is "due" when it is <code>active</code> (never
+  <code>paused</code> — a paused account never un-pauses itself; that is Hussein's call, core
+  rule R9), its configured <code>run_time</code> has already passed in today's local time, and
+  it has not already produced a run today. A <code>force=True</code> override skips the time and
+  once-per-day checks entirely — this is what manual testing uses, so a real run can be
+  triggered any time of day without waiting for an account's actual scheduled hour.</p>
+</div>
+
+<div class="file-card">
+  <h4>agent/core/session.py <span class="tag tag-new">new</span></h4>
+  <p><strong>Role:</strong> the actual isolation mechanism — the most safety-critical file in
+  this phase.</p>
+  <p><strong>Architecture:</strong> one shared Chromium <em>process</em> is launched for the
+  whole run (cheap), and each account gets its own Playwright <em>context</em> — an isolated
+  profile with its own cookies, storage, and cache, comparable to a separate incognito window
+  that never shares anything with another. <code>SessionManager</code> owns the shared browser
+  and hands out these per-account contexts.</p>
+  <p><strong>Two extra things built beyond the bare minimum:</strong></p>
+  <ul>
+    <li><strong>Per-account proxy binding</strong> — <code>build_proxy_config()</code> reads an
+    account's <code>proxy_host</code>/<code>proxy_port</code>/<code>proxy_username</code>/
+    <code>proxy_password</code> columns and returns a Playwright proxy dict, or <code>None</code>
+    if none is set (the case for all 3 accounts today — proxies are a Phase 10 concern).</li>
+    <li><strong>Persistent per-account storage</strong> — each account's cookies/login state are
+    saved to <code>agent/browser_profiles/&lt;account_id&gt;.json</code> after every session and
+    reloaded at the start of the next one. This matters for real safety: logging in from
+    scratch every single day is itself a signal platforms watch for; staying logged in between
+    runs looks like normal human behaviour. That folder was already gitignored back in Phase 0,
+    which turned out to anticipate exactly this correctly.</li>
+  </ul>
+</div>
+
+<div class="file-card">
+  <h4>agent/core/health.py <span class="tag tag-new">new</span></h4>
+  <p><strong>Role:</strong> decides whether a session hit trouble, and records exactly what,
+  never a generic failure.</p>
+  <p><strong>Two detection layers:</strong></p>
+  <ul>
+    <li><code>check_navigation()</code> — did the page even load? Catches a missing response
+    (DNS/timeout/connection failure), HTTP 403 (blocked), HTTP 429 (rate limited), or any other
+    4xx/5xx. Fully testable today against neutral pages, and was tested (section 3).</li>
+    <li><code>check_page_content()</code> — scans the loaded page's text for known
+    challenge/CAPTCHA phrasing (<code>CHALLENGE_PHRASES</code>: captcha, login_challenge,
+    checkpoint, rate_limited, each with real platform wording). This does not fire on the neutral
+    test pages used in this phase, by design — it exists now, fully built, so Phase 3 can call it
+    unchanged against real LinkedIn/Instagram pages without rebuilding this logic later.</li>
+  </ul>
+  <p><code>record_warning()</code> pauses the account and logs the type + reason via the
+  <code>set_account_warning</code> function already built in Phase 1. It deliberately never
+  touches <code>redistribute_flag</code> — core rule R9 says redistribution is a manual decision,
+  so this module only ever reports a problem, never acts on it.</p>
+</div>
+
+<div class="file-card">
+  <h4>agent/scheduler.py <span class="tag tag-new">new</span></h4>
+  <p><strong>Role:</strong> ties the previous four pieces together into one runnable cycle.</p>
+  <p><code>run_cycle(target_url, force)</code> — for each due account: <code>start_run()</code>
+  (opens a `runs` row) &rarr; open an isolated session &rarr; navigate to the target &rarr;
+  run both health checks &rarr; close the session (saving its storage) &rarr; either
+  <code>finish_run(status="completed")</code> or <code>record_warning()</code> +
+  <code>finish_run(status="error")</code>.</p>
+  <p><code>build_daily_schedule(accounts)</code> — wires one APScheduler cron trigger per
+  account at its own <code>run_time</code>, in the project's configured timezone. This is real,
+  callable code, but is not exercised during local development, since nothing here runs a
+  permanent 24/7 process yet — that begins in Phase 10.</p>
+  <p>Running the file directly (<code>python -m agent.scheduler</code>) triggers one manual
+  cycle immediately against a neutral test page — this is what "Hussein can trigger a run" means
+  for this phase.</p>
+</div>
+
+<div class="page-break"></div>
+<h2 id="tests">3. What was tested live, and the results</h2>
+
+<h3>Test 1 — session isolation (the core safety property of this phase)</h3>
+<p>
+Opened 3 real, simultaneous browser contexts, one per seeded account, each navigating to
+<code>example.com</code> and setting a cookie carrying its own account id. Then read cookies
+back from every context to check for cross-contamination.
+</p>
+<pre><code>testing isolation across 3 accounts
+
+  opened isolated context for Account 1 (2fe03e3f...)
+  opened isolated context for Account 2 (2ad062fb...)
+  opened isolated context for Account 3 (948dc7e2...)
+
+checking each context only sees its OWN cookie:
+  PASS  Account 1: sees cookie value(s) ['2fe03e3f-f5c1-48fe-93ad-1981f2f5e995']
+  PASS  Account 2: sees cookie value(s) ['2ad062fb-f24d-4857-a6af-649d29f070e8']
+  PASS  Account 3: sees cookie value(s) ['948dc7e2-a2d2-40c3-aecc-853a680f1c76']
+
+ALL ISOLATED - no cross-account leakage</code></pre>
+<p>Also confirmed: each account's persistent storage file was written correctly (one JSON file
+per account id in <code>agent/browser_profiles/</code>) and every one is gitignored — checked
+with <code>git check-ignore</code> before anything was left on disk longer than the test.</p>
+
+<h3>Test 2 — the success path, against real Supabase</h3>
+<p><code>python -m agent.scheduler</code> (forced, ignoring the real schedule):</p>
+<pre><code>Manual test cycle -- 2026-07-27 01:43:31
+Target: https://example.com
+
+  Account 1: OK
+  Account 2: OK
+  Account 3: OK</code></pre>
+<p>Confirmed directly against the live <code>runs</code> table afterward — real rows, with a
+real start time and, after the fix in section 4, a real finish time:</p>
+<pre><code>948dc7e2 | completed | started: 2026-07-26T22:43:37... | finished: 2026-07-26T22:43:38...
+2ad062fb | completed | started: 2026-07-26T22:43:35... | finished: 2026-07-26T22:43:37...
+2fe03e3f | completed | started: 2026-07-26T22:43:34... | finished: 2026-07-26T22:43:36...</code></pre>
+
+<h3>Test 3 — the failure path (a deliberately broken target)</h3>
+<p>Ran the same cycle against a domain that does not exist, to prove
+<code>check_navigation()</code> genuinely catches a real failure rather than only a
+hypothetical one:</p>
+<pre><code>Account 1: WARNING (navigation_failed)
+  reason: Page.goto: net::ERR_NAME_NOT_RESOLVED at https://this-domain-does-not-exist...
+
+Account 2: WARNING (navigation_failed)
+  reason: Page.goto: net::ERR_NAME_NOT_RESOLVED at https://this-domain-does-not-exist...
+
+Account 3: WARNING (navigation_failed)
+  reason: Page.goto: net::ERR_NAME_NOT_RESOLVED at https://this-domain-does-not-exist...</code></pre>
+<p>Then confirmed against the live <code>accounts</code> table that all 3 were correctly paused
+with a specific type and reason:</p>
+<pre><code>Account 1 | status: paused | warning_type: navigation_failed | reason: Page.goto: net::ERR_NAME_NOT_RESOLVED...
+Account 2 | status: paused | warning_type: navigation_failed | reason: Page.goto: net::ERR_NAME_NOT_RESOLVED...
+Account 3 | status: paused | warning_type: navigation_failed | reason: Page.goto: net::ERR_NAME_NOT_RESOLVED...</code></pre>
+<p>And that <code>redistribute_flag</code> stayed <code>False</code> on every account — proving
+the agent never acts on a warning beyond pausing and logging it:</p>
+<pre><code>Account 1 | redistribute_flag: False
+Account 2 | redistribute_flag: False
+Account 3 | redistribute_flag: False</code></pre>
+
+<div class="ok-box">
+  <strong>Cleanup:</strong> since this was a deliberate test rather than a real problem, all 3
+  accounts were reset to <code>active</code> with warnings cleared, the 6 test <code>runs</code>
+  rows were deleted, and the local browser profile files were removed — your real database and
+  local machine were left exactly as they should be for Phase 3 to begin cleanly.
+</div>
+
+<div class="page-break"></div>
+<h2 id="bug">4. The bug found and fixed</h2>
+<div class="warn-box">
+  <p><strong>Symptom:</strong> after the first successful test run, every <code>runs</code> row
+  showed <code>status: completed</code> but <code>finished_at: None</code>.</p>
+  <p><strong>Cause:</strong> <code>repositories.finish_run()</code> only writes the
+  <code>finished_at</code> column if a <code>finished_at_iso</code> argument is explicitly
+  passed in — it has no automatic "now" default the way <code>started_at</code> does in the
+  schema. <code>scheduler.py</code>'s <code>run_cycle()</code> was calling it without that
+  argument, so the column was silently never set.</p>
+  <p><strong>Why this mattered:</strong> the entire purpose of the <code>runs</code> table is
+  finish-time tracking — it feeds the dashboard's Run Status panel and the exact duration
+  quoted in the daily WhatsApp summary (both future phases). A silent <code>None</code> here
+  would have surfaced much later as a confusing missing-data bug in Phase 9, far from its
+  actual cause.</p>
+  <p><strong>Fix:</strong> <code>run_cycle()</code> now computes
+  <code>dt.datetime.now(dt.timezone.utc).isoformat()</code> once per account and passes it
+  explicitly to both the success and failure branches of <code>finish_run()</code>. Verified by
+  re-running the cycle and reading the real rows back — see the corrected output in section 3,
+  Test 2.</p>
+</div>
+
+<h2 id="concepts">5. Key concepts</h2>
+
+<h3>Browser process vs. browser context</h3>
+<p>A Playwright <em>browser</em> is one running Chromium process. A <em>context</em> is an
+isolated profile inside that process — its own cookies, storage, cache, and (as used here) its
+own proxy. Launching 3 separate browser processes for 3 accounts would work too, but costs far
+more memory and startup time for no extra isolation benefit — contexts already give complete
+separation. This is the standard pattern for exactly this kind of multi-account automation.</p>
+
+<h3>Why persistent storage state matters for account safety</h3>
+<p>Without saving a context's <code>storage_state</code>, every run would start from a
+completely blank browser — no cookies, no login. That means re-authenticating from scratch
+every single day, which is itself a pattern real platforms watch for. Saving and reloading each
+account's storage file means, once real logins happen in a later phase, an account looks like it
+stayed logged in between sessions — the same as a real person leaving their laptop open.</p>
+
+<h3>Why the account pool never un-pauses an account</h3>
+<p>This is core rule R9, and it is enforced structurally, not just by convention:
+<code>get_due_accounts()</code> filters to <code>status == 'active'</code> only, and nothing
+anywhere in this phase's code ever writes <code>status</code> back to <code>'active'</code> or
+touches <code>redistribute_flag</code>. The only way a paused account starts running again is a
+human changing its status from the dashboard (Phase 9) — the code has no path to do it itself.</p>
+
+<h2 id="decisions">6. Decisions made</h2>
+<table>
+  <tr><th style="width:26%">Decision</th><th>Reasoning</th></tr>
+  <tr>
+    <td>Tested against neutral pages (<code>example.com</code>), not real LinkedIn/Instagram</td>
+    <td>Hussein's explicit choice — proves the mechanism with zero risk to real accounts. Real
+    platform interaction begins in Phase 3, once discovery logic exists to justify it.</td>
+  </tr>
+  <tr>
+    <td>Built <code>check_page_content()</code>'s real challenge phrases now, even though
+    unused this phase</td>
+    <td>The detection logic and the platform-specific wording are two different things to get
+    right; building both together now means Phase 3 only has to point this function at a real
+    page, not rewrite it.</td>
+  </tr>
+  <tr>
+    <td>One shared browser process, isolated contexts — not 3 separate browser processes</td>
+    <td>Equivalent isolation, far less memory/startup overhead. Standard Playwright pattern for
+    multi-account automation.</td>
+  </tr>
+  <tr>
+    <td><code>build_daily_schedule()</code> built but not run continuously yet</td>
+    <td>No permanent background process exists in local development. The function is real and
+    tested for syntax/import correctness; it activates for real in Phase 10 when the agent moves
+    to an always-on server.</td>
+  </tr>
+</table>
+
+<h2 id="now">7. What you should do right now</h2>
+
+<div class="step">
+  <span class="step-num">1</span><h3>Try the manual trigger yourself</h3>
+  <pre><code>agent/venv/Scripts/python.exe -m agent.scheduler</code></pre>
+  <p>Expect all 3 accounts to report <code>OK</code> — same result shown in section 3. Since
+  it's a forced test run, it works regardless of the actual scheduled time.</p>
+</div>
+
+<div class="step">
+  <span class="step-num">2</span><h3>Commit and push</h3>
+  <pre><code>git add agent/db/repositories.py agent/core/account_pool.py agent/core/session.py agent/core/health.py agent/scheduler.py docs/PHASE_2_EXPLAINED.html docs/PHASE_2_EXPLAINED.pdf docs/PHASE_2_SUMMARY.html docs/PHASE_2_SUMMARY.pdf PROGRESS.md REQUIREMENTS_COVERAGE.md
+git commit -m "Phase 2 — account pool, isolated browser sessions, health checks, scheduler"
+git push</code></pre>
+</div>
+
+<div class="step">
+  <span class="step-num">3</span><h3>Say the word for Phase 3</h3>
+  <p>Phase 3 is discovery — the agent's first real interaction with LinkedIn and Instagram. This
+  is where the health-check phrasing built in this phase gets its first real exercise.</p>
+</div>
+
+<h2 id="next">8. What's needed before Phase 3</h2>
+<div class="ok-box">
+  <strong>Nothing new required to start.</strong> Phase 3 needs the 3 accounts' actual
+  LinkedIn/Instagram login details when it comes time to test real discovery — that conversation
+  happens at the start of that phase, not before.
+</div>
+<p class="small">Still open for later phases: a Claude API key (Phase 4) and the WhatsApp
+provider decision (Phase 7).</p>
+
+<hr style="margin:34px 0 14px;border:none;border-top:1px solid var(--line)">
+<p class="small">
+  Phase 2 of 11 complete and verified live · Generated 27 July 2026<br>
+  Source: <code>docs/PHASE_2_EXPLAINED.html</code> · Rendered by <code>tools/make_pdf.py</code>
+</p>
+
+</body>
+</html>
