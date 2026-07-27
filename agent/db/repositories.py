@@ -112,6 +112,25 @@ def leads_by_status(status: str) -> list[Row]:
     return res.data
 
 
+def lead_profile_url_exists(profile_url: str) -> bool:
+    """
+    True if this exact profile URL is already in `leads`, regardless of
+    contact status. Used at discovery time so the same profile isn't inserted
+    again on every run -- a different, broader check than
+    contacted_profile_urls() below, which only covers leads already reached
+    out to.
+    """
+    res = (
+        get_client()
+        .table("leads")
+        .select("id")
+        .eq("profile_url", profile_url)
+        .limit(1)
+        .execute()
+    )
+    return len(res.data) > 0
+
+
 def contacted_profile_urls() -> set[str]:
     """
     Profile URLs of every lead already contacted at least once.
