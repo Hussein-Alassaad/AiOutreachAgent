@@ -3,9 +3,12 @@
 Updated after every phase. If a session runs out of context, point the next one at
 this file plus `00_MASTER_PROMPT.md` and it can pick up without losing anything.
 
-**Current state:** Phase 2 complete and verified live — account pool, isolated browser
-sessions, health checks, and scheduler all tested against the real Supabase project.
-**Next:** Phase 3 — discovery: LinkedIn & Instagram.
+**Current state:** Phase 3 in progress — everything not requiring a live login is built
+and tested; scraping selectors are unverified pending Hussein signing into the 3
+LinkedIn + 3 Instagram accounts.
+**Next:** Hussein decides login method (manual per-account login recommended) and signs
+in, then selectors get verified/corrected against real pages and a full end-to-end
+discovery test runs.
 
 ---
 
@@ -16,7 +19,7 @@ sessions, health checks, and scheduler all tested against the real Supabase proj
 | 0 | Project setup & foundations | ✅ Complete |
 | 1 | Database schema | ✅ Complete — verified live in Supabase |
 | 2 | Agent core: account pool & sessions | ✅ Complete — verified live |
-| 3 | Discovery: LinkedIn & Instagram | ⬜ Not started |
+| 3 | Discovery: LinkedIn & Instagram | 🟡 In progress — logic built, selectors pending live login |
 | 4 | Claude analysis pipeline | ⬜ Not started |
 | 5 | Message generation | ⬜ Not started |
 | 6 | Approval workflow | ⬜ Not started |
@@ -148,6 +151,41 @@ local browser profile files removed — database and machine left clean for Phas
 
 **Phase 2 PDFs:** `docs/PHASE_2_EXPLAINED.pdf` (full technical detail) and
 `docs/PHASE_2_SUMMARY.pdf` (plain-English).
+
+---
+
+## Phase 3 — Discovery: LinkedIn & Instagram (IN PROGRESS)
+
+**Built and genuinely tested (no login required):**
+
+- `agent/discovery/qualify.py` — multi-signal qualification logic (name pattern, bio,
+  website, activity, follower/headcount count). Tested with 4 realistic sample profiles,
+  all correct, including an edge case (new business, low followers, still qualifies on
+  other signals).
+- `agent/discovery/linkedin.py` — search URL builder, agentic search-widening logic,
+  headcount text parser. All genuinely tested.
+- `agent/discovery/instagram.py` — hashtag URL builder, abbreviated-count parser
+  (12.4K → 12400 etc.). All genuinely tested.
+- `agent/db/repositories.py` — added `lead_profile_url_exists()` for discovery-time dedup.
+- `agent/scheduler.py` — `run_discovery_cycle()` orchestrates discovery → qualify → save
+  for both platforms, per due account.
+- **Live-tested:** the Phase 2 session infrastructure correctly navigates to real
+  LinkedIn and Instagram (HTTP 200 on both, through an isolated per-account session) —
+  confirms the plumbing works end to end.
+
+**Honestly NOT yet verified — needs Hussein's login:** every function that scrapes real
+page content (`extract_search_results`, `extract_company_profile`, `extract_hashtag_results`,
+`resolve_post_to_profile_url`, `extract_profile`) uses selectors written from LinkedIn/
+Instagram's general structure, not confirmed against a live logged-in session. Marked
+clearly in each file's docstring as UNVERIFIED. LinkedIn and Instagram are login-gated,
+so no meaningful search results exist to scrape until an account is signed in.
+
+**Blocked on:** Hussein choosing a login method (manual per-account login recommended —
+no password ever touches a file, using the persistent session storage already built in
+Phase 2) and signing into the 3 LinkedIn + 3 Instagram accounts.
+
+**Phase 3 PDFs:** held until live selector verification is complete, per the same pattern
+used in Phase 1.
 
 ---
 

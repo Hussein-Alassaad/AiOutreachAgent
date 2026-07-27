@@ -20,6 +20,11 @@ place; their dashboard UI is still Phase 9.
 persistent storage), health checks, and scheduler all built and verified live. R6 and R9
 below are now enforced in code, not just planned.
 
+**Phase 3 — IN PROGRESS (2026-07-27).** Qualification logic and both discovery modules'
+non-scraping logic (URL building, text parsing, search-widening) built and genuinely
+tested. Scraping selectors written but UNVERIFIED — blocked on Hussein signing into the
+real LinkedIn/Instagram accounts. T3–T5 below reflect this split.
+
 ---
 
 ## A. The 10 core rules (never violated — these are constraints, not features)
@@ -45,9 +50,9 @@ below are now enforced in code, not just planned.
 |----|------|------------------------------|------|-------|--------|
 | T1 | Boot & load config | Loads niche, location, language, targets, style, style duration, proxy creds **+ the full previously-contacted list (dedup)** + the re-contact-eligible list | `main.py` | 2 | TODO |
 | T2 | Health check & session open | Warning **type + specific reason** (not generic); pause account; wait for Hussein on redistribution; isolated context per proxy IP | `core/health.py`, `core/session.py` | 2 | DONE |
-| T3 | LinkedIn discovery | Search by niche/industry/company size/location/activity; 30/account; reads company name, description, headcount, website, recent posts, public contact info; **prioritises recently active over dormant**; adapts search terms if results are weak | `discovery/linkedin.py` | 3 | TODO |
-| T4 | Instagram discovery | Hashtags + explore + location tags; 20/account; reads bio, followers, post count, engagement, story signals; skips inactive/irrelevant; **reads only, sends nothing** | `discovery/instagram.py` | 3 | TODO |
-| T5 | Business qualification | Reasoning decision, **not a keyword filter**; skip personal/inactive/no clear service/wrong niche | `discovery/qualify.py` | 3 | TODO |
+| T3 | LinkedIn discovery | Search by niche/industry/company size/location/activity; 30/account; reads company name, description, headcount, website, recent posts, public contact info; **prioritises recently active over dormant**; adapts search terms if results are weak | `discovery/linkedin.py` | 3 | CODE — URL/parsing/widening tested; scraping selectors UNVERIFIED pending login |
+| T4 | Instagram discovery | Hashtags + explore + location tags; 20/account; reads bio, followers, post count, engagement, story signals; skips inactive/irrelevant; **reads only, sends nothing** | `discovery/instagram.py` | 3 | CODE — URL/parsing tested; scraping selectors UNVERIFIED pending login |
+| T5 | Business qualification | Reasoning decision, **not a keyword filter**; skip personal/inactive/no clear service/wrong niche | `discovery/qualify.py` | 3 | DONE — tested with 4 realistic sample cases |
 | T6 | Deep profile analysis | Company size · revenue tier · industry · **website analysis (design quality, booking flow, CTA, load speed)** · ads activity · all social platforms active on · **full weak points list** · AI opportunities. Stored and shown **in full**, never summarised | `analysis/analyze.py` | 4 | TODO |
 | T7 | Founder detection | Phrases: "founder of X", "co-founder", "CEO & founder", "established by", "created by", "owner of", + any equivalent wording. Stores founder name **and the matched bio phrase**. Dashboard shows **two flags** on one card (company messaged + founder found). Fires WhatsApp alert | `analysis/founder.py` | 4 | TODO |
 | T8 | WhatsApp number detection | Checks bio, profile description, website link, contact section — on **both** platforms. Public listed numbers only, **never guessed or scraped**. Fires WhatsApp channel **in addition to**, not instead of, the primary channel | `analysis/whatsapp_detect.py` | 4 | TODO |
