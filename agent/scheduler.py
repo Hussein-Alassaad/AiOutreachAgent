@@ -26,8 +26,13 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from agent import config
+from agent.analysis import analyze
+from agent.analysis import founder as founder_detection
+from agent.analysis import score as scoring
+from agent.analysis import whatsapp_detect
 from agent.core import account_pool as pool
 from agent.core import health
+from agent.core import warmup
 from agent.core.session import SessionManager
 from agent.db import repositories as repo
 from agent.discovery import instagram, linkedin
@@ -102,7 +107,9 @@ def run_cycle(target_url: str = DEFAULT_TEST_URL, force: bool = False) -> list[d
     return results
 
 
-def _save_if_qualified(account: dict, platform: str, profile_url: str, raw_profile: dict) -> bool:
+def _save_if_qualified(
+    account: dict, platform: str, profile_url: str, raw_profile: dict, niche: str = ""
+) -> bool:
     """
     Shared save step for both platforms: skip if this profile is already
     known, qualify it, and insert into `leads` with status "discovered" if it
@@ -112,7 +119,7 @@ def _save_if_qualified(account: dict, platform: str, profile_url: str, raw_profi
         return False
 
     normalised = {**raw_profile, "platform": platform}
-    qualifies, reasons = qualify_profile(normalised)
+    qualifies, reasons = qualify_profile(normalised, niche)
     if not qualifies:
         return False
 
@@ -123,6 +130,8 @@ def _save_if_qualified(account: dict, platform: str, profile_url: str, raw_profi
         "profile_url": profile_url,
         "follower_count": raw_profile.get("follower_or_headcount"),
         "website": raw_profile.get("website"),
+        "bio": raw_profile.get("bio"),  # Phase 4's analysis pipeline reads this
+        "engagement_sample": raw_profile.get("engagement_sample"),  # Instagram only -- null on LinkedIn leads
         "status": "discovered",
         "notes": " | ".join(reasons),  # keeps the qualification reasoning on the record
     })
@@ -151,13 +160,15 @@ def run_discovery_cycle(force: bool = False) -> list[dict]:
 
     with SessionManager() as sessions:
         for account in accounts:
+            run = repo.start_run(account["id"])
             context, page = sessions.open(account)
             counts = {"linkedin_found": 0, "linkedin_saved": 0,
-                      "instagram_found": 0, "instagram_saved": 0, "errors": []}
+                      "instagram_found": 0, "instagram_saved": 0,
+                      "errors": [], "skipped_leads": []}
 
             try:
                 _discover_linkedin(account, page, niche, location, counts)
-            except Exception as exc:  # noqa: BLE001 -- a bad selector shouldn't crash the run
+            except Exception as exc:  # noqa: BLE001 -- a whole-platform failure, not one bad lead
                 counts["errors"].append(f"linkedin: {exc}")
 
             try:
@@ -166,42 +177,198 @@ def run_discovery_cycle(force: bool = False) -> list[dict]:
                 counts["errors"].append(f"instagram: {exc}")
 
             sessions.close(account["id"], context)
+
+            finished_at = dt.datetime.now(dt.timezone.utc).isoformat()
+            repo.finish_run(
+                run["id"],
+                leads_found=counts["linkedin_saved"] + counts["instagram_saved"],
+                messages_sent=0,
+                status="error" if counts["errors"] else "completed",
+                finished_at_iso=finished_at,
+                notes=" | ".join(counts["errors"]) or None,
+                skipped_leads=counts["skipped_leads"],
+            )
+
             summary.append({"account": account["label"], **counts})
 
     return summary
 
 
+# A search that comes back with fewer results than this fraction of its
+# target count is "weak" -- worth widening the search terms for, rather than
+# quietly accepting a thin batch. Never widen past MAX_SEARCH_ATTEMPTS
+# rounds; both platforms' widen functions converge to "as wide as it gets"
+# in a small, bounded number of steps anyway.
+_WEAK_RESULT_FRACTION = 0.5
+_MAX_SEARCH_ATTEMPTS = 4
+
+
+def _is_weak(found: int, limit: int) -> bool:
+    return found < max(3, int(limit * _WEAK_RESULT_FRACTION))
+
+
 def _discover_linkedin(account: dict, page, niche: str, location: str, counts: dict) -> None:
-    limit = account.get("linkedin_daily_limit", 30)
-    page.goto(linkedin.build_search_url(niche, location), timeout=15_000)
-    results = linkedin.extract_search_results(page)[:limit]
+    limit = warmup.effective_limit(account, "linkedin")
+    search_niche, search_location = niche, location
+    results: list[dict] = []
+    seen_urls: set[str] = set()
+    counts["linkedin_search_terms"] = []
+
+    for _ in range(_MAX_SEARCH_ATTEMPTS):
+        counts["linkedin_search_terms"].append({"niche": search_niche, "location": search_location})
+        page.goto(linkedin.build_search_url(search_niche, search_location), timeout=15_000)
+        for result in linkedin.extract_search_results(page):
+            url = result.get("profile_url")
+            if url and url not in seen_urls:
+                seen_urls.add(url)
+                results.append(result)
+
+        if not _is_weak(len(results), limit):
+            break
+
+        next_niche, next_location = linkedin.widen_search_terms(search_niche, search_location)
+        if (next_niche, next_location) == (search_niche, search_location):
+            break  # already as wide as it gets -- widening further would just repeat the same search
+        search_niche, search_location = next_niche, next_location
+
+    results = results[:limit]
     counts["linkedin_found"] = len(results)
 
     for result in results:
         profile_url = result.get("profile_url")
         if not profile_url:
             continue
-        page.goto(profile_url, timeout=15_000)
-        profile = linkedin.extract_company_profile(page)
-        profile["display_name"] = result.get("display_name")
-        if _save_if_qualified(account, "linkedin", profile_url, profile):
-            counts["linkedin_saved"] += 1
+        try:
+            page.goto(profile_url, timeout=15_000)
+            profile = linkedin.extract_company_profile(page)
+            profile["display_name"] = result.get("display_name")
+
+            page.goto(profile_url.rstrip("/") + "/posts/", timeout=15_000)
+            posts_info = linkedin.extract_recent_posts(page)
+            profile["post_count"] = posts_info["visible_post_count"]
+            profile["recent_activity"] = posts_info["recent_activity"]
+
+            if _save_if_qualified(account, "linkedin", profile_url, profile, niche):
+                counts["linkedin_saved"] += 1
+        except Exception as exc:  # noqa: BLE001 -- one bad lead shouldn't stop the rest of the batch
+            counts["skipped_leads"].append({
+                "platform": "linkedin",
+                "identifier": result.get("display_name") or profile_url,
+                "reason": str(exc),
+            })
 
 
 def _discover_instagram(account: dict, page, niche: str, counts: dict) -> None:
-    limit = account.get("ig_daily_limit", 20)
-    page.goto(instagram.build_hashtag_url(niche), timeout=15_000)
-    posts = instagram.extract_hashtag_results(page)[:limit]
+    limit = warmup.effective_limit(account, "instagram")
+    search_niche = niche
+    posts: list[dict] = []
+    seen_urls: set[str] = set()
+    counts["instagram_search_terms"] = []
+
+    for _ in range(_MAX_SEARCH_ATTEMPTS):
+        counts["instagram_search_terms"].append(search_niche)
+        page.goto(instagram.build_hashtag_url(search_niche), timeout=15_000)
+        for post in instagram.extract_hashtag_results(page):
+            url = post.get("post_url")
+            if url and url not in seen_urls:
+                seen_urls.add(url)
+                posts.append(post)
+
+        if not _is_weak(len(posts), limit):
+            break
+
+        next_niche = instagram.widen_hashtag_terms(search_niche)
+        if next_niche == search_niche:
+            break  # already down to one word -- as wide as it gets
+        search_niche = next_niche
+
+    posts = posts[:limit]
     counts["instagram_found"] = len(posts)
 
     for post in posts:
-        profile_url = instagram.resolve_post_to_profile_url(page, post["post_url"])
-        if not profile_url:
+        try:
+            profile_url = instagram.resolve_post_to_profile_url(page, post["post_url"])
+            if not profile_url:
+                continue
+            engagement = instagram.extract_post_engagement(page)  # page is still on the post/reel here
+            page.goto(profile_url, timeout=15_000)
+            profile = instagram.extract_profile(page)
+            profile["engagement_sample"] = engagement
+            if _save_if_qualified(account, "instagram", profile_url, profile, niche):
+                counts["instagram_saved"] += 1
+        except Exception as exc:  # noqa: BLE001 -- one bad lead shouldn't stop the rest of the batch
+            counts["skipped_leads"].append({
+                "platform": "instagram",
+                "identifier": post.get("post_url"),
+                "reason": str(exc),
+            })
+
+
+def run_analysis_cycle(limit: int | None = None) -> list[dict]:
+    """
+    Analyze every lead currently sitting at status "discovered" (Phase 4):
+    deep analysis, founder detection, WhatsApp number detection, and scoring.
+
+    Task 10 from the spec: the full enriched record is saved to
+    client_history BEFORE any message is generated (message generation is
+    Phase 5, not yet built) -- client_history exists permanently, whether or
+    not this lead is ever contacted.
+
+    `limit` caps how many leads are processed in one call -- useful for a
+    careful first test rather than analysing an entire backlog at once.
+    """
+    leads = repo.leads_by_status("discovered")
+    if limit is not None:
+        leads = leads[:limit]
+
+    results = []
+    for lead in leads:
+        try:
+            analysis = analyze.analyze_lead(lead)
+            founder_result = founder_detection.detect_founder(lead)
+            whatsapp_result = whatsapp_detect.detect_whatsapp(lead)
+            score_result = scoring.score_lead(lead, analysis)
+        except Exception as exc:  # noqa: BLE001 -- one bad lead shouldn't stop the batch
+            results.append({"lead": lead.get("business_name"), "ok": False, "error": str(exc)})
             continue
-        page.goto(profile_url, timeout=15_000)
-        profile = instagram.extract_profile(page)
-        if _save_if_qualified(account, "instagram", profile_url, profile):
-            counts["instagram_saved"] += 1
+
+        update_fields = {
+            "company_size": analysis.get("company_size"),
+            "revenue_tier": analysis.get("revenue_tier"),
+            "industry": analysis.get("industry"),
+            "ads_running": analysis.get("ads_running"),
+            "social_platforms": analysis.get("social_platforms") or [],
+            "weak_points": analysis.get("weak_points") or [],
+            "ai_opportunities": analysis.get("ai_opportunities") or [],
+            "founder_found": founder_result.get("founder_found", False),
+            "founder_name": founder_result.get("founder_name"),
+            "founder_source_phrase": founder_result.get("founder_source_phrase"),
+            "whatsapp_found": whatsapp_result.get("whatsapp_found", False),
+            "whatsapp_number": whatsapp_result.get("whatsapp_number"),
+            "score": score_result.get("score"),
+            "temperature": score_result.get("temperature"),
+            "score_reasoning": score_result.get("score_reasoning"),
+            "status": "analyzed",
+        }
+        repo.update_lead(lead["id"], update_fields)
+
+        repo.insert_client_history({
+            "lead_id": lead["id"],
+            "business_name": lead.get("business_name"),
+            "platform": lead.get("platform"),
+            "industry": analysis.get("industry"),
+            "score": score_result.get("score"),
+            "temperature": score_result.get("temperature"),
+            "weak_points": analysis.get("weak_points") or [],
+            "founder_found": founder_result.get("founder_found", False),
+            "founder_name": founder_result.get("founder_name"),
+            "contacted": False,
+            "snapshot": {**lead, **update_fields},
+        })
+
+        results.append({"lead": lead.get("business_name"), "ok": True, **update_fields})
+
+    return results
 
 
 def build_daily_schedule(accounts: list[dict]) -> BackgroundScheduler:

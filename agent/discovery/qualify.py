@@ -62,9 +62,34 @@ def _looks_like_personal_name(display_name: str) -> bool:
     return bool(_PERSONAL_NAME_PATTERN.match(name))
 
 
-def qualify_profile(profile: dict) -> tuple[bool, list[str]]:
+def _mentions_niche(bio: str, niche: str) -> bool:
+    """
+    True if the bio contains at least one meaningful (3+ letter) word from
+    the target niche. An empty niche always passes -- Phase 1 seeds
+    `settings.target_niche` empty by default, meaning "no filter configured
+    yet", and an empty niche should never reject every profile from day one.
+
+    This is a plain keyword check, not semantic matching -- a legitimately
+    on-niche bio that just phrases things differently (e.g. niche "bakery",
+    bio "artisan sourdough breads daily") won't match. That's a real, known
+    limitation of doing this deterministically without a live account or a
+    Claude call, which this module deliberately avoids (see module docstring)
+    -- it's why a miss costs points rather than being an instant reject.
+    """
+    words = [w for w in re.findall(r"[a-zA-Z]+", niche.lower()) if len(w) > 2]
+    if not words:
+        return True
+    bio_lower = bio.lower()
+    return any(word in bio_lower for word in words)
+
+
+def qualify_profile(profile: dict, niche: str = "") -> tuple[bool, list[str]]:
     """
     Decide whether a normalised profile dict is worth pursuing.
+
+    `niche` is the dashboard-configured target niche (settings.target_niche);
+    pass "" (the default) to skip the relevance check entirely, which is also
+    what happens automatically when no niche is configured yet.
 
     Returns (qualifies, reasons) -- reasons lists every signal that
     contributed to the decision, in the order they were checked, so a skipped
@@ -113,6 +138,13 @@ def qualify_profile(profile: dict) -> tuple[bool, list[str]]:
             f"Follower/headcount count ({follower_or_headcount}) is low on its own"
         )
         score -= 1
+
+    if _mentions_niche(bio, niche):
+        reasons.append("Bio mentions the target niche")
+        score += 1
+    else:
+        reasons.append("Bio does not mention the target niche -- possible relevance miss")
+        score -= 2
 
     qualifies = score >= 1
     reasons.append(f"Final score: {score} -> {'QUALIFIES' if qualifies else 'SKIP'}")

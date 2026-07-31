@@ -317,10 +317,17 @@ def finish_run(
     status: str = "completed",
     finished_at_iso: str | None = None,
     notes: str | None = None,
+    skipped_leads: list[Row] | None = None,
 ) -> Row:
     """
     Close a run with its results and finish time. The finish time feeds both the
     dashboard Run Status panel and the daily WhatsApp summary.
+
+    `skipped_leads` is the per-lead "we tried this one and it didn't go
+    through" list -- each entry {platform, identifier, reason} -- kept
+    separate from `notes` (which is for whole-platform failures) so the
+    dashboard can show exactly which businesses were skipped and why,
+    without the rest of that account's run being lost.
     """
     fields: Row = {
         "leads_found": leads_found,
@@ -331,6 +338,8 @@ def finish_run(
         fields["finished_at"] = finished_at_iso
     if notes is not None:
         fields["notes"] = notes
+    if skipped_leads is not None:
+        fields["skipped_leads"] = skipped_leads
     res = get_client().table("runs").update(fields).eq("id", run_id).execute()
     return res.data[0]
 

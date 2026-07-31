@@ -22,6 +22,7 @@ test-results/
 .playwright/
 browser_profiles/
 tools/captured_sessions/
+tools/dumps/
 
 # ── Node / Vite ──
 node_modules/
