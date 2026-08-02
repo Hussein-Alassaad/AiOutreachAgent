@@ -40,6 +40,22 @@ from playwright.sync_api import Page
 
 SEARCH_URL = "https://www.linkedin.com/search/results/companies/"
 
+# Facet IDs confirmed 2026-08-02 against a real, authenticated search --
+# found by applying each filter through LinkedIn's own UI (Locations /
+# Industry dropdowns on the company search results page) and reading the
+# facet parameter LinkedIn added to the URL, e.g. companyHqGeo=["101834488"]
+# for Lebanon. Only entries confirmed this exact way go here. This is a
+# small, growing lookup, not an exhaustive list of LinkedIn's facet IDs --
+# add more the same way (apply the filter live, read the resulting URL) as
+# new target_location/target_industry values come up.
+LOCATION_FACETS = {
+    "lebanon": "101834488",
+}
+INDUSTRY_FACETS = {
+    "food and beverage": "34",
+    "food and beverage services": "34",
+}
+
 _COMPANY_HREF_RE = re.compile(r"^https://www\.linkedin\.com/company/[^/?]+/?")
 _REDIRECT_URL_RE = re.compile(r"[?&]url=([^&]*)")
 _ACTIVITY_URN_RE = re.compile(r'data-urn="(urn:li:activity:[^"]*)"')
@@ -47,22 +63,38 @@ _POST_TIME_RE = re.compile(r'update-components-actor__sub-description[^>]*>\s*<s
 _RELATIVE_TIME_RE = re.compile(r"^(\d+)(h|d|w|mo|yr)$")
 
 
-def build_search_url(niche: str, location: str) -> str:
+def build_search_url(niche: str, location: str, industry: str = "") -> str:
     """
-    Build a LinkedIn company-search URL from the dashboard's niche/location
-    settings.
+    Build a LinkedIn company-search URL from the dashboard's niche/location/
+    industry settings.
 
-    UNVERIFIED CAVEAT: LinkedIn's precise faceted filters (an exact city, a
-    specific industry code, a company-size bracket) use internal facet IDs
-    that only appear once a real search is performed and the URL it produces
-    is inspected -- they are not plain text. This function instead folds
-    niche and location into the free-text `keywords` parameter, which LinkedIn
-    does support without any facet IDs, as a reasonable working fallback.
-    Precise faceted search can replace this once a real account confirms what
-    those facet parameters look like.
+    Uses a precise facet parameter (LOCATION_FACETS/INDUSTRY_FACETS above)
+    whenever `location`/`industry` matches a verified entry -- exactly what
+    LinkedIn's own UI produces when you apply that filter by hand. Anything
+    not in those two small lookups still works, just folded into the
+    free-text `keywords` parameter instead, same as before this was verified.
     """
-    query = " ".join(part for part in (niche, location) if part).strip()
-    return f"{SEARCH_URL}?keywords={quote(query)}&origin=GLOBAL_SEARCH_HEADER"
+    keyword_parts = [niche]
+    facet_params: dict[str, str] = {}
+
+    geo_id = LOCATION_FACETS.get(location.strip().lower()) if location else None
+    if geo_id:
+        facet_params["companyHqGeo"] = f'["{geo_id}"]'
+    elif location:
+        keyword_parts.append(location)
+
+    industry_id = INDUSTRY_FACETS.get(industry.strip().lower()) if industry else None
+    if industry_id:
+        facet_params["industryCompanyVertical"] = f'["{industry_id}"]'
+    elif industry:
+        keyword_parts.append(industry)
+
+    query = " ".join(part for part in keyword_parts if part).strip()
+    origin = "FACETED_SEARCH" if facet_params else "GLOBAL_SEARCH_HEADER"
+    url = f"{SEARCH_URL}?keywords={quote(query)}&origin={origin}"
+    for key, value in facet_params.items():
+        url += f"&{key}={quote(value)}"
+    return url
 
 
 def widen_search_terms(niche: str, location: str) -> tuple[str, str]:
