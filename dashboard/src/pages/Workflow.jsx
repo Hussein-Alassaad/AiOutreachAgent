@@ -1,5 +1,4 @@
-import { useEffect, useRef } from 'react'
-import { Link } from 'react-router-dom'
+import { useEffect, useRef, useState } from 'react'
 import './Workflow.css'
 
 /**
@@ -48,7 +47,7 @@ const NODES = [
 
   { id: 'n12', x: 1220, y: 220, shape: 'square', phase: 'p5', status: 'todo', label: 'Message generation' },
 
-  { id: 'n13', x: 1390, y: 220, shape: 'square', phase: 'p6', status: 'todo', label: "Mahmoud's approval" },
+  { id: 'n13', x: 1390, y: 220, shape: 'square', phase: 'p6', status: 'todo', label: "Mohamad's approval" },
 
   { id: 'n14', x: 1560, y: 220, shape: 'square', phase: 'p7g', status: 'todo', label: 'Platform routing' },
   { id: 'n15', x: 1730, y: 90, shape: 'square', phase: 'p7', status: 'todo', label: 'Auto-send LinkedIn' },
@@ -60,11 +59,17 @@ const NODES = [
   { id: 'n20', x: 1980, y: 390, shape: 'circle', phase: 'p8n', status: 'todo', label: 'Daily summary', parent: 'n18' },
 ]
 
+// A 4th element of 'vertical' means exit/enter the node from top or bottom
+// instead of right/left -- without it, these three edges' curves swing out
+// just far enough to cut straight through the sibling node sitting between
+// source and target at the same height (n3 for n2->n4; n16 for the n14
+// fan-out, since n14/n15/n17 are only ~40px apart horizontally and the
+// curve's control point overshoots into whatever sits at that x, y).
 const MAIN_EDGES = [
-  ['n1', 'n2'], ['n2', 'n3'], ['n2', 'n4'], ['n3', 'n5'], ['n4', 'n5'],
+  ['n1', 'n2'], ['n2', 'n3'], ['n2', 'n4', null, 'vertical'], ['n3', 'n5'], ['n4', 'n5'],
   ['n5', 'n6', 'qualifies'], ['n6', 'n9'], ['n9', 'n10'],
   ['n10', 'n12'], ['n12', 'n13'], ['n13', 'n12', 'held/edited'], ['n13', 'n14', 'approved'],
-  ['n14', 'n15', 'LinkedIn'], ['n14', 'n16', 'WhatsApp #'], ['n14', 'n17', 'Instagram'],
+  ['n14', 'n15', 'LinkedIn', 'vertical'], ['n14', 'n16', 'WhatsApp #'], ['n14', 'n17', 'Instagram', 'vertical'],
   ['n15', 'n18'], ['n16', 'n18'], ['n17', 'n18', 'marked sent'],
 ]
 const SUB_EDGES = [
@@ -75,6 +80,7 @@ const NODE_W = 128, NODE_H = 58, SUB_W = 108, SUB_H = 44
 const STATUS_GLYPH = { done: '✓', pending: '!' }
 
 export default function Workflow() {
+  const pageRef = useRef(null)
   const viewportRef = useRef(null)
   const worldRef = useRef(null)
   const svgRef = useRef(null)
@@ -82,6 +88,31 @@ export default function Workflow() {
   const zoomInRef = useRef(null)
   const zoomOutRef = useRef(null)
   const zoomResetRef = useRef(null)
+
+  // Both toggles act directly on the live DOM via refs/classList rather than
+  // re-running the whole draw effect -- flipping them shouldn't reset pan,
+  // zoom, or any node you've dragged. animOnRef is what the packet-dot rAF
+  // loop (inside the effect below) actually reads each frame; the state
+  // versions only exist to drive the buttons' own pressed/label look.
+  const animOnRef = useRef(true)
+  const [solid, setSolid] = useState(false)
+  const [animOn, setAnimOn] = useState(true)
+
+  function toggleSolid() {
+    setSolid((s) => {
+      const next = !s
+      viewportRef.current?.classList.toggle('wf-solid', next)
+      return next
+    })
+  }
+  function toggleAnimations() {
+    setAnimOn((a) => {
+      const next = !a
+      animOnRef.current = next
+      pageRef.current?.classList.toggle('wf-no-anim', !next)
+      return next
+    })
+  }
 
   useEffect(() => {
     const world = worldRef.current
@@ -91,6 +122,37 @@ export default function Workflow() {
 
     const byId = {}
     NODES.forEach((n) => { byId[n.id] = n })
+
+    // ---- adjacency map (static, independent of node position) -- powers
+    // the hover-to-trace-the-path effect: every node knows which other
+    // nodes and which edge keys touch it. ----
+    const adjacency = {}
+    function addAdj(from, to, edgeKey) {
+      if (!adjacency[from]) adjacency[from] = { nodes: new Set(), edges: new Set() }
+      if (!adjacency[to]) adjacency[to] = { nodes: new Set(), edges: new Set() }
+      adjacency[from].nodes.add(to)
+      adjacency[from].edges.add(edgeKey)
+      adjacency[to].nodes.add(from)
+      adjacency[to].edges.add(edgeKey)
+    }
+    MAIN_EDGES.forEach(([from, to]) => addAdj(from, to, `${from}>${to}`))
+    SUB_EDGES.forEach(([from, to]) => addAdj(from, to, `${from}>${to}`))
+
+    function clearHover() {
+      viewport.classList.remove('wf-hovering')
+      world.querySelectorAll('.wf-active').forEach((el) => el.classList.remove('wf-active'))
+      svg.querySelectorAll('.wf-active').forEach((el) => el.classList.remove('wf-active'))
+    }
+    function applyHover(nodeId) {
+      viewport.classList.add('wf-hovering')
+      byId[nodeId]?.el?.classList.add('wf-active')
+      const info = adjacency[nodeId]
+      if (!info) return
+      info.nodes.forEach((nid) => byId[nid]?.el?.classList.add('wf-active'))
+      info.edges.forEach((ek) => {
+        svg.querySelectorAll(`[data-edge="${CSS.escape(ek)}"]`).forEach((el) => el.classList.add('wf-active'))
+      })
+    }
 
     // ---- phase legend, built from PHASES so it can never drift from the nodes ----
     const seen = {}
@@ -106,11 +168,15 @@ export default function Workflow() {
     NODES.forEach((n) => {
       const p = PHASES[n.phase]
       const el = document.createElement('div')
-      el.className = 'node' + (n.shape === 'circle' ? ' sub-node' : '')
+      el.className = 'node wf-enter' + (n.shape === 'circle' ? ' sub-node' : '')
       el.style.left = n.x + 'px'
       el.style.top = n.y + 'px'
       el.style.setProperty('--glow', p.color + '55')
+      // Entrance cascades left-to-right across the whole 2320px canvas, so
+      // the pipeline visibly "boots up" phase by phase on first paint.
+      el.style.animationDelay = `${(n.x / 2000) * 0.9}s`
       el.dataset.id = n.id
+      el.dataset.status = n.status
 
       const badgeHtml = n.status === 'todo'
         ? '<span class="status-dot st-todo"></span>'
@@ -122,6 +188,9 @@ export default function Workflow() {
           badgeHtml +
         '</div>' +
         `<div class="node-label">${n.label}<span class="node-sub">${p.label}</span></div>`
+
+      el.addEventListener('mouseenter', () => applyHover(n.id))
+      el.addEventListener('mouseleave', clearHover)
 
       world.appendChild(el)
       n.el = el
@@ -144,53 +213,131 @@ export default function Workflow() {
       return { x: n.x + w / 2, y: n.y + h }
     }
 
+    // Packet dots are driven by a plain requestAnimationFrame loop below
+    // instead of SVG's native <animateMotion> -- SMIL depends on browser/OS
+    // animation settings and xlink parsing quirks that are impossible to
+    // verify without a live browser, and it was silently producing nothing.
+    // Reading a path's own geometry with getPointAtLength() has none of
+    // that: it's plain JS, always runs, always visible.
+    const SVG_NS = 'http://www.w3.org/2000/svg'
+    let packets = []
+
     function drawEdges() {
       const parts = [
         '<defs><marker id="wf-arrow" viewBox="0 0 8 8" refX="6.5" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">' +
-        '<path d="M0,0 L8,4 L0,8 Z" fill="#4A5C6C"></path></marker></defs>',
+        '<path class="wf-arrow-fill" d="M0,0 L8,4 L0,8 Z" fill="#4A5C6C"></path></marker></defs>',
       ]
+      const packetSpecs = []
 
       MAIN_EDGES.forEach((e, i) => {
         const a = byId[e[0]], b = byId[e[1]], label = e[2]
-        const p1 = centerRight(a), p2 = centerLeft(b)
-        const bend = Math.max(50, Math.abs(p2.x - p1.x) * 0.5)
-        const d = `M ${p1.x} ${p1.y} C ${p1.x + bend} ${p1.y}, ${p2.x - bend} ${p2.y}, ${p2.x} ${p2.y}`
+        const vertical = e[3] === 'vertical'
+        const edgeKey = `${e[0]}>${e[1]}`
+        let p1, p2, d
+        if (vertical) {
+          // Exit/enter top or bottom (whichever faces the other node) so the
+          // curve clears the row it's leaving instead of cutting across it.
+          const aDown = b.y >= a.y
+          p1 = aDown ? centerBottom(a) : centerTop(a)
+          p2 = aDown ? centerTop(b) : centerBottom(b)
+          const bend = Math.max(40, Math.abs(p2.y - p1.y) * 0.5)
+          d = `M ${p1.x} ${p1.y} C ${p1.x} ${p1.y + (aDown ? bend : -bend)}, ${p2.x} ${p2.y + (aDown ? -bend : bend)}, ${p2.x} ${p2.y}`
+        } else {
+          p1 = centerRight(a)
+          p2 = centerLeft(b)
+          const bend = Math.max(50, Math.abs(p2.x - p1.x) * 0.5)
+          d = `M ${p1.x} ${p1.y} C ${p1.x + bend} ${p1.y}, ${p2.x - bend} ${p2.y}, ${p2.x} ${p2.y}`
+        }
         const pathId = `mp-${e[0]}-${e[1]}-${i}`
         const color = PHASES[b.phase].color
-        parts.push(`<path id="${pathId}" class="main" d="${d}"></path>`)
+        parts.push(`<path id="${pathId}" class="main" data-edge="${edgeKey}" d="${d}"></path>`)
+        // Flow overlay -- same geometry, animated dash sweep in the brand
+        // color of the phase it's feeding, so every connector visibly
+        // carries motion toward its destination, not just the arrowhead.
+        const flowDur = (2.6 + (i % 3) * 0.5).toFixed(2)
+        parts.push(
+          `<path class="main-flow" data-edge="${edgeKey}" d="${d}" style="stroke:${color};color:${color};animation-duration:${flowDur}s"></path>`
+        )
 
         const dur = 2.2, stagger = (i % 4) * 0.5
         ;[0, dur / 2].forEach((begin) => {
-          parts.push(
-            `<circle r="3" class="packet" style="fill:${color};color:${color}">` +
-              `<animateMotion dur="${dur}s" begin="${(begin + stagger).toFixed(2)}s" repeatCount="indefinite">` +
-                `<mpath href="#${pathId}" xlink:href="#${pathId}"></mpath>` +
-              '</animateMotion>' +
-            '</circle>'
-          )
+          packetSpecs.push({ pathId, edgeKey, color, dur, offset: begin + stagger })
         })
 
         if (label) {
           const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2 - 7
-          parts.push(`<text x="${mx}" y="${my}" text-anchor="middle">${label}</text>`)
+          parts.push(`<text data-edge="${edgeKey}" x="${mx}" y="${my}" text-anchor="middle">${label}</text>`)
         }
       })
 
       SUB_EDGES.forEach((e) => {
         const a = byId[e[0]], b = byId[e[1]], label = e[2]
+        const edgeKey = `${e[0]}>${e[1]}`
         const p1 = centerBottom(a), p2 = centerTop(b)
         const midY = (p1.y + p2.y) / 2
         const d = `M ${p1.x} ${p1.y} C ${p1.x} ${midY}, ${p2.x} ${midY}, ${p2.x} ${p2.y}`
-        parts.push(`<path class="sub" d="${d}"></path>`)
+        parts.push(`<path class="sub" data-edge="${edgeKey}" d="${d}"></path>`)
+        parts.push(
+          `<path class="sub-flow" data-edge="${edgeKey}" d="${d}" style="stroke:${PHASES[b.phase].color};color:${PHASES[b.phase].color}"></path>`
+        )
         if (label) {
-          parts.push(`<text x="${(p1.x + p2.x) / 2}" y="${midY + 4}" text-anchor="middle">${label}</text>`)
+          parts.push(`<text data-edge="${edgeKey}" x="${(p1.x + p2.x) / 2}" y="${midY + 4}" text-anchor="middle">${label}</text>`)
         }
       })
 
       svg.innerHTML = parts.join('')
+
+      // Packet circles live outside the innerHTML string above (SMIL is
+      // gone) so they're created here, once the paths they ride are
+      // actually in the DOM and have real geometry to query. Each packet
+      // gets two trailing dots sampled from slightly earlier progress, so
+      // it reads as a comet with a fading tail instead of a bare dot.
+      packets = packetSpecs.map((spec) => {
+        const pathEl = svg.querySelector(`#${spec.pathId}`)
+        const dots = [1, 0.55, 0.22].map((opacity, idx) => {
+          const circle = document.createElementNS(SVG_NS, 'circle')
+          circle.setAttribute('r', String(3 - idx * 0.8))
+          circle.setAttribute('class', 'packet')
+          circle.dataset.edge = spec.edgeKey
+          circle.style.fill = spec.color
+          circle.style.color = spec.color
+          circle.style.opacity = String(opacity)
+          svg.appendChild(circle)
+          return circle
+        })
+        return { dots, pathEl, dur: spec.dur, offset: spec.offset }
+      })
     }
 
     drawEdges()
+
+    // ---- packet animation loop (plain JS, not SMIL) ----
+    let rafId
+    const startTime = performance.now()
+    function tick(now) {
+      if (!animOnRef.current) {
+        rafId = requestAnimationFrame(tick)
+        return
+      }
+      const elapsed = (now - startTime) / 1000
+      for (const p of packets) {
+        if (!p.pathEl) continue
+        const total = p.pathEl.getTotalLength()
+        if (!total) continue
+        const t = (((elapsed + p.offset) % p.dur) / p.dur + 1) % 1
+
+        // Trailing dots sample progressively earlier progress along the
+        // same path -- a cheap comet tail with no per-frame history buffer.
+        p.dots.forEach((dot, idx) => {
+          const dt = ((t - idx * 0.02) % 1 + 1) % 1
+          const pt = p.pathEl.getPointAtLength(dt * total)
+          dot.setAttribute('cx', pt.x)
+          dot.setAttribute('cy', pt.y)
+        })
+      }
+      rafId = requestAnimationFrame(tick)
+    }
+    rafId = requestAnimationFrame(tick)
 
     // ---- pan + zoom ----
     let scale = 0.72, panX = 30, panY = 30
@@ -222,14 +369,36 @@ export default function Workflow() {
       const rect = viewport.getBoundingClientRect()
       zoomAt(e.clientX - rect.left, e.clientY - rect.top, scale + (e.deltaY > 0 ? -0.08 : 0.08))
     }
+
+    // Wheel/drag zoom stays instant (a transition there would feel laggy
+    // mid-gesture); a button click is a one-shot action, so it gets a brief
+    // eased transition to feel like a deliberate camera move instead of a
+    // snap-cut.
+    function withEasedZoom(fn) {
+      world.style.transition = 'transform 340ms cubic-bezier(.2,.8,.2,1)'
+      fn()
+      setTimeout(() => { world.style.transition = '' }, 360)
+    }
     function onZoomIn() {
-      const r = viewport.getBoundingClientRect(); zoomAt(r.width / 2, r.height / 2, scale + 0.15)
+      const r = viewport.getBoundingClientRect()
+      withEasedZoom(() => zoomAt(r.width / 2, r.height / 2, scale + 0.15))
     }
     function onZoomOut() {
-      const r = viewport.getBoundingClientRect(); zoomAt(r.width / 2, r.height / 2, scale - 0.15)
+      const r = viewport.getBoundingClientRect()
+      withEasedZoom(() => zoomAt(r.width / 2, r.height / 2, scale - 0.15))
     }
     function onZoomReset() {
-      scale = 0.72; panX = 30; panY = 30; applyTransform()
+      // Fits the actual 2320x620 canvas to whatever the viewport measures
+      // right now, instead of a hardcoded scale -- correct on both a phone
+      // and a wide desktop monitor.
+      const rect = viewport.getBoundingClientRect()
+      const worldW = 2320, worldH = 620
+      withEasedZoom(() => {
+        scale = clamp(Math.min(rect.width / (worldW + 80), rect.height / (worldH + 80)), 0.32, 1.9)
+        panX = (rect.width - worldW * scale) / 2
+        panY = (rect.height - worldH * scale) / 2
+        applyTransform()
+      })
     }
 
     function onViewportPointerDown(e) {
@@ -283,36 +452,40 @@ export default function Workflow() {
     zoomOutRef.current.addEventListener('click', onZoomOut)
     zoomResetRef.current.addEventListener('click', onZoomReset)
 
-    // Cleanup: document-level listeners must be removed on unmount, or
-    // navigating to /workflow more than once would stack duplicate handlers.
+    // Cleanup: React StrictMode double-invokes this effect in dev (mount,
+    // cleanup, mount again) specifically to catch bugs like the one that
+    // used to be here -- `world.innerHTML = ''` doesn't just clear the
+    // .node divs we created, it also deletes the real <svg ref={svgRef}>
+    // element, since it's a React-rendered child of world. svgRef.current
+    // never gets reassigned after that (no re-render triggers it), so the
+    // second effect run kept drawing edges into a detached, invisible SVG
+    // while the live `world` was left with no SVG at all -- which is
+    // exactly why the connecting lines silently stopped appearing. Fix:
+    // remove only what we imperatively created, and remove every listener
+    // we attached (five of them were never being removed at all).
     return () => {
+      cancelAnimationFrame(rafId)
       viewport.removeEventListener('wheel', onWheel)
+      viewport.removeEventListener('pointerdown', onViewportPointerDown)
+      world.removeEventListener('pointerdown', onWorldPointerDown)
       document.removeEventListener('pointermove', onDocumentPointerMove)
       document.removeEventListener('pointerup', onDocumentPointerUp)
-      world.innerHTML = ''
+      zoomInRef.current?.removeEventListener('click', onZoomIn)
+      zoomOutRef.current?.removeEventListener('click', onZoomOut)
+      zoomResetRef.current?.removeEventListener('click', onZoomReset)
+      world.querySelectorAll('.node').forEach((el) => el.remove())
+      svg.innerHTML = ''
       phaseLegendEl.innerHTML = ''
     }
   }, [])
 
   return (
-    <div className="workflow-page">
+    <div className="workflow-page" ref={pageRef}>
       <div className="wrap">
-        <Link to="/" className="back-link">← back to status</Link>
         <header>
           <p className="eyebrow">Nexaris · AI Outreach Agent</p>
           <h1>Agent Workflow</h1>
-          <p className="job">
-            The complete task pipeline, Phase 2 through Phase 8 — drag nodes, pan the canvas,
-            scroll to zoom. Icon color marks which phase a step belongs to; the small corner
-            badge marks whether it's actually built yet.
-          </p>
         </header>
-
-        <div className="stats">
-          <div className="stat done"><span className="n">3</span><span className="l">Built &amp; verified live</span></div>
-          <div className="stat pending"><span className="n">2</span><span className="l">Built, pending your login</span></div>
-          <div className="stat todo"><span className="n">15</span><span className="l">Not started yet</span></div>
-        </div>
 
         <div className="legends">
           <div className="legend-group">
@@ -331,10 +504,28 @@ export default function Workflow() {
 
         <div className="toolbar">
           <span className="hint">drag canvas to pan · scroll/pinch to zoom · drag a node to move it</span>
-          <div className="zoom-controls">
-            <button ref={zoomOutRef} aria-label="Zoom out" type="button">&minus;</button>
-            <button ref={zoomResetRef} aria-label="Reset view" type="button">&#9678;</button>
-            <button ref={zoomInRef} aria-label="Zoom in" type="button">&plus;</button>
+          <div className="view-controls">
+            <button
+              type="button"
+              className={`toggle-chip${solid ? ' active' : ''}`}
+              aria-pressed={solid}
+              onClick={toggleSolid}
+            >
+              Solid background
+            </button>
+            <button
+              type="button"
+              className={`toggle-chip${animOn ? ' active' : ''}`}
+              aria-pressed={animOn}
+              onClick={toggleAnimations}
+            >
+              Animations {animOn ? 'on' : 'off'}
+            </button>
+            <div className="zoom-controls">
+              <button ref={zoomOutRef} aria-label="Zoom out" type="button">&minus;</button>
+              <button ref={zoomResetRef} aria-label="Reset view" type="button">&#9678;</button>
+              <button ref={zoomInRef} aria-label="Zoom in" type="button">+</button>
+            </div>
           </div>
         </div>
 
@@ -347,7 +538,7 @@ export default function Workflow() {
         </div>
 
         <footer>
-          <div className="rule-chip"><b>Hard gate:</b> nothing crosses the approval node without Mahmoud clearing it — no bypass exists in the design.</div>
+          <div className="rule-chip"><b>Hard gate:</b> nothing crosses the approval node without Mohamad clearing it — no bypass exists in the design.</div>
           <div className="rule-chip"><b>Instagram never auto-sends</b> (dashed icon border): the routing node only ever queues it for a human to send by hand.</div>
         </footer>
       </div>

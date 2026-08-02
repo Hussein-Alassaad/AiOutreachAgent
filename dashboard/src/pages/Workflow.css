@@ -2,44 +2,48 @@
    of the dashboard's Tailwind-based styling. */
 
 .workflow-page {
-  --ground: #F2F4F7; --panel: #FFFFFF; --ink: #101826; --muted: #5B6B7C; --line: #DCE2E8;
-  --accent: #0E6873; --accent-soft: #E4F1F2;
-  --st-done: #187A50; --st-pending: #A8621A; --st-todo: #8A97A3;
+  /* Dark is the default here, same as the rest of the dashboard (see
+     index.css) -- these used to be the OS's prefers-color-scheme:dark
+     override values, swapped here to be the base so this page follows the
+     same convention as everywhere else. */
+  --ground: #0A141C; --panel: #101B25; --ink: #E7EDF3; --muted: #8FA1AF; --line: #24323E;
+  --accent: #4FC1CE; --accent-soft: #12262A;
+  --st-done: #4FD293; --st-pending: #E3A24E; --st-todo: #6B7C8C;
   --mono: Consolas, "SF Mono", "Cascadia Code", Menlo, "Liberation Mono", monospace;
   --sans: -apple-system, "Segoe UI", system-ui, sans-serif;
 
   background: var(--ground); color: var(--ink); font-family: var(--sans);
   min-height: 100vh; padding: 32px 28px 44px; line-height: 1.5;
+  /* Now that this page lives inside the dashboard's <Layout>, its opaque
+     background needs to actually win over the fixed MJivity watermark
+     behind it. A `position: fixed` element with an explicit z-index paints
+     above ordinary static in-flow content REGARDLESS of DOM order -- that's
+     CSS 2.1's stacking rule, not a bug in the watermark itself. Giving this
+     page its own stacking context (position + z-index) is what lets its
+     background actually occlude it. */
+  position: relative;
+  z-index: 1;
 }
 
-@media (prefers-color-scheme: dark) {
-  .workflow-page {
-    --ground: #0A141C; --panel: #101B25; --ink: #E7EDF3; --muted: #8FA1AF; --line: #24323E;
-    --accent: #4FC1CE; --accent-soft: #12262A;
-    --st-done: #4FD293; --st-pending: #E3A24E; --st-todo: #6B7C8C;
-  }
+/* Light mode is driven by the app's own toggle (data-theme="light" on
+   <html>, see lib/theme.js/ThemeToggle.jsx) -- this page used to switch on
+   the OS's prefers-color-scheme instead, which is a completely different
+   signal from the in-app toggle. That's why picking "light" in the app
+   still left this page dark: it was never listening to the app's theme at
+   all, only to the OS's. */
+:root[data-theme="light"] .workflow-page {
+  --ground: #F2F4F7; --panel: #FFFFFF; --ink: #101826; --muted: #5B6B7C; --line: #DCE2E8;
+  --accent: #0E6873; --accent-soft: #E4F1F2;
+  --st-done: #187A50; --st-pending: #A8621A; --st-todo: #8A97A3;
 }
 
 .workflow-page * { box-sizing: border-box; }
 .workflow-page .wrap { max-width: 1280px; margin: 0 auto; }
 
 .workflow-page header { margin-bottom: 22px; }
-.workflow-page .back-link {
-  display: inline-block; font-family: var(--mono); font-size: 12px; color: var(--muted);
-  text-decoration: none; margin-bottom: 14px;
-}
-.workflow-page .back-link:hover { color: var(--accent); }
 .workflow-page .eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); margin: 0 0 10px; }
 .workflow-page h1 { font-family: var(--mono); font-size: clamp(24px, 3.4vw, 34px); font-weight: 700; letter-spacing: -0.01em; margin: 0 0 8px; text-wrap: balance; }
-.workflow-page .job { color: var(--muted); font-size: 15px; max-width: 68ch; margin: 0; }
-
-.workflow-page .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 24px 0 16px; }
-.workflow-page .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; }
-.workflow-page .stat .n { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 26px; font-weight: 700; }
-.workflow-page .stat .l { font-size: 12.5px; color: var(--muted); }
-.workflow-page .stat.done .n { color: var(--st-done); } .workflow-page .stat.pending .n { color: var(--st-pending); } .workflow-page .stat.todo .n { color: var(--st-todo); }
-
-.workflow-page .legends { display: flex; flex-wrap: wrap; gap: 22px 34px; margin-bottom: 16px; }
+.workflow-page .legends { display: flex; flex-wrap: wrap; gap: 22px 34px; margin: 24px 0 16px; }
 .workflow-page .legend-group .legend-title { font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
 .workflow-page .legend-row { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12.5px; color: var(--muted); }
 .workflow-page .legend-row span { display: inline-flex; align-items: center; gap: 6px; }
@@ -49,31 +53,130 @@
 
 .workflow-page .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; flex-wrap: wrap; }
 .workflow-page .hint { font-size: 12.5px; color: var(--muted); font-family: var(--mono); }
+.workflow-page .view-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+.workflow-page .toggle-chip {
+  font-family: var(--mono); font-size: 11.5px; padding: 6px 11px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--muted); cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+}
+.workflow-page .toggle-chip:hover { border-color: var(--accent); color: var(--accent); }
+.workflow-page .toggle-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.workflow-page .toggle-chip.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+
 .workflow-page .zoom-controls { display: flex; gap: 6px; }
-.workflow-page .zoom-controls button { font-family: var(--mono); font-size: 15px; width: 30px; height: 30px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; }
+.workflow-page .zoom-controls button { font-family: var(--mono); font-size: 15px; width: 30px; height: 30px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; transition: transform 120ms ease, border-color 120ms ease, color 120ms ease; }
 .workflow-page .zoom-controls button:hover { border-color: var(--accent); color: var(--accent); }
+.workflow-page .zoom-controls button:active { transform: scale(0.88); }
 .workflow-page .zoom-controls button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .workflow-page .canvas-frame { background: #05090D; border-radius: 14px; padding: 10px; box-shadow: 0 1px 0 rgba(255,255,255,0.04) inset, 0 20px 45px -25px rgba(0,0,0,0.5); }
-.workflow-page .viewport { position: relative; height: 640px; overflow: hidden; background: radial-gradient(circle, #1B2731 1px, transparent 1px) 0 0 / 24px 24px, #0A141C; border: 1px solid #1E2A34; border-radius: 9px; cursor: grab; touch-action: none; }
+.workflow-page .viewport {
+  position: relative; height: 640px; overflow: hidden;
+  background: radial-gradient(circle, #1B2731 1px, transparent 1px) 0 0 / 24px 24px, #0A141C;
+  border: 1px solid #1E2A34; border-radius: 9px; cursor: grab; touch-action: none;
+  animation: wf-grid-drift 70s linear infinite;
+}
 .workflow-page .viewport.panning { cursor: grabbing; }
-.workflow-page .world { position: absolute; top: 0; left: 0; width: 2320px; height: 620px; transform-origin: 0 0; }
-.workflow-page .edges-svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
-.workflow-page .edges-svg path.main { fill: none; stroke: #4A5C6C; stroke-width: 2; marker-end: url(#wf-arrow); }
-.workflow-page .edges-svg path.sub { fill: none; stroke: #3A4856; stroke-width: 1.6; stroke-dasharray: 3 4; }
-.workflow-page .edges-svg text { font-family: var(--mono); font-size: 10.5px; fill: #C7D2DB; paint-order: stroke; stroke: #05090D; stroke-width: 5px; stroke-linejoin: round; }
-.workflow-page .edges-svg .packet { filter: drop-shadow(0 0 2.5px currentColor); }
+/* Soft vignette for depth -- the flat gray canvas otherwise reads as a
+   plain plane instead of a space the graph sits inside. */
+.workflow-page .viewport::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(circle at 50% 45%, transparent 55%, rgba(0,0,0,0.4) 100%);
+}
+@keyframes wf-grid-drift { from { background-position: 0 0, 0 0; } to { background-position: 240px 168px, 0 0; } }
 
-.workflow-page .node { position: absolute; width: 128px; display: flex; flex-direction: column; align-items: center; text-align: center; cursor: grab; user-select: none; }
+.workflow-page .world { position: absolute; top: 0; left: 0; width: 2320px; height: 620px; transform-origin: 0 0; }
+.workflow-page .edges-svg {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none;
+  animation: wf-edges-in 0.7s ease-out both; animation-delay: 0.55s;
+}
+.workflow-page .edges-svg path.main { fill: none; stroke: #4A5C6C; stroke-width: 2; marker-end: url(#wf-arrow); transition: opacity 220ms ease; }
+.workflow-page .edges-svg path.sub { fill: none; stroke: #3A4856; stroke-width: 1.6; stroke-dasharray: 3 4; transition: opacity 220ms ease; }
+.workflow-page .edges-svg text { font-family: var(--mono); font-size: 10.5px; fill: #C7D2DB; paint-order: stroke; stroke: #05090D; stroke-width: 5px; stroke-linejoin: round; transition: opacity 220ms ease; }
+.workflow-page .edges-svg .packet { filter: drop-shadow(0 0 2.5px currentColor); transition: opacity 220ms ease; }
+@keyframes wf-edges-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* The canvas itself (grid, connector lines, text halo, arrowhead, badge
+   cutout rings) was hardcoded to dark hex values rather than the --ground
+   etc. variables above, so it stayed dark even once the page-level colors
+   started following the app's theme toggle. Same fix, same selector
+   pattern, just covering the pieces that were still hardcoded. */
+:root[data-theme="light"] .workflow-page .canvas-frame { background: #E4E9EE; box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset, 0 20px 45px -25px rgba(16,24,38,0.25); }
+:root[data-theme="light"] .workflow-page .viewport {
+  background: radial-gradient(circle, #C7D0D9 1px, transparent 1px) 0 0 / 24px 24px, #F4F6F8;
+  border-color: #D5DCE3;
+}
+:root[data-theme="light"] .workflow-page .viewport::after {
+  background: radial-gradient(circle at 50% 45%, transparent 55%, rgba(16,24,38,0.12) 100%);
+}
+:root[data-theme="light"] .workflow-page .edges-svg path.main { stroke: #94A0AC; }
+:root[data-theme="light"] .workflow-page .edges-svg path.sub { stroke: #B7C0C9; }
+:root[data-theme="light"] .workflow-page .edges-svg text { fill: #334155; stroke: #F4F6F8; }
+:root[data-theme="light"] .workflow-page .edges-svg .wf-arrow-fill { fill: #94A0AC; }
+:root[data-theme="light"] .workflow-page .status-dot { border-color: #F4F6F8; }
+:root[data-theme="light"] .workflow-page .viewport.wf-solid { background: #F4F6F8; }
+
+/* Flow overlay -- a bright dashed line riding on top of the base connector,
+   its dash-offset sweeping continuously in the direction of the arrow, so
+   every edge visibly carries motion instead of just sitting there static. */
+.workflow-page .edges-svg path.main-flow,
+.workflow-page .edges-svg path.sub-flow {
+  fill: none; stroke-width: 2.2; stroke-linecap: round; opacity: 0.85;
+  filter: drop-shadow(0 0 3px currentColor);
+  transition: opacity 220ms ease;
+}
+.workflow-page .edges-svg path.main-flow { stroke-dasharray: 9 27; animation: wf-flow 2.6s linear infinite; }
+.workflow-page .edges-svg path.sub-flow { stroke-dasharray: 4 10; opacity: 0.6; animation: wf-flow 1.8s linear infinite; }
+@keyframes wf-flow { to { stroke-dashoffset: -72; } }
+
+/* Hover a node -> highlight everything connected to it, dim everything
+   else, so you can trace one lead's path through the pipeline at a glance. */
+.workflow-page .viewport.wf-hovering .node:not(.wf-active) { opacity: 0.34; }
+.workflow-page .viewport.wf-hovering .edges-svg > :not(.wf-active) { opacity: 0.1; }
+.workflow-page .viewport.wf-hovering .edges-svg path.main-flow.wf-active,
+.workflow-page .viewport.wf-hovering .edges-svg path.sub-flow.wf-active { opacity: 1; stroke-width: 3; }
+
+.workflow-page .node { position: absolute; width: 128px; display: flex; flex-direction: column; align-items: center; text-align: center; cursor: grab; user-select: none; transition: opacity 220ms ease; }
 .workflow-page .node:active { cursor: grabbing; }
 .workflow-page .node.sub-node { width: 108px; }
 
+/* Entrance choreography -- nodes cascade in left-to-right on first paint
+   (delay set per-node from its x position in JS) instead of just appearing. */
+.workflow-page .node.wf-enter { animation: wf-node-in 0.55s cubic-bezier(.22,.85,.3,1.1) both; }
+@keyframes wf-node-in {
+  from { opacity: 0; transform: translateY(12px) scale(0.82); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
 .workflow-page .icon-badge { position: relative; width: 58px; height: 58px; border-radius: 15px; display: flex; align-items: center; justify-content: center; box-shadow: 0 5px 14px -6px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.06) inset; }
 .workflow-page .node.sub-node .icon-badge { width: 44px; height: 44px; border-radius: 50%; }
-.workflow-page .node:hover .icon-badge { box-shadow: 0 6px 18px -6px rgba(0,0,0,0.6), 0 0 0 2px var(--glow, transparent); }
+/* outline, not box-shadow -- box-shadow is owned by the breathing-glow
+   animation below, and an animated property always wins over a static
+   rule on the same property, so a box-shadow ring here would just get
+   silently overwritten every frame while the animation runs. */
+.workflow-page .node:hover .icon-badge,
+.workflow-page .node.wf-active .icon-badge {
+  outline: 2.5px solid var(--glow, transparent);
+  outline-offset: 2px;
+}
 .workflow-page .icon-badge .glyph { width: 26px; height: 26px; color: #F3F6F9; }
 .workflow-page .node.sub-node .icon-badge .glyph { width: 20px; height: 20px; }
 .workflow-page .icon-badge.manual { border: 2px dashed rgba(255,255,255,0.55); }
+
+/* Ambient breathing glow, stronger for done, faint for todo -- build status
+   is felt at a glance, not just read off the corner badge. */
+.workflow-page .node[data-status="done"] .icon-badge { animation: wf-breathe 2.3s ease-in-out infinite; }
+.workflow-page .node[data-status="pending"] .icon-badge { animation: wf-breathe 2.3s ease-in-out infinite; opacity: 0.94; }
+.workflow-page .node[data-status="todo"] .icon-badge { animation: wf-breathe-faint 3.6s ease-in-out infinite; opacity: 0.7; }
+@keyframes wf-breathe {
+  0%, 100% { box-shadow: 0 5px 14px -6px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.06) inset, 0 0 0 0 var(--glow); }
+  50% { box-shadow: 0 5px 14px -6px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.06) inset, 0 0 18px 3px var(--glow); }
+}
+@keyframes wf-breathe-faint {
+  0%, 100% { box-shadow: 0 5px 14px -6px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.06) inset, 0 0 0 0 var(--glow); }
+  50% { box-shadow: 0 5px 14px -6px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.06) inset, 0 0 8px 1px var(--glow); }
+}
 
 .workflow-page .status-dot { position: absolute; top: -4px; right: -4px; width: 17px; height: 17px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; border: 2px solid #0A141C; }
 .workflow-page .status-dot svg { width: 9px; height: 9px; }
@@ -89,13 +192,33 @@
 .workflow-page .rule-chip { font-size: 13px; background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 6px; padding: 9px 13px; color: var(--ink); max-width: 44ch; }
 .workflow-page .rule-chip b { color: var(--accent); }
 
-@media (prefers-reduced-motion: no-preference) {
-  .workflow-page .status-dot.st-done, .workflow-page .status-dot.st-pending { animation: wf-dot-pulse 2.2s ease-out infinite; }
-  @keyframes wf-dot-pulse {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(255,255,255,0.35), 0 0 0 2px #0A141C; }
-    60% { box-shadow: 0 0 0 6px rgba(255,255,255,0), 0 0 0 2px #0A141C; }
-  }
+/* Deliberately unconditional -- this page is a hand-built diagram whose
+   whole point is showing the pipeline "alive" (packet dots travelling the
+   edges, status badges pulsing). Gating it behind prefers-reduced-motion
+   silently killed it for anyone with Windows' "Show animations" setting
+   off, which reads as "the animations are just missing" with no obvious
+   cause. */
+.workflow-page .status-dot.st-done, .workflow-page .status-dot.st-pending { animation: wf-dot-pulse 2.2s ease-out infinite; }
+@keyframes wf-dot-pulse {
+  /* var(--ground), not a hardcoded hex -- keyframes aren't scoped by
+     selector, so a fixed color here would ignore the light-mode override
+     above. The custom property resolves per-theme same as everywhere else. */
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255,255,255,0.35), 0 0 0 2px var(--ground); }
+  60% { box-shadow: 0 0 0 6px rgba(255,255,255,0), 0 0 0 2px var(--ground); }
 }
+
+/* "Solid background" toggle -- drops the drifting dot-grid and vignette for
+   a flat, plain canvas. */
+.workflow-page .viewport.wf-solid { background: #0A141C; animation: none; }
+.workflow-page .viewport.wf-solid::after { display: none; }
+
+/* "Animations" toggle -- kills every animation/transition scoped to this
+   page (the packet-dot rAF loop checks the same flag via animOnRef in
+   Workflow.jsx, since that one's plain JS, not CSS). Scoped to
+   .workflow-page specifically -- this is a per-page control, not the
+   app-wide preference that got pulled earlier. */
+.workflow-page.wf-no-anim * { animation: none !important; transition: none !important; }
+.workflow-page.wf-no-anim .edges-svg .packet { opacity: 0 !important; }
 
 @media (max-width: 640px) {
   .workflow-page { padding: 20px 14px 32px; }

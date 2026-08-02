@@ -8,20 +8,240 @@
   --color-hot: oklch(0.63 0.22 25);
   --color-warm: oklch(0.75 0.16 70);
   --color-cold: oklch(0.68 0.11 235);
+
+  /* Brand accent -- a violet -> cyan gradient pair used sparingly (active nav,
+     primary buttons, KPI highlights, chart lines) so it stays meaningful
+     instead of every element competing for attention. */
+  --color-accent-from: oklch(0.63 0.24 293);
+  --color-accent-to: oklch(0.75 0.15 220);
 }
 
 html,
 body,
 #root {
   height: 100%;
+  /* The Pipeline board (and any future wide content) has its own internal
+     overflow-x-auto scroller -- this is the safety net that stops a wide
+     child from ever leaking a horizontal scrollbar onto the whole page,
+     which is what "not responsive" looks like on a phone. */
+  overflow-x: hidden;
 }
 
 body {
   /* Safe-area padding so content clears the notch and home indicator when the
-     PWA is launched full-screen from Mahmoud's iPhone home screen. */
+     PWA is launched full-screen from Mohamad's iPhone home screen. */
   padding: env(safe-area-inset-top) env(safe-area-inset-right)
     env(safe-area-inset-bottom) env(safe-area-inset-left);
 
   /* Stops iOS Safari from auto-enlarging text in landscape. */
   -webkit-text-size-adjust: 100%;
+
+  background: #05050a;
+  background-image:
+    radial-gradient(circle at 15% 0%, oklch(0.63 0.24 293 / 0.16), transparent 45%),
+    radial-gradient(circle at 85% 15%, oklch(0.75 0.15 220 / 0.12), transparent 40%);
+  background-attachment: fixed;
+}
+
+/* Glass surface -- the base card treatment used everywhere instead of a flat
+   bg + border. Translucent so the ambient background glow reads through. */
+.glass {
+  background: color-mix(in oklch, var(--color-slate-900) 55%, transparent);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid color-mix(in oklch, var(--color-slate-100) 8%, transparent);
+}
+
+.glass-hover {
+  transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+}
+.glass-hover:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in oklch, var(--color-accent-from) 45%, transparent);
+  box-shadow: 0 12px 32px -12px color-mix(in oklch, var(--color-accent-from) 35%, transparent);
+}
+
+.accent-text {
+  background: linear-gradient(90deg, var(--color-accent-from), var(--color-accent-to));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.accent-ring:focus-visible {
+  outline: 2px solid var(--color-accent-from);
+  outline-offset: 2px;
+}
+
+/* Every link/button gets a deliberate accent focus ring instead of the
+   browser's default outline -- that mismatched white/black box was what
+   made the active nav item look broken in light mode (see screenshot
+   report), not an actual light-mode styling gap. */
+a:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--color-accent-from);
+  outline-offset: 2px;
+}
+
+/* ============================================================
+   LIGHT MODE
+   Toggled via `data-theme="light"` on <html> (see lib/theme.js /
+   components/ThemeToggle.jsx). Dark is the default, undecorated state --
+   these rules override the hardcoded slate-* utility classes used across
+   every page. Written outside any @layer, so they win over Tailwind's own
+   utility layer regardless of selector specificity (CSS cascade rule: any
+   unlayered style beats a layered one) -- that's what makes overriding
+   Tailwind's own generated classes from here actually work.
+   ============================================================ */
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="light"] body {
+  background: #f7f7fb;
+  background-image:
+    radial-gradient(circle at 15% 0%, oklch(0.63 0.24 293 / 0.08), transparent 45%),
+    radial-gradient(circle at 85% 15%, oklch(0.75 0.15 220 / 0.07), transparent 40%);
+}
+
+:root[data-theme="light"] .glass {
+  background: color-mix(in oklch, white 70%, transparent);
+  border-color: color-mix(in oklch, black 8%, transparent);
+}
+
+:root[data-theme="light"] .skeleton {
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklch, #e2e8f0 80%, transparent) 25%,
+    color-mix(in oklch, #cbd5e1 80%, transparent) 37%,
+    color-mix(in oklch, #e2e8f0 80%, transparent) 63%
+  );
+  background-size: 400% 100%;
+}
+
+/* Page backgrounds -> near-white */
+:root[data-theme="light"] .bg-slate-950 { background-color: #f7f7fb; }
+:root[data-theme="light"] .bg-slate-950\/40,
+:root[data-theme="light"] .bg-slate-950\/50,
+:root[data-theme="light"] .bg-slate-950\/60,
+:root[data-theme="light"] .bg-slate-950\/80,
+:root[data-theme="light"] .md\:bg-slate-950\/95 { background-color: color-mix(in oklch, white 92%, transparent); }
+
+/* Card/panel surfaces -> white-ish */
+:root[data-theme="light"] .bg-slate-900,
+:root[data-theme="light"] .bg-slate-900\/30,
+:root[data-theme="light"] .bg-slate-900\/50,
+:root[data-theme="light"] .bg-slate-900\/60 { background-color: color-mix(in oklch, white 88%, transparent); }
+
+/* Buttons/inputs -> light gray */
+:root[data-theme="light"] .bg-slate-800,
+:root[data-theme="light"] .bg-slate-800\/80,
+:root[data-theme="light"] .bg-slate-800\/50,
+:root[data-theme="light"] .bg-slate-800\/40 { background-color: #e2e8f0; }
+:root[data-theme="light"] .hover\:bg-slate-800\/50:hover,
+:root[data-theme="light"] .hover\:bg-slate-800\/40:hover { background-color: #e2e8f0; }
+:root[data-theme="light"] .bg-slate-700 { background-color: #cbd5e1; }
+:root[data-theme="light"] .bg-slate-600 { background-color: #94a3b8; }
+:root[data-theme="light"] .bg-slate-500 { background-color: #64748b; }
+
+/* Borders -> light gray instead of near-black */
+:root[data-theme="light"] .border-slate-700,
+:root[data-theme="light"] .border-slate-800,
+:root[data-theme="light"] .border-slate-800\/60,
+:root[data-theme="light"] .border-slate-800\/70,
+:root[data-theme="light"] .md\:border-slate-800\/60 { border-color: #e2e8f0; }
+
+/* Text -> dark instead of near-white */
+:root[data-theme="light"] .text-slate-100,
+:root[data-theme="light"] .text-slate-200 { color: #0f172a; }
+:root[data-theme="light"] .text-slate-300 { color: #334155; }
+:root[data-theme="light"] .text-slate-400 { color: #475569; }
+:root[data-theme="light"] .text-slate-500 { color: #64748b; }
+:root[data-theme="light"] .text-slate-600 { color: #94a3b8; }
+/* text-slate-950 is deliberately unchanged -- it's dark text on a bright
+   gradient button in both themes, not page text. */
+
+/* The desktop sidebar's labels are display:none until the sidebar itself is
+   actually :hover-ed (see .sidebar-rail's `group` + each label's
+   `md:group-hover:inline`/`block` in Layout.jsx) -- not just clipped by a
+   narrow width. That's deliberate: a touchscreen has no real hover state,
+   and on some phones (or a browser's "Desktop site" mode landing above the
+   `md` breakpoint) CSS :hover can latch on after a tap and never cleanly
+   release, or never fire at all. Either way, since labels are either fully
+   shown or fully display:none, there is no width to get stuck at -- a
+   device that can't hover just permanently sees the icon-only rail, never
+   a half-rendered word. No extra CSS needed here for that case. */
+
+/* Hides the native scrollbar track/arrows on horizontally-scrollable strips
+   (mobile bottom nav, Pipeline board) while keeping them scrollable -- the
+   OS-themed scrollbar bar looked like a stray UI element sitting on top of
+   the app rather than part of it. */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Giant faint brand wordmark centered behind every page's content (mounted
+   once in Layout, fixed to the viewport) -- the same accent gradient used
+   for headings and the sidebar logo, just heavily diluted so it reads as
+   texture rather than competing with foreground text. Flanked by a soft
+   glow and a thin rule-dot-rule flourish so it reads as a deliberate
+   centerpiece mark, not a stray label. Light mode needs a touch more
+   opacity since the same alpha reads fainter on a near-white surface than
+   on near-black. */
+.watermark-text {
+  /* clamp(), not a plain vw unit, so the word's actual rendered width (7
+     characters wide) stays inside the viewport at every screen size --
+     a flat vw size doesn't know how wide the word is and clipped "ty" off
+     the right edge on wide screens once sized up. */
+  font-size: clamp(3.75rem, 17vw, 15rem);
+  font-weight: 900;
+  line-height: 1;
+  padding-bottom: 0.12em;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+  background: linear-gradient(90deg, var(--color-accent-from), var(--color-accent-to));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  opacity: 0.09;
+}
+:root[data-theme="light"] .watermark-text {
+  opacity: 0.13;
+}
+
+.watermark-glow {
+  background: radial-gradient(circle, color-mix(in oklch, var(--color-accent-from) 40%, transparent), transparent 72%);
+  filter: blur(70px);
+  opacity: 0.55;
+}
+:root[data-theme="light"] .watermark-glow {
+  opacity: 0.35;
+}
+
+.watermark-rule {
+  background: linear-gradient(90deg, transparent, var(--color-accent-from), transparent);
+  opacity: 0.3;
+}
+.watermark-dot {
+  background: var(--color-accent-to);
+  opacity: 0.4;
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklch, var(--color-slate-800) 60%, transparent) 25%,
+    color-mix(in oklch, var(--color-slate-700) 60%, transparent) 37%,
+    color-mix(in oklch, var(--color-slate-800) 60%, transparent) 63%
+  );
+  background-size: 400% 100%;
+  animation: shimmer 1.6s ease-in-out infinite;
 }
