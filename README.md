@@ -20,7 +20,7 @@ on laptop and iPhone.
 | **Instagram** | Automated | **Never automated** — prepared for a human to send manually |
 
 Instagram's terms ban automated cold outreach, so the agent finds, analyses, scores,
-and writes the message, then stops. Nothing sends on any channel without Mahmoud's
+and writes the message, then stops. Nothing sends on any channel without Mohamad's
 daily approval — that gate has no bypass.
 
 ---

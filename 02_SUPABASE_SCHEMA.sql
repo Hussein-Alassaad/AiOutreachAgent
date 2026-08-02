@@ -50,7 +50,7 @@ create table if not exists settings (
     max_contacts_per_lead int default 2,              -- HARD RULE — do not exceed
     -- notifications
     whatsapp_recipient_1 text,                        -- e.g. Hussein
-    whatsapp_recipient_2 text,                        -- e.g. Mahmoud
+    whatsapp_recipient_2 text,                        -- e.g. Mohamad
     -- approval
     approval_required boolean default true,           -- permanent hard gate
     updated_at        timestamptz default now()
@@ -115,9 +115,9 @@ create table if not exists messages (
     is_reengagement   boolean default false,
     -- approval
     approval_status   text default 'awaiting',       -- awaiting | approved | held | edited
-    approved_by       text,                          -- Mahmoud
+    approved_by       text,                          -- Mohamad
     approved_at       timestamptz,
-    edited_body       text,                          -- if Mahmoud edited it
+    edited_body       text,                          -- if Mohamad edited it
     -- send
     send_status       text default 'pending',        -- pending | sent | manual_pending | failed
     sent_at           timestamptz,
@@ -133,7 +133,7 @@ create table if not exists pipeline_history (
     lead_id           uuid references leads(id) on delete cascade,
     from_stage        text,
     to_stage          text not null,
-    changed_by        text default 'agent',          -- agent | hussein | mahmoud
+    changed_by        text default 'agent',          -- agent | hussein | mohamad
     changed_at        timestamptz default now()
 );
 

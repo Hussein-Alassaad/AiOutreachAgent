@@ -9,7 +9,7 @@
 -- will warn you that every table is unprotected.
 --
 -- THE MODEL (deliberately simple — only 2 users)
--- This system has exactly two people: Hussein and Mahmoud. Both log in through
+-- This system has exactly two people: Hussein and Mohamad. Both log in through
 -- Supabase Auth, so both carry the built-in `authenticated` role. There is no
 -- "public visitor" who should ever see a lead or a message.
 --
@@ -22,7 +22,7 @@
 -- key, which bypasses RLS entirely. RLS only governs the DASHBOARD, which uses
 -- the anon key + a logged-in session.
 --
--- If later you want finer control (e.g. Mahmoud can approve but not delete
+-- If later you want finer control (e.g. Mohamad can approve but not delete
 -- leads), you replace the blanket policy on a specific table with per-command
 -- policies. For now, both users are trusted owners.
 -- ============================================================

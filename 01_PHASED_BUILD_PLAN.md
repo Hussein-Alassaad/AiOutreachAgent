@@ -96,7 +96,7 @@ Update `PROGRESS.md` after each phase.
 
 ## PHASE 6 — Approval workflow
 
-**Goal:** Mahmoud approves before anything sends.
+**Goal:** Mohamad approves before anything sends.
 
 - Build the message queue: all generated messages sit in "awaiting_approval"
 - Build the backend approve/edit/hold logic
@@ -126,7 +126,7 @@ Update `PROGRESS.md` after each phase.
 
 - **Pipeline:** New → Contacted → Replied → Interested → Meeting Booked → Deal Closed → Lost; auto-move on reply detection; manual moves supported; timestamp every move
 - **Follow-up + re-engagement:** per-lead on/off + timing; re-engagement for cold-after-reply; max 2 contacts; re-contact gap set per lead; pause on reply
-- **WhatsApp notifications (all 5 types to both numbers):** hot lead alert, founder found, account warning, approval reminder (to Mahmoud), daily run summary
+- **WhatsApp notifications (all 5 types to both numbers):** hot lead alert, founder found, account warning, approval reminder (to Mohamad), daily run summary
 - Reply detection: check for replies on LinkedIn/WhatsApp and update pipeline
 
 **Checkpoint:** Hussein sees leads move through stages, receives test WhatsApp alerts, and follow-up scheduling works.
@@ -140,7 +140,7 @@ Update `PROGRESS.md` after each phase.
 Build these sections (see spec §7 for full detail):
 - **Live Feed** — today's lead cards (all details incl. weak points, founder flag, copyable message)
 - **Instagram Manual Send section** — ready messages + "Mark as Sent"
-- **Mahmoud's Approval section** — edit/approve per message + Approve All + count badge (mobile-friendly)
+- **Mohamad's Approval section** — edit/approve per message + Approve All + count badge (mobile-friendly)
 - **CRM Pipeline board** — kanban, drag-and-drop
 - **Lead Detail page** — full record + editable follow-up
 - **Client History** — permanent searchable database

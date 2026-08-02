@@ -1,4 +1,4 @@
-# For Mahmoud — logging into your accounts safely
+# For Mohamad — logging into your accounts safely
 
 This lets you log into your LinkedIn/Instagram accounts yourself, and only
 send back a small file that proves you're logged in — **never your password,

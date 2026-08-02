@@ -150,7 +150,7 @@ You are the lead engineer building a production AI outreach agent for **Nexaris*
 
 ## What you are building — one paragraph
 
-A fully automated AI outreach agent that runs daily on a schedule, uses 3 accounts (each on its own proxy) to discover business leads on **LinkedIn** and **Instagram**, deeply analyzes each business, detects founders, finds public WhatsApp numbers, scores each lead 1–10 with reasoning, and generates a personalized human-style outreach message using the Claude API. Messages wait for **Mahmoud&#x27;s daily approval**, then send automatically on LinkedIn and WhatsApp — while Instagram messages are surfaced in the dashboard for a human to send manually (Instagram bans automated cold outreach). Everything lands in a **CRM with a pipeline**, and a **responsive dashboard** (works on laptop and iPhone) shows live leads, analytics, account health, and every editable setting.
+A fully automated AI outreach agent that runs daily on a schedule, uses 3 accounts (each on its own proxy) to discover business leads on **LinkedIn** and **Instagram**, deeply analyzes each business, detects founders, finds public WhatsApp numbers, scores each lead 1–10 with reasoning, and generates a personalized human-style outreach message using the Claude API. Messages wait for **Mohamad&#x27;s daily approval**, then send automatically on LinkedIn and WhatsApp — while Instagram messages are surfaced in the dashboard for a human to send manually (Instagram bans automated cold outreach). Everything lands in a **CRM with a pipeline**, and a **responsive dashboard** (works on laptop and iPhone) shows live leads, analytics, account health, and every editable setting.
 
 ---
 
@@ -174,7 +174,7 @@ A fully automated AI outreach agent that runs daily on a schedule, uses 3 accoun
 1. **Instagram is find-only.** The agent discovers, analyzes, scores, and drafts messages for Instagram leads but **never sends** on Instagram. Those messages go to a dashboard section for manual human sending. (Instagram&#x27;s API bans automated cold outreach.)
 2. **LinkedIn is fully automated** — find and send.
 3. **WhatsApp sends automatically** — but only when a public WhatsApp number is found on a lead&#x27;s Instagram bio, LinkedIn profile, or website.
-4. **Nothing sends without Mahmoud&#x27;s daily approval.** This is a hard gate with no bypass.
+4. **Nothing sends without Mohamad&#x27;s daily approval.** This is a hard gate with no bypass.
 5. **Messages are AI-generated** per lead, personalized from the business name + details + weak points, in a human tone.
 6. **Each of the 3 accounts uses its own dedicated sticky proxy IP** — sessions never mix IPs.
 7. **Founder detection:** scan bios for &quot;founder of X&quot;, &quot;co-founder&quot;, &quot;CEO &amp; founder&quot;, etc. If found, flag on the dashboard for manual founder outreach.
@@ -306,7 +306,7 @@ Update `PROGRESS.md` after each phase.
 
 ## PHASE 6 — Approval workflow
 
-**Goal:** Mahmoud approves before anything sends.
+**Goal:** Mohamad approves before anything sends.
 
 - Build the message queue: all generated messages sit in &quot;awaiting_approval&quot;
 - Build the backend approve/edit/hold logic
@@ -336,7 +336,7 @@ Update `PROGRESS.md` after each phase.
 
 - **Pipeline:** New → Contacted → Replied → Interested → Meeting Booked → Deal Closed → Lost; auto-move on reply detection; manual moves supported; timestamp every move
 - **Follow-up + re-engagement:** per-lead on/off + timing; re-engagement for cold-after-reply; max 2 contacts; re-contact gap set per lead; pause on reply
-- **WhatsApp notifications (all 5 types to both numbers):** hot lead alert, founder found, account warning, approval reminder (to Mahmoud), daily run summary
+- **WhatsApp notifications (all 5 types to both numbers):** hot lead alert, founder found, account warning, approval reminder (to Mohamad), daily run summary
 - Reply detection: check for replies on LinkedIn/WhatsApp and update pipeline
 
 **Checkpoint:** Hussein sees leads move through stages, receives test WhatsApp alerts, and follow-up scheduling works.
@@ -350,7 +350,7 @@ Update `PROGRESS.md` after each phase.
 Build these sections (see spec §7 for full detail):
 - **Live Feed** — today&#x27;s lead cards (all details incl. weak points, founder flag, copyable message)
 - **Instagram Manual Send section** — ready messages + &quot;Mark as Sent&quot;
-- **Mahmoud&#x27;s Approval section** — edit/approve per message + Approve All + count badge (mobile-friendly)
+- **Mohamad&#x27;s Approval section** — edit/approve per message + Approve All + count badge (mobile-friendly)
 - **CRM Pipeline board** — kanban, drag-and-drop
 - **Lead Detail page** — full record + editable follow-up
 - **Client History** — permanent searchable database
@@ -472,7 +472,7 @@ nexaris-outreach-agent/
 │       └── pages/                # one file per dashboard section (spec §7)
 │           ├── LiveFeed.jsx          # today&#x27;s leads
 │           ├── InstagramManualSend.jsx  # IG messages to send by hand
-│           ├── ApprovalQueue.jsx     # Mahmoud approves messages
+│           ├── ApprovalQueue.jsx     # Mohamad approves messages
 │           ├── PipelineBoard.jsx     # kanban
 │           ├── LeadDetail.jsx        # full lead record
 │           ├── ClientHistory.jsx     # permanent database
@@ -489,7 +489,7 @@ nexaris-outreach-agent/
 
 - **Agent and dashboard are separate apps** sharing one Supabase DB. The agent writes data; the dashboard reads it (and writes settings/approvals/manual actions back).
 - **Realtime:** use Supabase Realtime so the dashboard updates live as the agent works (live feed, run status, analytics).
-- **The PWA manifest + icons** are what make it installable on Mahmoud&#x27;s iPhone — don&#x27;t skip these in Phase 9.
+- **The PWA manifest + icons** are what make it installable on Mohamad&#x27;s iPhone — don&#x27;t skip these in Phase 9.
 - **Secrets** (Claude API key, proxy credentials, WhatsApp API) live in `agent/.env`, never committed. `.env.example` documents them.
 - Keep each file focused — one responsibility. Hussein wants to be able to open any file and understand it.
 </code></pre>
@@ -554,7 +554,7 @@ You do NOT need the proxies or server until Phase 10 — you can build and test 
 ## Important reminders (Claude Code has these too, but so you know)
 
 - **Instagram never auto-sends** — the agent prepares those messages, a human sends them from the dashboard.
-- **Nothing sends without Mahmoud&#x27;s daily approval.**
+- **Nothing sends without Mohamad&#x27;s daily approval.**
 - **Each account gets its own proxy IP** — never shared.
 - **Warm up slowly** — start at 5–10/day per account, ramp up over 2–4 weeks. Do not start at full volume with the shared-origin accounts.
 
@@ -593,7 +593,7 @@ on laptop and iPhone.
 | **Instagram** | Automated | **Never automated** — prepared for a human to send manually |
 
 Instagram&#x27;s terms ban automated cold outreach, so the agent finds, analyses, scores,
-and writes the message, then stops. Nothing sends on any channel without Mahmoud&#x27;s
+and writes the message, then stops. Nothing sends on any channel without Mohamad&#x27;s
 daily approval — that gate has no bypass.
 
 ---
@@ -840,7 +840,7 @@ place; their dashboard UI is still Phase 9.
 | R1 | Instagram is **find-only** — never auto-sends | `sending/instagram_queue.py` | 7 | TODO |
 | R2 | LinkedIn is fully automated — find **and** send | `sending/linkedin_send.py` | 7 | TODO |
 | R3 | WhatsApp auto-sends **only** when a public number was found | `sending/whatsapp_send.py` | 7 | TODO |
-| R4 | Nothing sends without Mahmoud&#x27;s approval — hard gate, no bypass | approval gate in `sending/` | 6 | TODO |
+| R4 | Nothing sends without Mohamad&#x27;s approval — hard gate, no bypass | approval gate in `sending/` | 6 | TODO |
 | R5 | Messages are AI-generated per lead, human tone | `messaging/generate.py` | 5 | TODO |
 | R6 | Each account uses its own dedicated sticky proxy IP — never shared | `core/session.py` | 2 | TODO |
 | R7 | Founder detection flags for **manual** outreach — never auto-contacts founder | `analysis/founder.py` | 4 | TODO |
@@ -865,7 +865,7 @@ place; their dashboard UI is still Phase 9.
 | T9 | Lead scoring | 1–10 from **fit + pain + budget potential**; Hot 8–10 / Warm 5–7 / Cold 1–4; **written reasoning always present** | `analysis/score.py` | 4 | TODO |
 | T10 | Save to Client History | Happens **before** any message is generated; permanent; saved whether or not outreach ever happens | `db/repositories.py` | 4 | TODO |
 | T11 | Message generation | Sonnet; human tone; greeting uses business/team/**founder** name; references that lead&#x27;s specific weak points; Direct vs Discovery style; style holds for the configured duration then rotates | `messaging/generate.py`, `messaging/style.py` | 5 | TODO |
-| T12 | Queue for approval | All of the day&#x27;s messages queued; Mahmoud edits/approves/holds; nothing sends on **any** channel until approved | `crm/` + `pages/ApprovalQueue.jsx` | 6 | TODO |
+| T12 | Queue for approval | All of the day&#x27;s messages queued; Mohamad edits/approves/holds; nothing sends on **any** channel until approved | `crm/` + `pages/ApprovalQueue.jsx` | 6 | TODO |
 | T13 | Route &amp; send | LinkedIn auto · WhatsApp auto · Instagram to manual queue. Every send logged with **timestamp, account used, platform, message text** | `sending/*` | 7 | TODO |
 | T14 | Hot lead instant alert | Fires **immediately on scoring**, not at end of run. Includes name, platform, score, reasoning, **dashboard deep-link** | `notifications/whatsapp_notify.py` | 8 | TODO |
 | T15 | CRM record + pipeline entry | New → Contacted → Replied → Interested → Meeting Booked → Deal Closed → Lost. Auto-move on reply; manual moves allowed; **every change timestamped** | `crm/pipeline.py` | 8 | TODO |
@@ -910,7 +910,7 @@ place; their dashboard UI is still Phase 9.
 | S12 | Proxy IP/credentials per account × 3 — **editable slot, may be empty at launch** | 2 → 9 | TODO |
 | S13 | Redistribution toggle per account — **never automatic** | 2 → 9 | TODO |
 | S14 | WhatsApp recipient number 1 + number 2 | 1 → 9 | TODO |
-| S15 | Optional per-type alert routing (e.g. approval reminders → Mahmoud only) — spec says &quot;finalise during build&quot; | 8 | OPEN |
+| S15 | Optional per-type alert routing (e.g. approval reminders → Mohamad only) — spec says &quot;finalise during build&quot; | 8 | OPEN |
 
 ---
 
@@ -921,7 +921,7 @@ place; their dashboard UI is still Phase 9.
 | N1 | Hot lead | Score 8–10, **immediately on scoring** | Both | name, platform, score, reasoning, dashboard link | 8 | TODO |
 | N2 | Founder found | Founder detected alongside company message | Both | name, founder name, platform, dashboard link | 8 | TODO |
 | N3 | Account warning | Immediately on account problem | Both | which account, warning type, **specific reason** | 8 | TODO |
-| N4 | Approval reminder | Day&#x27;s messages queued | Mahmoud | count waiting | 8 | TODO |
+| N4 | Approval reminder | Day&#x27;s messages queued | Mohamad | count waiting | 8 | TODO |
 | N5 | Daily summary | Run completion | Both | leads by platform, messages by platform, hot/warm/cold, warnings, **finish time, duration** | 8 | TODO |
 
 ---
@@ -967,7 +967,7 @@ place; their dashboard UI is still Phase 9.
 | Q1 | WhatsApp sending method: Twilio, 360dialog, or the informal method? | Phase 7 | Build behind an interface so the provider is swappable; pick Twilio as the reference implementation |
 | Q2 | WhatsApp **notifications** — same provider as sending, or separate? | Phase 8 | Same provider, separate config |
 | Q3 | Reply detection for LinkedIn — poll the inbox via Playwright? | Phase 8 | Poll on each run |
-| Q4 | S15 alert routing per type | Phase 8 | All 5 to both numbers; approval reminder to Mahmoud only |
+| Q4 | S15 alert routing per type | Phase 8 | All 5 to both numbers; approval reminder to Mohamad only |
 | Q5 | Which market/niche for the first real run? | Phase 10 | Left empty in settings, you fill it in |
 | Q6 | Supabase project — created yet? URL + keys | Phase 1 | Blocks Phase 1 |
 | Q7 | Claude API key | Phase 4 | Blocks Phase 4 |
@@ -1181,7 +1181,7 @@ create table if not exists settings (
     max_contacts_per_lead int default 2,              -- HARD RULE — do not exceed
     -- notifications
     whatsapp_recipient_1 text,                        -- e.g. Hussein
-    whatsapp_recipient_2 text,                        -- e.g. Mahmoud
+    whatsapp_recipient_2 text,                        -- e.g. Mohamad
     -- approval
     approval_required boolean default true,           -- permanent hard gate
     updated_at        timestamptz default now()
@@ -1246,9 +1246,9 @@ create table if not exists messages (
     is_reengagement   boolean default false,
     -- approval
     approval_status   text default &#x27;awaiting&#x27;,       -- awaiting | approved | held | edited
-    approved_by       text,                          -- Mahmoud
+    approved_by       text,                          -- Mohamad
     approved_at       timestamptz,
-    edited_body       text,                          -- if Mahmoud edited it
+    edited_body       text,                          -- if Mohamad edited it
     -- send
     send_status       text default &#x27;pending&#x27;,        -- pending | sent | manual_pending | failed
     sent_at           timestamptz,
@@ -1264,7 +1264,7 @@ create table if not exists pipeline_history (
     lead_id           uuid references leads(id) on delete cascade,
     from_stage        text,
     to_stage          text not null,
-    changed_by        text default &#x27;agent&#x27;,          -- agent | hussein | mahmoud
+    changed_by        text default &#x27;agent&#x27;,          -- agent | hussein | mohamad
     changed_at        timestamptz default now()
 );
 
@@ -1378,7 +1378,7 @@ where not exists (select 1 from settings);
 -- will warn you that every table is unprotected.
 --
 -- THE MODEL (deliberately simple — only 2 users)
--- This system has exactly two people: Hussein and Mahmoud. Both log in through
+-- This system has exactly two people: Hussein and Mohamad. Both log in through
 -- Supabase Auth, so both carry the built-in `authenticated` role. There is no
 -- &quot;public visitor&quot; who should ever see a lead or a message.
 --
@@ -1391,7 +1391,7 @@ where not exists (select 1 from settings);
 -- key, which bypasses RLS entirely. RLS only governs the DASHBOARD, which uses
 -- the anon key + a logged-in session.
 --
--- If later you want finer control (e.g. Mahmoud can approve but not delete
+-- If later you want finer control (e.g. Mohamad can approve but not delete
 -- leads), you replace the blanket policy on a specific table with per-command
 -- policies. For now, both users are trusted owners.
 -- ============================================================
@@ -1523,7 +1523,7 @@ create table if not exists settings (
     max_contacts_per_lead int default 2,              -- HARD RULE — do not exceed
     -- notifications
     whatsapp_recipient_1 text,                        -- e.g. Hussein
-    whatsapp_recipient_2 text,                        -- e.g. Mahmoud
+    whatsapp_recipient_2 text,                        -- e.g. Mohamad
     -- approval
     approval_required boolean default true,           -- permanent hard gate
     updated_at        timestamptz default now()
@@ -1588,9 +1588,9 @@ create table if not exists messages (
     is_reengagement   boolean default false,
     -- approval
     approval_status   text default &#x27;awaiting&#x27;,       -- awaiting | approved | held | edited
-    approved_by       text,                          -- Mahmoud
+    approved_by       text,                          -- Mohamad
     approved_at       timestamptz,
-    edited_body       text,                          -- if Mahmoud edited it
+    edited_body       text,                          -- if Mohamad edited it
     -- send
     send_status       text default &#x27;pending&#x27;,        -- pending | sent | manual_pending | failed
     sent_at           timestamptz,
@@ -1606,7 +1606,7 @@ create table if not exists pipeline_history (
     lead_id           uuid references leads(id) on delete cascade,
     from_stage        text,
     to_stage          text not null,
-    changed_by        text default &#x27;agent&#x27;,          -- agent | hussein | mahmoud
+    changed_by        text default &#x27;agent&#x27;,          -- agent | hussein | mohamad
     changed_at        timestamptz default now()
 );
 
@@ -2165,7 +2165,7 @@ def update_message(message_id: str, fields: Row) -&gt; Row:
 
 def messages_awaiting_approval() -&gt; list[Row]:
     &quot;&quot;&quot;
-    Everything Mahmoud still needs to approve. Feeds the approval queue badge and
+    Everything Mohamad still needs to approve. Feeds the approval queue badge and
     the hard send-gate (nothing sends while this is non-empty for a given lead).
     &quot;&quot;&quot;
     res = (
@@ -2843,7 +2843,7 @@ Built in Phase 8. Not implemented yet.
 
 1. Hot lead (score 8-10) -- fires immediately on scoring, not at end of run.
 2. Founder found. 3. Account warning (with type and reason). 4. Approval
-reminder to Mahmoud. 5. Daily summary with exact finish time and duration.
+reminder to Mohamad. 5. Daily summary with exact finish time and duration.
 &quot;&quot;&quot;
 </code></pre>
 </div>
@@ -3126,7 +3126,7 @@ createRoot(document.getElementById(&#x27;root&#x27;)).render(
 const SECTIONS = [
   [&#x27;Daily Live Feed&#x27;, &quot;Today&#x27;s leads with full weak points and copyable message&quot;],
   [&#x27;Instagram Manual Send&#x27;, &#x27;Approved IG messages a human sends by hand&#x27;],
-  [&quot;Mahmoud&#x27;s Approval&quot;, &#x27;Edit + approve — nothing sends until this is cleared&#x27;],
+  [&quot;Mohamad&#x27;s Approval&quot;, &#x27;Edit + approve — nothing sends until this is cleared&#x27;],
   [&#x27;CRM Pipeline Board&#x27;, &#x27;Kanban across the 7 stages, drag and drop&#x27;],
   [&#x27;Lead Detail&#x27;, &#x27;Complete record, editable follow-up and notes&#x27;],
   [&#x27;Client History&#x27;, &#x27;Permanent searchable database of every lead analysed&#x27;],
@@ -3246,7 +3246,7 @@ body,
 
 body {
   /* Safe-area padding so content clears the notch and home indicator when the
-     PWA is launched full-screen from Mahmoud&#x27;s iPhone home screen. */
+     PWA is launched full-screen from Mohamad&#x27;s iPhone home screen. */
   padding: env(safe-area-inset-top) env(safe-area-inset-right)
     env(safe-area-inset-bottom) env(safe-area-inset-left);
 
@@ -3270,7 +3270,7 @@ body {
  *
  * Uses the ANON key, never the service role key. The anon key is safe to ship in
  * frontend code because Row Level Security (set up in Phase 1) is what actually
- * restricts access — only Hussein and Mahmoud can read or write.
+ * restricts access — only Hussein and Mohamad can read or write.
  *
  * The agent uses the service role key instead. Never mix the two up.
  */

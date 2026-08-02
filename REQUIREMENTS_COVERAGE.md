@@ -34,7 +34,7 @@ real LinkedIn/Instagram accounts. T3–T5 below reflect this split.
 | R1 | Instagram is **find-only** — never auto-sends | `sending/instagram_queue.py` | 7 | TODO |
 | R2 | LinkedIn is fully automated — find **and** send | `sending/linkedin_send.py` | 7 | TODO |
 | R3 | WhatsApp auto-sends **only** when a public number was found | `sending/whatsapp_send.py` | 7 | TODO |
-| R4 | Nothing sends without Mahmoud's approval — hard gate, no bypass | approval gate in `sending/` | 6 | TODO |
+| R4 | Nothing sends without Mohamad's approval — hard gate, no bypass | approval gate in `sending/` | 6 | TODO |
 | R5 | Messages are AI-generated per lead, human tone | `messaging/generate.py` | 5 | TODO |
 | R6 | Each account uses its own dedicated sticky proxy IP — never shared | `core/session.py` | 2 | DONE — isolation verified live; proxy slot wired, empty until Phase 10 |
 | R7 | Founder detection flags for **manual** outreach — never auto-contacts founder | `analysis/founder.py` | 4 | TODO |
@@ -59,7 +59,7 @@ real LinkedIn/Instagram accounts. T3–T5 below reflect this split.
 | T9 | Lead scoring | 1–10 from **fit + pain + budget potential**; Hot 8–10 / Warm 5–7 / Cold 1–4; **written reasoning always present** | `analysis/score.py` | 4 | TODO |
 | T10 | Save to Client History | Happens **before** any message is generated; permanent; saved whether or not outreach ever happens | `db/repositories.py` | 4 | TODO |
 | T11 | Message generation | Sonnet; human tone; greeting uses business/team/**founder** name; references that lead's specific weak points; Direct vs Discovery style; style holds for the configured duration then rotates | `messaging/generate.py`, `messaging/style.py` | 5 | TODO |
-| T12 | Queue for approval | All of the day's messages queued; Mahmoud edits/approves/holds; nothing sends on **any** channel until approved | `crm/` + `pages/ApprovalQueue.jsx` | 6 | TODO |
+| T12 | Queue for approval | All of the day's messages queued; Mohamad edits/approves/holds; nothing sends on **any** channel until approved | `crm/` + `pages/ApprovalQueue.jsx` | 6 | TODO |
 | T13 | Route & send | LinkedIn auto · WhatsApp auto · Instagram to manual queue. Every send logged with **timestamp, account used, platform, message text** | `sending/*` | 7 | TODO |
 | T14 | Hot lead instant alert | Fires **immediately on scoring**, not at end of run. Includes name, platform, score, reasoning, **dashboard deep-link** | `notifications/whatsapp_notify.py` | 8 | TODO |
 | T15 | CRM record + pipeline entry | New → Contacted → Replied → Interested → Meeting Booked → Deal Closed → Lost. Auto-move on reply; manual moves allowed; **every change timestamped** | `crm/pipeline.py` | 8 | TODO |
@@ -104,7 +104,7 @@ real LinkedIn/Instagram accounts. T3–T5 below reflect this split.
 | S12 | Proxy IP/credentials per account × 3 — **editable slot, may be empty at launch** | 2 → 9 | TODO |
 | S13 | Redistribution toggle per account — **never automatic** | 2 → 9 | TODO |
 | S14 | WhatsApp recipient number 1 + number 2 | 1 → 9 | TODO |
-| S15 | Optional per-type alert routing (e.g. approval reminders → Mahmoud only) — spec says "finalise during build" | 8 | OPEN |
+| S15 | Optional per-type alert routing (e.g. approval reminders → Mohamad only) — spec says "finalise during build" | 8 | OPEN |
 
 ---
 
@@ -115,7 +115,7 @@ real LinkedIn/Instagram accounts. T3–T5 below reflect this split.
 | N1 | Hot lead | Score 8–10, **immediately on scoring** | Both | name, platform, score, reasoning, dashboard link | 8 | TODO |
 | N2 | Founder found | Founder detected alongside company message | Both | name, founder name, platform, dashboard link | 8 | TODO |
 | N3 | Account warning | Immediately on account problem | Both | which account, warning type, **specific reason** | 8 | TODO |
-| N4 | Approval reminder | Day's messages queued | Mahmoud | count waiting | 8 | TODO |
+| N4 | Approval reminder | Day's messages queued | Mohamad | count waiting | 8 | TODO |
 | N5 | Daily summary | Run completion | Both | leads by platform, messages by platform, hot/warm/cold, warnings, **finish time, duration** | 8 | TODO |
 
 ---
@@ -161,7 +161,7 @@ real LinkedIn/Instagram accounts. T3–T5 below reflect this split.
 | Q1 | WhatsApp sending method: Twilio, 360dialog, or the informal method? | Phase 7 | Build behind an interface so the provider is swappable; pick Twilio as the reference implementation |
 | Q2 | WhatsApp **notifications** — same provider as sending, or separate? | Phase 8 | Same provider, separate config |
 | Q3 | Reply detection for LinkedIn — poll the inbox via Playwright? | Phase 8 | Poll on each run |
-| Q4 | S15 alert routing per type | Phase 8 | All 5 to both numbers; approval reminder to Mahmoud only |
+| Q4 | S15 alert routing per type | Phase 8 | All 5 to both numbers; approval reminder to Mohamad only |
 | Q5 | Which market/niche for the first real run? | Phase 10 | Left empty in settings, you fill it in |
 | Q6 | Supabase project — created yet? URL + keys | Phase 1 | Blocks Phase 1 |
 | Q7 | Claude API key | Phase 4 | Blocks Phase 4 |

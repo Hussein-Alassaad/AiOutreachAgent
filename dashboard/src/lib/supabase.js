@@ -5,7 +5,7 @@ import { createClient } from '@supabase/supabase-js'
  *
  * Uses the ANON key, never the service role key. The anon key is safe to ship in
  * frontend code because Row Level Security (set up in Phase 1) is what actually
- * restricts access — only Hussein and Mahmoud can read or write.
+ * restricts access — only Hussein and Mohamad can read or write.
  *
  * The agent uses the service role key instead. Never mix the two up.
  */

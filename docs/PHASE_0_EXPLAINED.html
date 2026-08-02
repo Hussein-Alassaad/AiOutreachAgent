@@ -516,7 +516,7 @@ must obey. They contain no code yet.</p>
       failure. See section 9, problem 3.</li>
     <li><strong><code>server.host: true</code></strong> — exposes the dev server on your
       local network so you can open the dashboard on your <em>phone</em> during
-      development, not just the laptop. Given that Mahmoud will use this on an iPhone,
+      development, not just the laptop. Given that Mohamad will use this on an iPhone,
       testing the mobile layout early matters.</li>
   </ul>
 </div>
@@ -524,7 +524,7 @@ must obey. They contain no code yet.</p>
 <div class="file-card">
   <h4>dashboard/index.html</h4>
   <p><strong>What it does:</strong> the page shell React mounts into. Most of it is the
-  PWA setup that makes "Add to Home Screen" work properly on Mahmoud's iPhone:</p>
+  PWA setup that makes "Add to Home Screen" work properly on Mohamad's iPhone:</p>
   <ul>
     <li><code>viewport-fit=cover</code> — lets the app draw into the notch area.</li>
     <li><code>apple-mobile-web-app-capable</code> — this is the tag that makes iOS open it
@@ -609,7 +609,7 @@ must obey. They contain no code yet.</p>
   <tr>
     <td><strong>anon</strong></td><td>Dashboard</td>
     <td>Safe to ship in browser code. It is restricted by Row Level Security — the rules
-    we write in Phase 1 that say only you and Mahmoud may read or write.</td>
+    we write in Phase 1 that say only you and Mohamad may read or write.</td>
   </tr>
   <tr>
     <td><strong>service role</strong></td><td>Agent</td>
@@ -632,7 +632,7 @@ the server rebuild the identical environment. That is why commands use
 <code>agent/venv/Scripts/python.exe</code> rather than plain <code>python</code>.</p>
 
 <h3>What "PWA" actually buys you</h3>
-<p>A Progressive Web App is a website that can be installed. On Mahmoud's iPhone: open in
+<p>A Progressive Web App is a website that can be installed. On Mohamad's iPhone: open in
 Safari, Share, Add to Home Screen — it then gets an icon and opens full-screen with no
 address bar. No App Store, no Apple developer account, no separate iOS codebase. One
 React app serves your laptop and his phone.</p>
@@ -831,7 +831,7 @@ git push -u origin main</code></pre>
   <tr><td><strong>5</strong></td><td>Message generation</td><td>Nothing new — but you review the messages</td></tr>
   <tr><td><strong>6</strong></td><td>Approval workflow</td><td>Nothing</td></tr>
   <tr><td><strong>7</strong></td><td>Sending and routing</td><td>WhatsApp Business API account (Twilio or 360dialog), or a decision on the informal method</td></tr>
-  <tr><td><strong>8</strong></td><td>CRM, follow-up, notifications</td><td>Your and Mahmoud's WhatsApp numbers</td></tr>
+  <tr><td><strong>8</strong></td><td>CRM, follow-up, notifications</td><td>Your and Mohamad's WhatsApp numbers</td></tr>
   <tr><td><strong>9</strong></td><td>The full dashboard</td><td>Real Nexaris icon/branding if you want it</td></tr>
   <tr><td><strong>10</strong></td><td>Deploy and warm-up</td><td>3 sticky residential proxy IPs, a server (Oracle free tier or ~$5 Hetzner VPS), a Vercel account</td></tr>
 </table>
@@ -849,7 +849,7 @@ git push -u origin main</code></pre>
   <tr><td><strong>Q1</strong></td><td>WhatsApp sending: Twilio, 360dialog, or the informal method?</td><td>Phase 7</td><td>Build behind a swappable interface; Twilio as the reference</td></tr>
   <tr><td><strong>Q2</strong></td><td>Same provider for notifications as for sending?</td><td>Phase 8</td><td>Same provider, separate configuration</td></tr>
   <tr><td><strong>Q3</strong></td><td>How should LinkedIn replies be detected?</td><td>Phase 8</td><td>Check the inbox on each daily run</td></tr>
-  <tr><td><strong>Q4</strong></td><td>Should any alert go to only one number?</td><td>Phase 8</td><td>All five to both, except the approval reminder to Mahmoud only</td></tr>
+  <tr><td><strong>Q4</strong></td><td>Should any alert go to only one number?</td><td>Phase 8</td><td>All five to both, except the approval reminder to Mohamad only</td></tr>
   <tr><td><strong>Q5</strong></td><td>Which niche and country for the first real run?</td><td>Phase 10</td><td>Left blank for you to set from the dashboard</td></tr>
   <tr><td><strong>Q6</strong></td><td>Is the Supabase project created?</td><td>Phase 1</td><td>Blocking — cannot proceed without it</td></tr>
   <tr><td><strong>Q7</strong></td><td>Do you have a Claude API key?</td><td>Phase 4</td><td>Blocking at Phase 4</td></tr>

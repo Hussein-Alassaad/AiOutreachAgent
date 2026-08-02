@@ -70,7 +70,7 @@
 <h2 id="what">1. What Phase 1 was for</h2>
 <p>Phase 1's goal, from the build plan: <em>"the full database exists in Supabase."</em> Concretely
 that means four things had to be true by the end: all 9 tables exist, they're locked down so only
-you and Mahmoud can touch them, the agent's Python code can read and write every table through one
+you and Mohamad can touch them, the agent's Python code can read and write every table through one
 clean layer, and the seed data (3 accounts + default settings) is present.</p>
 <div class="ok-box">
   <strong>All four are now true and verified live</strong> — not just "should work." The automated
@@ -85,9 +85,9 @@ clean layer, and the seed data (3 accounts + default settings) is present.</p>
   <p><strong>What it does:</strong> creating a table does not protect it. Until Row Level Security
   (RLS) is switched on, Supabase treats it as open at the policy layer. This file turns RLS
   <strong>on</strong> for all 9 tables and adds one policy per table: the <code>authenticated</code>
-  role (i.e. you or Mahmoud, logged in) gets full read/write; everyone else gets nothing.</p>
+  role (i.e. you or Mohamad, logged in) gets full read/write; everyone else gets nothing.</p>
   <p><strong>Why this model:</strong> with exactly two trusted users, a finer-grained system (e.g.
-  "Mahmoud can approve but not delete") would be complexity with no present benefit. Both of you are
+  "Mohamad can approve but not delete") would be complexity with no present benefit. Both of you are
   treated as trusted owners. This can be tightened later per table without touching the others.</p>
   <p><strong>The agent is unaffected</strong> — it connects with the separate <em>service role</em>
   key, which bypasses RLS entirely by design. RLS only governs the dashboard's connection.</p>
@@ -104,7 +104,7 @@ clean layer, and the seed data (3 accounts + default settings) is present.</p>
     <tr><td>accounts</td><td>List/get/update accounts, record a warning (pauses the account, never auto-redistributes — core rule R9)</td></tr>
     <tr><td>settings</td><td>Get/update the single global settings row</td></tr>
     <tr><td>leads</td><td>Insert/update/get, filter by status, and pull every already-contacted profile URL for same-day deduplication (Task 1)</td></tr>
-    <tr><td>messages</td><td>Insert/update, list what's awaiting Mahmoud's approval, list all messages for one lead</td></tr>
+    <tr><td>messages</td><td>Insert/update, list what's awaiting Mohamad's approval, list all messages for one lead</td></tr>
     <tr><td>pipeline_history</td><td>Append a timestamped stage change, read the full history for a lead</td></tr>
     <tr><td>follow_ups</td><td>Insert/update, find follow-ups whose scheduled time has arrived</td></tr>
     <tr><td>client_history</td><td>Save a permanent snapshot, flag it contacted later</td></tr>
@@ -193,7 +193,7 @@ new tool to this database and hit the same DNS error.</p>
 <h3>Why RLS matters given the repo is public</h3>
 <p>Your code (including the anon key) is on public GitHub. Without RLS, that key alone would let
 anyone read or write every lead, message, and account in your database. With RLS on, the anon key is
-useless without also being logged in as you or Mahmoud through Supabase Auth. The key being public is
+useless without also being logged in as you or Mohamad through Supabase Auth. The key being public is
 fine <em>because</em> RLS is on — this is the intended design, not a loophole.</p>
 
 <div class="page-break"></div>

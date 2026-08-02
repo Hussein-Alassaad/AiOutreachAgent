@@ -50,7 +50,7 @@ You do NOT need the proxies or server until Phase 10 — you can build and test 
 ## Important reminders (Claude Code has these too, but so you know)
 
 - **Instagram never auto-sends** — the agent prepares those messages, a human sends them from the dashboard.
-- **Nothing sends without Mahmoud's daily approval.**
+- **Nothing sends without Mohamad's daily approval.**
 - **Each account gets its own proxy IP** — never shared.
 - **Warm up slowly** — start at 5–10/day per account, ramp up over 2–4 weeks. Do not start at full volume with the shared-origin accounts.
 

@@ -13,7 +13,7 @@ import { isConfigured } from '../lib/supabase'
 const SECTIONS = [
   ['Daily Live Feed', "Today's leads with full weak points and copyable message"],
   ['Instagram Manual Send', 'Approved IG messages a human sends by hand'],
-  ["Mahmoud's Approval", 'Edit + approve — nothing sends until this is cleared'],
+  ["Mohamad's Approval", 'Edit + approve — nothing sends until this is cleared'],
   ['CRM Pipeline Board', 'Kanban across the 7 stages, drag and drop'],
   ['Lead Detail', 'Complete record, editable follow-up and notes'],
   ['Client History', 'Permanent searchable database of every lead analysed'],

@@ -78,7 +78,7 @@ nexaris-outreach-agent/
 │       └── pages/                # one file per dashboard section (spec §7)
 │           ├── LiveFeed.jsx          # today's leads
 │           ├── InstagramManualSend.jsx  # IG messages to send by hand
-│           ├── ApprovalQueue.jsx     # Mahmoud approves messages
+│           ├── ApprovalQueue.jsx     # Mohamad approves messages
 │           ├── PipelineBoard.jsx     # kanban
 │           ├── LeadDetail.jsx        # full lead record
 │           ├── ClientHistory.jsx     # permanent database
@@ -95,6 +95,6 @@ nexaris-outreach-agent/
 
 - **Agent and dashboard are separate apps** sharing one Supabase DB. The agent writes data; the dashboard reads it (and writes settings/approvals/manual actions back).
 - **Realtime:** use Supabase Realtime so the dashboard updates live as the agent works (live feed, run status, analytics).
-- **The PWA manifest + icons** are what make it installable on Mahmoud's iPhone — don't skip these in Phase 9.
+- **The PWA manifest + icons** are what make it installable on Mohamad's iPhone — don't skip these in Phase 9.
 - **Secrets** (Claude API key, proxy credentials, WhatsApp API) live in `agent/.env`, never committed. `.env.example` documents them.
 - Keep each file focused — one responsibility. Hussein wants to be able to open any file and understand it.

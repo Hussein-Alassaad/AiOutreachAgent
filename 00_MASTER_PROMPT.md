@@ -27,7 +27,7 @@ You are the lead engineer building a production AI outreach agent for **Nexaris*
 
 ## What you are building — one paragraph
 
-A fully automated AI outreach agent that runs daily on a schedule, uses 3 accounts (each on its own proxy) to discover business leads on **LinkedIn** and **Instagram**, deeply analyzes each business, detects founders, finds public WhatsApp numbers, scores each lead 1–10 with reasoning, and generates a personalized human-style outreach message using the Claude API. Messages wait for **Mahmoud's daily approval**, then send automatically on LinkedIn and WhatsApp — while Instagram messages are surfaced in the dashboard for a human to send manually (Instagram bans automated cold outreach). Everything lands in a **CRM with a pipeline**, and a **responsive dashboard** (works on laptop and iPhone) shows live leads, analytics, account health, and every editable setting.
+A fully automated AI outreach agent that runs daily on a schedule, uses 3 accounts (each on its own proxy) to discover business leads on **LinkedIn** and **Instagram**, deeply analyzes each business, detects founders, finds public WhatsApp numbers, scores each lead 1–10 with reasoning, and generates a personalized human-style outreach message using the Claude API. Messages wait for **Mohamad's daily approval**, then send automatically on LinkedIn and WhatsApp — while Instagram messages are surfaced in the dashboard for a human to send manually (Instagram bans automated cold outreach). Everything lands in a **CRM with a pipeline**, and a **responsive dashboard** (works on laptop and iPhone) shows live leads, analytics, account health, and every editable setting.
 
 ---
 
@@ -51,7 +51,7 @@ A fully automated AI outreach agent that runs daily on a schedule, uses 3 accoun
 1. **Instagram is find-only.** The agent discovers, analyzes, scores, and drafts messages for Instagram leads but **never sends** on Instagram. Those messages go to a dashboard section for manual human sending. (Instagram's API bans automated cold outreach.)
 2. **LinkedIn is fully automated** — find and send.
 3. **WhatsApp sends automatically** — but only when a public WhatsApp number is found on a lead's Instagram bio, LinkedIn profile, or website.
-4. **Nothing sends without Mahmoud's daily approval.** This is a hard gate with no bypass.
+4. **Nothing sends without Mohamad's daily approval.** This is a hard gate with no bypass.
 5. **Messages are AI-generated** per lead, personalized from the business name + details + weak points, in a human tone.
 6. **Each of the 3 accounts uses its own dedicated sticky proxy IP** — sessions never mix IPs.
 7. **Founder detection:** scan bios for "founder of X", "co-founder", "CEO & founder", etc. If found, flag on the dashboard for manual founder outreach.
