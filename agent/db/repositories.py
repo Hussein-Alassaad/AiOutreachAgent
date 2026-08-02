@@ -165,7 +165,7 @@ def update_message(message_id: str, fields: Row) -> Row:
 
 def messages_awaiting_approval() -> list[Row]:
     """
-    Everything Mahmoud still needs to approve. Feeds the approval queue badge and
+    Everything Mohamad still needs to approve. Feeds the approval queue badge and
     the hard send-gate (nothing sends while this is non-empty for a given lead).
     """
     res = (
@@ -173,6 +173,24 @@ def messages_awaiting_approval() -> list[Row]:
         .table("messages")
         .select("*")
         .eq("approval_status", "awaiting")
+        .execute()
+    )
+    return res.data
+
+
+def messages_approved_pending() -> list[Row]:
+    """
+    Approved messages not yet sent -- what Phase 7's sending dispatcher
+    reads each cycle. Deliberately separate from messages_awaiting_approval():
+    that one is Mohamad's queue, this one is the sender's queue, and a
+    message only ever appears in one of them at a time.
+    """
+    res = (
+        get_client()
+        .table("messages")
+        .select("*")
+        .eq("approval_status", "approved")
+        .eq("send_status", "pending")
         .execute()
     )
     return res.data
@@ -235,6 +253,17 @@ def insert_follow_up(follow_up: Row) -> Row:
 def update_follow_up(follow_up_id: str, fields: Row) -> Row:
     res = get_client().table("follow_ups").update(fields).eq("id", follow_up_id).execute()
     return res.data[0]
+
+
+def follow_ups_for_lead(lead_id: str) -> list[Row]:
+    """
+    Every follow-up row for one lead, any status -- used to find and cancel
+    still-scheduled ones the instant a reply comes in (due_follow_ups() only
+    surfaces ones whose time has already arrived, which isn't what a
+    cancel-on-reply check needs).
+    """
+    res = get_client().table("follow_ups").select("*").eq("lead_id", lead_id).execute()
+    return res.data
 
 
 def due_follow_ups(now_iso: str) -> list[Row]:

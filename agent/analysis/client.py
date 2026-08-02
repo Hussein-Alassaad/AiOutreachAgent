@@ -1,9 +1,11 @@
 """
-Shared Claude API client for the analysis pipeline.
+Shared Claude API client for the analysis and messaging pipelines.
 
 Mirrors db/client.py's pattern from Phase 1: one lazily-created client, reused
-by every analysis module, so credentials are only ever read from config in one
-place.
+by every module that calls Claude, so credentials are only ever read from
+config in one place. Lives in analysis/ because it was built first for Phase
+4, but nothing about it is analysis-specific -- Phase 5's messaging/generate.py
+uses it too.
 """
 
 from __future__ import annotations
@@ -66,3 +68,18 @@ def call_json(system_blocks: list[dict], user_content: str, model: str, max_toke
     if match:
         text = match.group(1)
     return json.loads(text)
+
+
+def call_text(system_blocks: list[dict], user_content: str, model: str, max_tokens: int = 1024) -> str:
+    """
+    Same shape as call_json, but for calls where the response IS the
+    deliverable rather than structured fields to parse -- used by message
+    generation, where the reply text is the outreach message itself.
+    """
+    response = get_client().messages.create(
+        model=model,
+        max_tokens=max_tokens,
+        system=system_blocks,
+        messages=[{"role": "user", "content": user_content}],
+    )
+    return response.content[0].text.strip()
