@@ -37,6 +37,11 @@ from agent.core.session import SessionManager
 from agent.db import repositories as repo
 from agent.discovery import instagram, linkedin
 from agent.discovery.qualify import qualify_profile
+from agent.messaging import approval
+from agent.messaging import generate as message_generate
+from agent.messaging import style as message_style
+from agent.notifications import whatsapp_notify
+from agent.sending import instagram_queue, whatsapp_send
 
 # Phase 2 has no real discovery yet -- this is a harmless, neutral page used
 # purely to prove a session can open, navigate, and be health-checked. Phase 3
@@ -92,6 +97,8 @@ def run_cycle(target_url: str = DEFAULT_TEST_URL, force: bool = False) -> list[d
                 )
             else:
                 health.record_warning(account["id"], warning_type, reason)
+                account["warning_type"], account["warning_reason"] = warning_type, reason
+                whatsapp_notify.notify_account_warning(account)
                 repo.finish_run(
                     run["id"], leads_found=0, messages_sent=0,
                     status="error", finished_at_iso=finished_at, notes=reason,
@@ -154,6 +161,7 @@ def run_discovery_cycle(force: bool = False) -> list[dict]:
     settings = repo.get_settings() or {}
     niche = settings.get("target_niche") or ""
     location = settings.get("target_location") or ""
+    industry = settings.get("target_industry") or ""
 
     accounts = pool.get_due_accounts(force=force)
     summary = []
@@ -167,7 +175,7 @@ def run_discovery_cycle(force: bool = False) -> list[dict]:
                       "errors": [], "skipped_leads": []}
 
             try:
-                _discover_linkedin(account, page, niche, location, counts)
+                _discover_linkedin(account, page, niche, location, industry, counts)
             except Exception as exc:  # noqa: BLE001 -- a whole-platform failure, not one bad lead
                 counts["errors"].append(f"linkedin: {exc}")
 
@@ -207,7 +215,7 @@ def _is_weak(found: int, limit: int) -> bool:
     return found < max(3, int(limit * _WEAK_RESULT_FRACTION))
 
 
-def _discover_linkedin(account: dict, page, niche: str, location: str, counts: dict) -> None:
+def _discover_linkedin(account: dict, page, niche: str, location: str, industry: str, counts: dict) -> None:
     limit = warmup.effective_limit(account, "linkedin")
     search_niche, search_location = niche, location
     results: list[dict] = []
@@ -216,7 +224,7 @@ def _discover_linkedin(account: dict, page, niche: str, location: str, counts: d
 
     for _ in range(_MAX_SEARCH_ATTEMPTS):
         counts["linkedin_search_terms"].append({"niche": search_niche, "location": search_location})
-        page.goto(linkedin.build_search_url(search_niche, search_location), timeout=15_000)
+        page.goto(linkedin.build_search_url(search_niche, search_location, industry), timeout=15_000)
         for result in linkedin.extract_search_results(page):
             url = result.get("profile_url")
             if url and url not in seen_urls:
@@ -310,9 +318,9 @@ def run_analysis_cycle(limit: int | None = None) -> list[dict]:
     deep analysis, founder detection, WhatsApp number detection, and scoring.
 
     Task 10 from the spec: the full enriched record is saved to
-    client_history BEFORE any message is generated (message generation is
-    Phase 5, not yet built) -- client_history exists permanently, whether or
-    not this lead is ever contacted.
+    client_history BEFORE any message is generated (see
+    run_message_generation_cycle() below, Phase 5) -- client_history exists
+    permanently, whether or not this lead is ever contacted.
 
     `limit` caps how many leads are processed in one call -- useful for a
     careful first test rather than analysing an entire backlog at once.
@@ -366,9 +374,140 @@ def run_analysis_cycle(limit: int | None = None) -> list[dict]:
             "snapshot": {**lead, **update_fields},
         })
 
+        # Fires immediately per-lead, not batched at the end of the cycle --
+        # the spec is explicit that a hot lead alert can't wait for the run
+        # to finish (see whatsapp_notify.py's module docstring).
+        enriched_lead = {**lead, **update_fields}
+        if score_result.get("score", 0) >= 8:
+            whatsapp_notify.notify_hot_lead(enriched_lead)
+        if founder_result.get("founder_found"):
+            whatsapp_notify.notify_founder_found(enriched_lead)
+
         results.append({"lead": lead.get("business_name"), "ok": True, **update_fields})
 
     return results
+
+
+def run_message_generation_cycle(limit: int | None = None) -> list[dict]:
+    """
+    Generate outreach messages for every lead currently sitting at status
+    "analyzed" (Phase 5): one message on the lead's discovery platform, plus
+    an additional WhatsApp message if Phase 4 found a public WhatsApp number
+    -- WhatsApp is always an ADDITIONAL channel, never a replacement for the
+    primary one (see whatsapp_detect.py's module docstring).
+
+    The active style (direct/discovery) is read once per cycle, not once per
+    lead -- style.get_active_style() only rotates on elapsed duration, so
+    every lead in the same run gets the same style, which is also what makes
+    the per-(channel, style) system prompt actually reuse the cache across
+    the whole batch rather than just within one lead's calls.
+
+    `limit` caps how many leads are processed in one call, same reasoning as
+    run_analysis_cycle's `limit`.
+    """
+    leads = repo.leads_by_status("analyzed")
+    if limit is not None:
+        leads = leads[:limit]
+
+    active_style = message_style.get_active_style()
+    results = []
+
+    for lead in leads:
+        channels = [lead.get("platform")]
+        if lead.get("whatsapp_found"):
+            channels.append("whatsapp")
+
+        try:
+            primary_body = None
+            for channel in channels:
+                body = message_generate.generate_message(lead, channel, active_style)
+                if channel == lead.get("platform"):
+                    primary_body = body
+                repo.insert_message({
+                    "lead_id": lead["id"],
+                    "channel": channel,
+                    "body": body,
+                })
+
+            repo.update_lead(lead["id"], {
+                "generated_message": primary_body,
+                "message_style_used": active_style,
+                "status": "awaiting_approval",
+            })
+            results.append({
+                "lead": lead.get("business_name"), "ok": True,
+                "channels": channels, "style": active_style,
+            })
+        except Exception as exc:  # noqa: BLE001 -- one bad lead shouldn't stop the batch
+            results.append({"lead": lead.get("business_name"), "ok": False, "error": str(exc)})
+
+    return results
+
+
+def run_sending_cycle(limit: int | None = None) -> list[dict]:
+    """
+    Route every approved, not-yet-sent message to its channel (Phase 7).
+
+    Instagram never auto-sends -- Instagram's ToS bans automated cold
+    outreach, so it's queued for a human to send by hand via
+    instagram_queue.queue_for_manual_send(), exactly as the spec requires.
+
+    WhatsApp auto-sends through whatsapp_send.send_message() (Twilio's REST
+    API) -- if agent/.env's WHATSAPP_* fields are still empty, that call
+    raises WhatsAppNotConfigured, which the try/except below turns into a
+    normal "ok": False result rather than crashing the cycle.
+
+    LinkedIn auto-send is NOT yet implemented: it needs its real send-button
+    selectors verified against a live account first (same reason discovery's
+    selectors needed live verification), which is deliberately out of scope
+    until that verification happens. Its messages are left exactly as they
+    are (still "pending") rather than guessed at or silently dropped, so
+    nothing is lost once that channel is actually built.
+
+    `limit` caps how many messages are processed in one call, same reasoning
+    as the analysis/message-generation cycles' `limit`.
+    """
+    messages = repo.messages_approved_pending()
+    if limit is not None:
+        messages = messages[:limit]
+
+    results = []
+    for message in messages:
+        channel = message.get("channel")
+        try:
+            if channel == "instagram":
+                instagram_queue.queue_for_manual_send(message)
+                results.append({
+                    "message_id": message["id"], "channel": channel,
+                    "ok": True, "action": "queued_for_manual_send",
+                })
+            elif channel == "whatsapp":
+                whatsapp_send.send_message(message)
+                results.append({
+                    "message_id": message["id"], "channel": channel,
+                    "ok": True, "action": "sent",
+                })
+            else:
+                results.append({
+                    "message_id": message["id"], "channel": channel, "ok": False,
+                    "reason": f"{channel} auto-send not yet implemented",
+                })
+        except Exception as exc:  # noqa: BLE001 -- one bad message shouldn't stop the rest
+            results.append({"message_id": message["id"], "channel": channel, "ok": False, "error": str(exc)})
+
+    return results
+
+
+def run_approval_reminder_check() -> dict | None:
+    """
+    Phase 8's approval reminder trigger: if any message has sat "awaiting"
+    longer than approval.REMINDER_AFTER_HOURS, notify Mohamad once with the
+    count. Returns the logged notification, or None if nothing is overdue.
+    """
+    pending = approval.messages_needing_reminder()
+    if not pending:
+        return None
+    return whatsapp_notify.notify_approval_reminder(len(pending))
 
 
 def build_daily_schedule(accounts: list[dict]) -> BackgroundScheduler:
