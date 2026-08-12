@@ -6,10 +6,9 @@ import { supabase, isConfigured } from './supabase'
  * grant the `authenticated` role full access and everyone else nothing, so
  * every page needs a real logged-in session before any query returns data.
  *
- * NOTE: Supabase Auth accounts for Hussein and Mohamad don't exist yet --
- * login is postponed (see project todo list). Every page still renders
- * correctly against an empty/unauthenticated session; it just won't show
- * real rows until accounts are created and someone signs in.
+ * Real Supabase Auth accounts for Hussein and Mohamad were created 2026-08-01.
+ * Every page still renders correctly against an empty/unauthenticated
+ * session for anyone who hasn't signed in yet.
  */
 export function useSession() {
   const [session, setSession] = useState(null)

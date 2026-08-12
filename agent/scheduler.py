@@ -41,7 +41,13 @@ from agent.messaging import approval
 from agent.messaging import generate as message_generate
 from agent.messaging import style as message_style
 from agent.notifications import whatsapp_notify
-from agent.sending import instagram_queue, whatsapp_send
+from agent.sending import (
+    instagram_queue,
+    linkedin_reply_check,
+    linkedin_send,
+    whatsapp_reply_check,
+    whatsapp_send,
+)
 
 # Phase 2 has no real discovery yet -- this is a harmless, neutral page used
 # purely to prove a session can open, navigate, and be health-checked. Phase 3
@@ -150,13 +156,14 @@ def run_discovery_cycle(force: bool = False) -> list[dict]:
     Discover, qualify, and save new leads on both platforms for whichever
     accounts are due (Phase 3).
 
-    NOT YET LIVE-TESTED: the discovery/linkedin.py and discovery/instagram.py
-    scraping selectors are unverified (see the honesty notes in those files) --
-    this orchestration is real and ready, but a genuine live run requires a
-    logged-in session on each account, which is what the manual-login step
-    (agent/core/session.py's persistent storage) is for. Runs against
-    LinkedIn/Instagram before login will mostly find login walls, not leads --
-    that is expected, not a bug in this function.
+    VERIFIED 2026-07-31/08-02: discovery/linkedin.py and discovery/instagram.py's
+    scraping selectors were checked against real, live pages using a real
+    captured login session (see each module's own docstring for exactly what
+    was confirmed and which bugs that testing caught). This orchestration
+    itself -- looping accounts, widening weak searches, per-lead error
+    isolation -- has not had a full end-to-end run recorded yet; that's a
+    separate, still-open item (see PROGRESS.md), not a selector-accuracy
+    concern.
     """
     settings = repo.get_settings() or {}
     niche = settings.get("target_niche") or ""
@@ -224,7 +231,10 @@ def _discover_linkedin(account: dict, page, niche: str, location: str, industry:
 
     for _ in range(_MAX_SEARCH_ATTEMPTS):
         counts["linkedin_search_terms"].append({"niche": search_niche, "location": search_location})
-        page.goto(linkedin.build_search_url(search_niche, search_location, industry), timeout=15_000)
+        page.goto(
+            linkedin.build_search_url(search_niche, search_location, industry),
+            timeout=30_000, wait_until="domcontentloaded",
+        )
         for result in linkedin.extract_search_results(page):
             url = result.get("profile_url")
             if url and url not in seen_urls:
@@ -247,11 +257,15 @@ def _discover_linkedin(account: dict, page, niche: str, location: str, industry:
         if not profile_url:
             continue
         try:
-            page.goto(profile_url, timeout=15_000)
+            # extract_company_profile() reads the /about subpage specifically
+            # (not the bare company page) -- see that function's docstring
+            # for why, re-verified 2026-08-03 after the bare page stopped
+            # carrying Website/Industry/size info.
+            page.goto(profile_url.rstrip("/") + "/about/", timeout=30_000, wait_until="domcontentloaded")
             profile = linkedin.extract_company_profile(page)
             profile["display_name"] = result.get("display_name")
 
-            page.goto(profile_url.rstrip("/") + "/posts/", timeout=15_000)
+            page.goto(profile_url.rstrip("/") + "/posts/", timeout=30_000, wait_until="domcontentloaded")
             posts_info = linkedin.extract_recent_posts(page)
             profile["post_count"] = posts_info["visible_post_count"]
             profile["recent_activity"] = posts_info["recent_activity"]
@@ -275,7 +289,21 @@ def _discover_instagram(account: dict, page, niche: str, counts: dict) -> None:
 
     for _ in range(_MAX_SEARCH_ATTEMPTS):
         counts["instagram_search_terms"].append(search_niche)
-        page.goto(instagram.build_hashtag_url(search_niche), timeout=15_000)
+        # RE-VERIFIED live 2026-08-03: Instagram now redirects
+        # /explore/tags/<tag>/ to /explore/search/keyword/?q=%23<tag> (a
+        # generic search page, confirmed universal across multiple tags, not
+        # a per-tag quirk) -- build_hashtag_url's URL itself still gets
+        # there, but that page's results render client-side well after
+        # domcontentloaded. The original code had no wait at all here, so it
+        # was reading the page before any results existed, which is why every
+        # discovery run before this fix found 0 Instagram leads regardless of
+        # niche. This delay is genuinely inconsistent across real runs --
+        # live testing saw 0 results at 5s, 21 results at 7s and 9s on
+        # separate attempts, then 0 again at 7s in a later production run --
+        # 10s was chosen for more margin, but this remains network-dependent
+        # and worth revisiting if 0-result runs keep happening.
+        page.goto(instagram.build_hashtag_url(search_niche), timeout=30_000, wait_until="domcontentloaded")
+        page.wait_for_timeout(10_000)
         for post in instagram.extract_hashtag_results(page):
             url = post.get("post_url")
             if url and url not in seen_urls:
@@ -299,9 +327,19 @@ def _discover_instagram(account: dict, page, niche: str, counts: dict) -> None:
             if not profile_url:
                 continue
             engagement = instagram.extract_post_engagement(page)  # page is still on the post/reel here
-            page.goto(profile_url, timeout=15_000)
+            page.goto(profile_url, timeout=30_000, wait_until="domcontentloaded")
             profile = instagram.extract_profile(page)
             profile["engagement_sample"] = engagement
+            # RE-VERIFIED 2026-08-03: extract_profile() has no display_name
+            # field at all -- Instagram's real display name ("Toi Kruvasan")
+            # only exists as plain DOM text with no stable selector or
+            # semantic meta tag backing it (og:title only has the @username,
+            # same as the URL). Caught via a real supervised discovery run
+            # where every saved Instagram lead's business_name came back
+            # null. Using the @username (already reliably in profile_url) as
+            # business_name instead of leaving it null -- less pretty than a
+            # real display name, but always present and never guessed at.
+            profile["display_name"] = profile_url.rstrip("/").rsplit("/", 1)[-1]
             if _save_if_qualified(account, "instagram", profile_url, profile, niche):
                 counts["instagram_saved"] += 1
         except Exception as exc:  # noqa: BLE001 -- one bad lead shouldn't stop the rest of the batch
@@ -457,12 +495,13 @@ def run_sending_cycle(limit: int | None = None) -> list[dict]:
     raises WhatsAppNotConfigured, which the try/except below turns into a
     normal "ok": False result rather than crashing the cycle.
 
-    LinkedIn auto-send is NOT yet implemented: it needs its real send-button
-    selectors verified against a live account first (same reason discovery's
-    selectors needed live verification), which is deliberately out of scope
-    until that verification happens. Its messages are left exactly as they
-    are (still "pending") rather than guessed at or silently dropped, so
-    nothing is lost once that channel is actually built.
+    LinkedIn auto-sends through linkedin_send.send_message() -- verified
+    live 2026-08-03 against real company pages (see that module's
+    docstring). Not every lead's page has LinkedIn's Page-messaging feature
+    enabled, though; that raises NoMessageButtonAvailable, which the
+    try/except below turns into the same normal "ok": False result as a
+    missing WhatsApp number does for that channel, rather than crashing the
+    cycle.
 
     `limit` caps how many messages are processed in one call, same reasoning
     as the analysis/message-generation cycles' `limit`.
@@ -487,6 +526,12 @@ def run_sending_cycle(limit: int | None = None) -> list[dict]:
                     "message_id": message["id"], "channel": channel,
                     "ok": True, "action": "sent",
                 })
+            elif channel == "linkedin":
+                linkedin_send.send_message(message)
+                results.append({
+                    "message_id": message["id"], "channel": channel,
+                    "ok": True, "action": "sent",
+                })
             else:
                 results.append({
                     "message_id": message["id"], "channel": channel, "ok": False,
@@ -501,8 +546,8 @@ def run_sending_cycle(limit: int | None = None) -> list[dict]:
 def run_approval_reminder_check() -> dict | None:
     """
     Phase 8's approval reminder trigger: if any message has sat "awaiting"
-    longer than approval.REMINDER_AFTER_HOURS, notify Mohamad once with the
-    count. Returns the logged notification, or None if nothing is overdue.
+    longer than settings.approval_reminder_hours, notify Mohamad once with
+    the count. Returns the logged notification, or None if nothing is overdue.
     """
     pending = approval.messages_needing_reminder()
     if not pending:
@@ -510,24 +555,94 @@ def run_approval_reminder_check() -> dict | None:
     return whatsapp_notify.notify_approval_reminder(len(pending))
 
 
+def run_full_pipeline_cycle() -> dict:
+    """
+    Runs every downstream step once, in spec order: analysis -> message
+    generation -> sending -> approval-reminder check -> WhatsApp reply
+    check -> LinkedIn reply check. This is what build_daily_schedule()
+    schedules once daily (see its docstring for why this isn't per-account,
+    unlike discovery).
+
+    Each step already isolates its own per-lead/per-message failures (see
+    each cycle function's own docstring) -- the two reply-check steps get
+    an extra try/except here on top of that, since each raises outright
+    (not a per-item result list) on its own precondition failing (missing
+    Twilio config; any future LinkedIn selector drift), which would
+    otherwise wipe out the results of the steps that already ran
+    successfully before it. linkedin_reply_check.py's selectors were
+    re-verified live 2026-08-08 against a real inbox (see that module's
+    docstring) -- this try/except stays regardless, same defensive posture
+    as whatsapp's, since either platform can change its DOM/API at any time.
+    """
+    analysis = run_analysis_cycle()
+    messages = run_message_generation_cycle()
+    sending = run_sending_cycle()
+    reminder = run_approval_reminder_check()
+    try:
+        whatsapp_replies = whatsapp_reply_check.check_whatsapp_replies()
+    except Exception as exc:  # noqa: BLE001 -- e.g. WhatsAppNotConfigured; don't lose the steps above
+        whatsapp_replies = {"ok": False, "error": str(exc)}
+    try:
+        linkedin_replies = linkedin_reply_check.check_linkedin_replies()
+    except Exception as exc:  # noqa: BLE001 -- e.g. unverified selector mismatch; don't lose the steps above
+        linkedin_replies = {"ok": False, "error": str(exc)}
+
+    return {
+        "analysis": analysis,
+        "messages": messages,
+        "sending": sending,
+        "approval_reminder": reminder,
+        "whatsapp_replies": whatsapp_replies,
+        "linkedin_replies": linkedin_replies,
+    }
+
+
+# Fixed daily time (in config.TIMEZONE) for run_full_pipeline_cycle -- picked
+# to land after every account's own run_time so discovery has had its whole
+# day's chance to run first. A first-pass choice, not a tuned one: revisit
+# once real cycle durations are known from actual live runs.
+_DOWNSTREAM_HOUR = 20
+_DOWNSTREAM_MINUTE = 0
+
+
 def build_daily_schedule(accounts: list[dict]) -> BackgroundScheduler:
     """
-    Wire up one cron trigger per account at its own configured run_time, in the
-    project's configured timezone. Returns the scheduler unstarted -- calling
-    code (the always-on server process, from Phase 10) decides when to call
-    .start() and keep the process alive.
+    Wire up the full daily pipeline for the always-on server (Phase 10):
+    one discovery cron trigger per account at its own configured run_time,
+    replacing run_cycle's Phase 2 placeholder role now that Phase 3's real
+    discovery exists (run_cycle itself is untouched and still used for the
+    manual test entry point below) -- plus one shared downstream-pipeline
+    trigger (run_full_pipeline_cycle) that runs once daily.
+
+    The downstream steps are scheduled just once, not per account, because
+    each of them processes every pending record across all 3 accounts in a
+    single pass (repo.leads_by_status(), repo.messages_approved_pending(),
+    etc.) -- unlike discovery, they aren't scoped to "this one account's
+    turn" to begin with.
+
+    Returns the scheduler unstarted -- calling code (the always-on server
+    process, from Phase 10) decides when to call .start() and keep the
+    process alive.
     """
     scheduler = BackgroundScheduler(timezone=config.TIMEZONE)
 
     for account in accounts:
         hour, minute = (int(p) for p in account["run_time"].split(":")[:2])
         scheduler.add_job(
-            run_cycle,
+            run_discovery_cycle,
             trigger=CronTrigger(hour=hour, minute=minute),
-            id=f"account-{account['id']}",
-            name=f"Daily run: {account['label']}",
+            id=f"discovery-{account['id']}",
+            name=f"Daily discovery: {account['label']}",
             replace_existing=True,
         )
+
+    scheduler.add_job(
+        run_full_pipeline_cycle,
+        trigger=CronTrigger(hour=_DOWNSTREAM_HOUR, minute=_DOWNSTREAM_MINUTE),
+        id="downstream-pipeline",
+        name="Daily analysis -> messages -> sending -> reminders -> replies",
+        replace_existing=True,
+    )
 
     return scheduler
 

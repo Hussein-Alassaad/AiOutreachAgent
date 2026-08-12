@@ -5,6 +5,62 @@ import TemperatureBadge from '../components/TemperatureBadge'
 import { Skeleton } from '../components/Skeleton'
 
 /**
+ * Expandable panel showing what a lead actually replied, and from which of
+ * our accounts they got it (database/006_add_replies.sql). Lazy-loaded per
+ * row on first expand rather than joined into the main query -- most leads
+ * were never contacted at all, let alone replied, so eagerly fetching
+ * replies for every row in the list would be a mostly-wasted query.
+ */
+function ReplyPanel({ leadId }) {
+  const [replies, setReplies] = useState(null)
+  const [accountLabels, setAccountLabels] = useState({})
+
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      const { data } = await supabase
+        .from('replies')
+        .select('*')
+        .eq('lead_id', leadId)
+        .order('replied_at', { ascending: true })
+      if (cancelled) return
+      setReplies(data || [])
+
+      const accountIds = [...new Set((data || []).map((r) => r.account_id).filter(Boolean))]
+      if (accountIds.length) {
+        const { data: accounts } = await supabase.from('accounts').select('id, label').in('id', accountIds)
+        if (!cancelled && accounts) {
+          setAccountLabels(Object.fromEntries(accounts.map((a) => [a.id, a.label])))
+        }
+      }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [leadId])
+
+  if (replies === null) {
+    return <Skeleton className="mt-2 h-10 w-full" />
+  }
+  if (replies.length === 0) {
+    return <p className="mt-2 text-xs text-slate-600">No reply recorded yet.</p>
+  }
+
+  return (
+    <div className="mt-2 space-y-2">
+      {replies.map((reply) => (
+        <div key={reply.id} className="rounded-lg border border-slate-800 bg-slate-950/40 p-2.5">
+          <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500">
+            <span className="uppercase tracking-wide">{reply.channel}</span>
+            <span>{accountLabels[reply.account_id] || 'Unknown account'} · {new Date(reply.replied_at).toLocaleString()}</span>
+          </div>
+          <p className="mt-1 text-sm text-slate-200">{reply.body}</p>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/**
  * Permanent record of every analyzed lead (spec §7.6) -- client_history
  * never resets, whether or not a lead was ever contacted (see
  * agent/scheduler.py's run_analysis_cycle, which writes here before any
@@ -15,6 +71,7 @@ export default function ClientHistory() {
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [expandedId, setExpandedId] = useState(null)
 
   useEffect(() => {
     async function load() {
@@ -68,7 +125,8 @@ export default function ClientHistory() {
               initial={{ opacity: 0, x: -8 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0 }}
-              className="glass glass-hover rounded-xl p-3"
+              onClick={() => row.lead_id && setExpandedId(expandedId === row.lead_id ? null : row.lead_id)}
+              className={`glass glass-hover rounded-xl p-3 ${row.lead_id ? 'cursor-pointer' : ''}`}
             >
               <div className="flex items-center justify-between gap-3">
                 <p className="text-sm font-medium text-slate-100">{row.business_name || 'Unnamed business'}</p>
@@ -85,6 +143,24 @@ export default function ClientHistory() {
                 {row.platform} {row.industry ? `· ${row.industry}` : ''}{' '}
                 {row.score != null ? `· ${row.score}/10` : ''}
               </p>
+              {row.lead_id && (
+                <p className="mt-1.5 text-[11px] text-slate-600">
+                  {expandedId === row.lead_id ? 'Hide replies ▲' : 'View replies ▼'}
+                </p>
+              )}
+              <AnimatePresence>
+                {expandedId === row.lead_id && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    onClick={(e) => e.stopPropagation()}
+                    className="overflow-hidden"
+                  >
+                    <ReplyPanel leadId={row.lead_id} />
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </motion.div>
           ))}
         </AnimatePresence>

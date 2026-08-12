@@ -102,15 +102,27 @@ docker build -f agent/Dockerfile -t nexaris-agent . && \
     nexaris-agent                   # deploy a new build
 ```
 
-## What's NOT wired into the always-on schedule yet
+## What's wired into the always-on schedule (updated 2026-08-03)
 
-`agent/server.py` only cron-schedules `run_cycle` per account (via
-`scheduler.build_daily_schedule`) -- the same thing `build_daily_schedule`
-has always done. Discovery, analysis, message generation, sending, and
-WhatsApp reply-checking (`run_discovery_cycle`, `run_analysis_cycle`,
-`run_message_generation_cycle`, `run_sending_cycle`,
-`sending/whatsapp_reply_check.check_whatsapp_replies`) are real, tested
-functions but are still triggered manually today, not on their own cron
-jobs. Wiring those into `build_daily_schedule` is a deliberate follow-on
-step once each is confirmed working end-to-end against live accounts --
-not something to bolt on here without that verification.
+`scheduler.build_daily_schedule` now schedules the full daily pipeline:
+`run_discovery_cycle` per account at that account's own `run_time`
+(replacing `run_cycle`'s Phase 2 placeholder role), plus one shared
+`run_full_pipeline_cycle` job once a day (analysis -> message generation ->
+sending -> approval-reminder check -> WhatsApp reply check -> LinkedIn
+reply check) -- see `scheduler.py`'s own docstrings for exactly why the
+downstream steps are scheduled once rather than per account.
+
+**This reverses an earlier deliberate deferral** -- these steps were
+previously left manual-trigger-only until each was confirmed working
+end-to-end against live accounts, and that confirmation still hasn't
+happened (see `PROGRESS.md`/`REQUIREMENTS_COVERAGE.md`: no channel has
+completed an actual supervised live send yet, Twilio credentials aren't
+configured, and LinkedIn reply-detection's own DOM selectors are inferred,
+not inspected against a real inbox). Wiring them into cron now was a
+direct, explicit request, not a conclusion that they're production-ready.
+**Do not actually start this scheduler on a real server (`agent/server.py`)
+until at least one supervised live send per channel has been watched and
+confirmed, and LinkedIn reply-detection has been checked against a real
+conversation** -- right now, starting it would mean the first-ever
+LinkedIn/WhatsApp send, and the first-ever LinkedIn reply check, happen
+unattended.

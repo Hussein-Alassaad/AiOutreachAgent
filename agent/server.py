@@ -7,12 +7,13 @@ module's docstring): this builds the real daily schedule from every active
 account's configured run_time and blocks forever, instead of running one
 forced cycle and exiting.
 
-Only `run_cycle` is cron-scheduled per account today (build_daily_schedule's
-existing behaviour). Discovery/analysis/message-generation/sending and
-WhatsApp reply-checking are separate cycle functions in scheduler.py and
-sending/whatsapp_reply_check.py, still meant to be triggered manually or
-wired into cron here once each is ready to run unattended end-to-end --
-wiring the rest in is a follow-on step, not this file's job to guess at.
+build_daily_schedule wires the full daily pipeline: discovery per account
+at its own run_time, plus one shared daily run of analysis/message-
+generation/sending/approval-reminders/WhatsApp-reply-checking. See
+scheduler.py's build_daily_schedule() and DEPLOY.md's "What's wired into
+the always-on schedule" section for exactly what that means and the live
+verification that's still outstanding before this should actually run
+unattended on a real server.
 
 Run it with:   python -m agent.server
 """

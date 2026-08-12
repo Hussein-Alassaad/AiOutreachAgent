@@ -98,12 +98,29 @@ def check_whatsapp_replies() -> list[dict]:
             continue
 
         inbound = _inbound_messages(lead["whatsapp_number"], last_sent)
-        replied = any(
-            dt.datetime.strptime(m["date_sent"], "%a, %d %b %Y %H:%M:%S %z") > last_sent
-            for m in inbound if m.get("date_sent")
+        # RE-VERIFIED 2026-08-05: used to just check `any(...)` for a reply
+        # and discard the actual messages -- now keeps every reply newer
+        # than our last send (a lead can reply more than once), sorted
+        # oldest first, so handle_reply_detected() gets real content instead
+        # of nothing. Twilio's own `body` field is the message text.
+        new_inbound = sorted(
+            (
+                (m, dt.datetime.strptime(m["date_sent"], "%a, %d %b %Y %H:%M:%S %z"))
+                for m in inbound if m.get("date_sent")
+            ),
+            key=lambda pair: pair[1],
         )
+        new_inbound = [(m, sent_at) for m, sent_at in new_inbound if sent_at > last_sent]
+        replied = bool(new_inbound)
         if replied:
-            handle_reply_detected(lead["id"])
+            for message, sent_at in new_inbound:
+                handle_reply_detected(
+                    lead["id"],
+                    channel="whatsapp",
+                    body=message.get("body", ""),
+                    replied_at=sent_at,
+                    account_id=lead.get("account_id"),
+                )
         results.append({"lead_id": lead["id"], "replied": replied})
 
     return results

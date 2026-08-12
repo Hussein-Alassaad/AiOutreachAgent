@@ -209,6 +209,27 @@ def messages_for_lead(lead_id: str) -> list[Row]:
 
 
 # ════════════════════════════════════════════════════════════════════════
+# REPLIES — actual inbound reply content (database/006_add_replies.sql)
+# ════════════════════════════════════════════════════════════════════════
+
+def insert_reply(reply: Row) -> Row:
+    res = get_client().table("replies").insert(reply).execute()
+    return res.data[0]
+
+
+def replies_for_lead(lead_id: str) -> list[Row]:
+    res = (
+        get_client()
+        .table("replies")
+        .select("*")
+        .eq("lead_id", lead_id)
+        .order("replied_at")
+        .execute()
+    )
+    return res.data
+
+
+# ════════════════════════════════════════════════════════════════════════
 # PIPELINE_HISTORY — every stage change, timestamped audit trail
 # ════════════════════════════════════════════════════════════════════════
 

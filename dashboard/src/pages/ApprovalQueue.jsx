@@ -3,6 +3,7 @@ import { AnimatePresence, motion, useMotionValue, useTransform } from 'framer-mo
 import { supabase } from '../lib/supabase'
 import { SkeletonCard } from '../components/Skeleton'
 import EmptyState from '../components/EmptyState'
+import { pushToast } from '../lib/toast'
 
 const SWIPE_THRESHOLD = 110
 
@@ -64,6 +65,7 @@ export default function ApprovalQueue() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [drafts, setDrafts] = useState({})
+  const [holdReasons, setHoldReasons] = useState({})
 
   async function load() {
     setLoading(true)
@@ -98,21 +100,35 @@ export default function ApprovalQueue() {
   }
 
   async function approve(message) {
-    await supabase
+    const businessName = message.leads?.business_name || 'this lead'
+    const { error: err } = await supabase
       .from('messages')
       .update({ approval_status: 'approved', approved_by: 'Mohamad', approved_at: new Date().toISOString() })
       .eq('id', message.id)
+    if (err) {
+      pushToast({ title: 'Approve failed', body: err.message })
+      return
+    }
+    pushToast({ title: 'Approved', body: `${businessName} (${message.channel}) is cleared to send.` })
     await maybeAdvanceLead(message.lead_id)
   }
 
   async function hold(message) {
-    await supabase.from('messages').update({ approval_status: 'held' }).eq('id', message.id)
+    const businessName = message.leads?.business_name || 'this lead'
+    const { error: err } = await supabase
+      .from('messages')
+      .update({ approval_status: 'held', hold_reason: holdReasons[message.id] || null })
+      .eq('id', message.id)
+    if (err) pushToast({ title: 'Hold failed', body: err.message })
+    else pushToast({ title: 'Held', body: `${businessName} (${message.channel}) held back from sending.` })
   }
 
   async function saveEdit(message) {
     const newBody = drafts[message.id]
     if (newBody == null) return
-    await supabase.from('messages').update({ edited_body: newBody, approval_status: 'edited' }).eq('id', message.id)
+    const { error: err } = await supabase.from('messages').update({ edited_body: newBody, approval_status: 'edited' }).eq('id', message.id)
+    if (err) pushToast({ title: 'Save failed', body: err.message })
+    else pushToast({ title: 'Edit saved', body: 'Remember to Approve once you\'re happy with it.' })
   }
 
   async function approveAll() {
@@ -189,6 +205,15 @@ export default function ApprovalQueue() {
                 onPointerDown={(e) => e.stopPropagation()}
                 rows={4}
                 className="accent-ring mt-3 w-full rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-sm text-slate-200 outline-none transition focus:border-[var(--color-accent-from)]/50"
+              />
+
+              <input
+                type="text"
+                placeholder="Reason for holding (optional)"
+                value={holdReasons[message.id] || ''}
+                onChange={(e) => setHoldReasons((d) => ({ ...d, [message.id]: e.target.value }))}
+                onPointerDown={(e) => e.stopPropagation()}
+                className="accent-ring mt-2 w-full rounded-lg border border-slate-800 bg-slate-950/50 px-2.5 py-1.5 text-xs text-slate-300 outline-none transition focus:border-[var(--color-accent-from)]/50"
               />
 
               <div className="mt-3 flex flex-wrap gap-2">

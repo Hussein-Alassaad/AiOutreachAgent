@@ -137,6 +137,15 @@ export default function Settings() {
           />
           Require approval before sending (hard gate)
         </label>
+        <label className="block">
+          <span className={labelClass}>Remind me about pending approvals after (hours)</span>
+          <input
+            type="number"
+            className={inputClass}
+            value={settings.approval_reminder_hours ?? ''}
+            onChange={(e) => set('approval_reminder_hours', Number(e.target.value))}
+          />
+        </label>
       </motion.section>
 
       <motion.section {...section} transition={{ delay: 0.2 }} className="glass mt-4 space-y-4 rounded-2xl p-4">
