@@ -34,6 +34,7 @@ from agent.core import account_pool as pool
 from agent.core import health
 from agent.core import warmup
 from agent.core.session import SessionManager
+from agent.crm import followup
 from agent.db import repositories as repo
 from agent.discovery import instagram, linkedin
 from agent.discovery.qualify import qualify_profile
@@ -561,9 +562,9 @@ def run_full_pipeline_cycle() -> dict:
     """
     Runs every downstream step once, in spec order: analysis -> message
     generation -> sending -> approval-reminder check -> WhatsApp reply
-    check -> LinkedIn reply check. This is what build_daily_schedule()
-    schedules once daily (see its docstring for why this isn't per-account,
-    unlike discovery).
+    check -> LinkedIn reply check -> due follow-up dispatch. This is what
+    build_daily_schedule() schedules once daily (see its docstring for why
+    this isn't per-account, unlike discovery).
 
     Each step already isolates its own per-lead/per-message failures (see
     each cycle function's own docstring) -- the two reply-check steps get
@@ -575,6 +576,12 @@ def run_full_pipeline_cycle() -> dict:
     re-verified live 2026-08-08 against a real inbox (see that module's
     docstring) -- this try/except stays regardless, same defensive posture
     as whatsapp's, since either platform can change its DOM/API at any time.
+
+    Follow-up dispatch runs LAST, after both reply checks -- a lead that
+    replied today must have its follow-up already cancelled (see
+    reply_detection.handle_reply_detected -> followup.cancel_pending)
+    before dispatch_due_followups() would otherwise generate a follow-up
+    for someone who just responded.
     """
     analysis = run_analysis_cycle()
     messages = run_message_generation_cycle()
@@ -588,6 +595,10 @@ def run_full_pipeline_cycle() -> dict:
         linkedin_replies = linkedin_reply_check.check_linkedin_replies()
     except Exception as exc:  # noqa: BLE001 -- e.g. unverified selector mismatch; don't lose the steps above
         linkedin_replies = {"ok": False, "error": str(exc)}
+    try:
+        followups_dispatched = followup.dispatch_due_followups()
+    except Exception as exc:  # noqa: BLE001 -- don't lose the steps above over one bad batch
+        followups_dispatched = {"ok": False, "error": str(exc)}
 
     return {
         "analysis": analysis,
@@ -595,6 +606,7 @@ def run_full_pipeline_cycle() -> dict:
         "sending": sending,
         "approval_reminder": reminder,
         "whatsapp_replies": whatsapp_replies,
+        "followups_dispatched": followups_dispatched,
         "linkedin_replies": linkedin_replies,
     }
 
