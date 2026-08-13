@@ -60,6 +60,57 @@ function ReplyPanel({ leadId }) {
   )
 }
 
+// Columns pulled from row.snapshot -- the full leads-table row captured at
+// analysis time (see scheduler.py's run_analysis_cycle: snapshot = {...lead,
+// ...update_fields}) -- richer than the summary fields client_history keeps
+// on its own columns, and exactly the fields a cold-outreach spreadsheet
+// needs (profile url, follower count, website, WhatsApp number, founder).
+const _EXPORT_COLUMNS = [
+  ['business_name', 'Business Name'],
+  ['platform', 'Platform'],
+  ['industry', 'Industry'],
+  ['profile_url', 'Profile URL'],
+  ['website', 'Website'],
+  ['follower_count', 'Followers'],
+  ['whatsapp_number', 'WhatsApp Number'],
+  ['founder_name', 'Founder Name'],
+  ['score', 'Score'],
+  ['temperature', 'Temperature'],
+  ['contacted', 'Contacted'],
+]
+
+function _csvEscape(value) {
+  if (value === null || value === undefined) return ''
+  const str = Array.isArray(value) ? value.join('; ') : String(value)
+  if (/[",\n]/.test(str)) return `"${str.replace(/"/g, '""')}"`
+  return str
+}
+
+function rowsToCsv(rows) {
+  const header = _EXPORT_COLUMNS.map(([, label]) => _csvEscape(label)).join(',')
+  const lines = rows.map((row) => {
+    const snapshot = row.snapshot || {}
+    return _EXPORT_COLUMNS
+      .map(([key]) => _csvEscape(snapshot[key] ?? row[key]))
+      .join(',')
+  })
+  return [header, ...lines].join('\r\n')
+}
+
+function downloadCsv(rows) {
+  const csv = rowsToCsv(rows)
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  const stamp = new Date().toISOString().slice(0, 10)
+  link.href = url
+  link.download = `nexaris-leads-${stamp}.csv`
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
+}
+
 /**
  * Permanent record of every analyzed lead (spec §7.6) -- client_history
  * never resets, whether or not a lead was ever contacted (see
@@ -92,11 +143,21 @@ export default function ClientHistory() {
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-6 sm:px-8 sm:py-10">
-      <motion.header initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
-        <h1 className="text-2xl font-semibold">
-          Client <span className="accent-text">History</span>
-        </h1>
-        <p className="mt-1 text-sm text-slate-500">Every lead ever analyzed, permanently.</p>
+      <motion.header initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold">
+            Client <span className="accent-text">History</span>
+          </h1>
+          <p className="mt-1 text-sm text-slate-500">Every lead ever analyzed, permanently.</p>
+        </div>
+        <button
+          type="button"
+          disabled={rows.length === 0}
+          onClick={() => downloadCsv(rows)}
+          className="accent-ring shrink-0 rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2 text-xs font-medium text-slate-200 transition hover:border-[var(--color-accent-from)]/50 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Export CSV
+        </button>
       </motion.header>
 
       <input
