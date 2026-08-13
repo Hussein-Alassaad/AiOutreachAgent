@@ -420,6 +420,8 @@ def run_analysis_cycle(limit: int | None = None) -> list[dict]:
             whatsapp_notify.notify_hot_lead(enriched_lead)
         if founder_result.get("founder_found"):
             whatsapp_notify.notify_founder_found(enriched_lead)
+        if whatsapp_result.get("whatsapp_found"):
+            whatsapp_notify.notify_number_found(enriched_lead)
 
         results.append({"lead": lead.get("business_name"), "ok": True, **update_fields})
 

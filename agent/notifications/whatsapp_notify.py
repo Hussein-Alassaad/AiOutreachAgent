@@ -64,6 +64,21 @@ def notify_founder_found(lead: dict) -> dict:
     return _notify("founder", body, related_lead_id=lead.get("id"))
 
 
+def notify_number_found(lead: dict) -> dict:
+    """
+    Fires the moment the agent extracts a real phone/WhatsApp number from a
+    lead's profile -- a cold-calling opportunity distinct from
+    notify_founder_found() (a name alone isn't a number to call). Same
+    immediate, per-lead firing point as the other alerts (see
+    scheduler.py's run_analysis_cycle), not batched.
+    """
+    body = (
+        f"Number found: {lead.get('whatsapp_number')} for "
+        f"{lead.get('business_name') or 'unknown business'}. Ready for cold-calling."
+    )
+    return _notify("number_found", body, related_lead_id=lead.get("id"))
+
+
 def notify_account_warning(account: dict) -> dict:
     body = (
         f"Account warning -- {account.get('label')}: {account.get('warning_type')}. "

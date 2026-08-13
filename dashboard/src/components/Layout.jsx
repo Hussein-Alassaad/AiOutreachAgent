@@ -19,6 +19,7 @@ const NAV = [
   { to: '/approval', label: 'Approval' },
   { to: '/instagram-manual', label: 'Instagram' },
   { to: '/pipeline', label: 'Pipeline' },
+  { to: '/clients', label: 'Clients' },
   { to: '/client-history', label: 'History' },
   { to: '/analytics', label: 'Analytics' },
   { to: '/accounts', label: 'Accounts' },
@@ -41,6 +42,8 @@ function NavIcon({ to, className = 'h-5 w-5' }) {
       return <svg {...common}><rect x="3.5" y="5" width="17" height="16" rx="4.5" /><circle cx="12" cy="13" r="4" /><circle cx="16.8" cy="8.2" r="0.4" fill="currentColor" /></svg>
     case '/pipeline':
       return <svg {...common}><rect x="3" y="4" width="5" height="16" rx="1.4" /><rect x="9.5" y="4" width="5" height="10.5" rx="1.4" /><rect x="16" y="4" width="5" height="13.5" rx="1.4" /></svg>
+    case '/clients':
+      return <svg {...common}><circle cx="9" cy="8" r="3.25" /><path d="M3.5 20c0-3.6 2.46-6.25 5.5-6.25S14.5 16.4 14.5 20" /><circle cx="17" cy="9" r="2.4" /><path d="M14.6 20c0-2.8 1.6-5 3.9-5.4" /></svg>
     case '/client-history':
       return <svg {...common}><rect x="3" y="7.5" width="18" height="12.5" rx="2" /><path d="M3 7.5 5.2 4h13.6L21 7.5M10 12.5h4" /></svg>
     case '/analytics':
@@ -133,11 +136,12 @@ export default function Layout() {
     setDrawerOpen(false)
   }
 
-  // App-wide: notify the instant a lead crosses into "hot" (score 8-10),
-  // not just when the Live Feed happens to be open -- the spec is explicit
-  // that a hot lead alert can't wait for someone to be looking at the
-  // right page (mirrors agent/notifications/whatsapp_notify.py's
-  // notify_hot_lead, which fires the same way on the backend).
+  // App-wide: notify the instant a lead crosses into "hot" (score 8-10) OR
+  // gets a phone/WhatsApp number extracted, not just when the Live Feed
+  // happens to be open -- the spec is explicit that these alerts can't wait
+  // for someone to be looking at the right page (mirrors
+  // agent/notifications/whatsapp_notify.py's notify_hot_lead/
+  // notify_number_found, which fire the same way on the backend).
   useEffect(() => {
     if (!session) return
     const channel = supabase
@@ -145,6 +149,12 @@ export default function Layout() {
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'leads' }, (payload) => {
         if (payload.new.temperature === 'hot' && payload.old.temperature !== 'hot') {
           pushToast({ title: 'New hot lead', body: payload.new.business_name || 'Unnamed business' })
+        }
+        if (payload.new.whatsapp_found && !payload.old.whatsapp_found) {
+          pushToast({
+            title: 'Number found',
+            body: `${payload.new.business_name || 'Unnamed business'} — ${payload.new.whatsapp_number}`,
+          })
         }
       })
       .subscribe()

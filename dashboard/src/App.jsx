@@ -5,6 +5,7 @@ import ApprovalQueue from './pages/ApprovalQueue'
 import InstagramManualSend from './pages/InstagramManualSend'
 import PipelineBoard from './pages/PipelineBoard'
 import LeadDetail from './pages/LeadDetail'
+import Clients from './pages/Clients'
 import ClientHistory from './pages/ClientHistory'
 import Analytics from './pages/Analytics'
 import AccountHealth from './pages/AccountHealth'
@@ -24,6 +25,7 @@ export default function App() {
         <Route path="/instagram-manual" element={<InstagramManualSend />} />
         <Route path="/pipeline" element={<PipelineBoard />} />
         <Route path="/leads/:id" element={<LeadDetail />} />
+        <Route path="/clients" element={<Clients />} />
         <Route path="/client-history" element={<ClientHistory />} />
         <Route path="/analytics" element={<Analytics />} />
         <Route path="/accounts" element={<AccountHealth />} />
