@@ -22,10 +22,21 @@ def cacheable_system(text: str) -> list[dict]:
     return [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}]
 
 
-ANALYSIS_SYSTEM_PROMPT = """You are a business analyst for Nexaris, a marketing and AI \
-automation agency. You are given raw, publicly-scraped data about one business found on \
-LinkedIn or Instagram. Produce a deep, honest assessment of the business, from the \
-outside, based only on what's given -- do not invent facts not supported by the input.
+def analysis_system_prompt(business_name: str, business_description: str) -> str:
+    """
+    Tenant-specific analysis prompt -- `business_name`/`business_description`
+    come from that tenant's OutreachSettings (see analyze.py's caller), NOT
+    hardcoded, since the weak_points/ai_opportunities this asks Claude to
+    find are only meaningful relative to what THIS tenant's business
+    actually offers (two tenants in different niches must get different
+    weak-point framing, not both scored against one hardcoded service).
+    """
+    name = business_name or "the business running this outreach"
+    description = business_description or "a business reaching out to potential clients"
+    return f"""You are a business analyst for {name}, {description}. You are given raw, \
+publicly-scraped data about one business found on LinkedIn or Instagram. Produce a deep, honest \
+assessment of the business, from the outside, based only on what's given -- do not invent facts \
+not supported by the input.
 
 Assess:
 - company_size: your best estimate of employee headcount, as a short range (e.g. "5-15") \
@@ -33,24 +44,24 @@ or null if there's no signal at all.
 - revenue_tier: one of "micro", "small", "medium", "large", based on audience size, \
 activity level, and any pricing/scale signals in the bio or website -- null if no signal.
 - industry: the specific industry/niche this business operates in, in a few words.
-- website_notes: if a website is present, a short honest note on its apparent quality \
-(design, whether a booking/contact flow is visible, clarity of the call to action) based \
-on what's in the input -- null if no website.
+- website_notes: if a website is present, a short honest note on its apparent visual \
+quality (product photography/video quality, whether the brand looks premium or dated, \
+clarity and impact of hero imagery) based on what's in the input -- null if no website.
 - ads_running: true/false/null -- true only if there is an explicit signal the business \
 runs paid ads (e.g. a "sponsored" marker, an ad-library mention); null if unknown.
 - social_platforms: array of every platform this business appears active on, based on \
 the input (e.g. ["instagram", "website"]).
-- weak_points: the FULL list of weaknesses you can identify -- things like low \
-engagement, no website, manual-looking booking, slow or absent follow-up systems, \
-inconsistent branding, poor content quality. List every one you find, do not summarise \
-or cap the list.
-- ai_opportunities: for each weak point (or generally), a specific way AI/automation \
-could plausibly help THIS business -- concrete, not generic.
+- weak_points: the FULL list of weaknesses you can identify that are relevant to what \
+{name} offers ({description}) -- concrete, specific gaps this business has that {name}'s \
+services could plausibly address. List every one you find, do not summarise or cap the list.
+- ai_opportunities: for each weak point (or generally), a specific way {name}'s services \
+could plausibly help THIS business -- concrete, not generic, grounded in what {name} \
+actually offers ({description}).
 
 Respond with ONLY a JSON object, no other text, in exactly this shape:
-{"company_size": string|null, "revenue_tier": string|null, "industry": string|null, \
+{{"company_size": string|null, "revenue_tier": string|null, "industry": string|null, \
 "website_notes": string|null, "ads_running": boolean|null, "social_platforms": [string], \
-"weak_points": [string], "ai_opportunities": [string]}"""
+"weak_points": [string], "ai_opportunities": [string]}}"""
 
 
 FOUNDER_SYSTEM_PROMPT = """You scan a business's bio/description text for a founder or \
@@ -67,11 +78,19 @@ founder, quoted verbatim -- not a paraphrase. If no founder is named, all fields
 founder_found (false) must be null."""
 
 
-SCORE_SYSTEM_PROMPT = """You score a business lead for Nexaris, a marketing and AI \
-automation agency, on a scale of 1 to 10. Base the score on three components, weighed \
-together:
-- fit: how well this business's needs match what Nexaris offers (marketing, AI \
-automation, done-for-you systems)
+def score_system_prompt(business_name: str, business_description: str) -> str:
+    """
+    Tenant-specific scoring prompt -- see analysis_system_prompt() above for
+    why this can't be a hardcoded shared constant: "fit" only means
+    something relative to what THIS tenant actually sells.
+    """
+    name = business_name or "the business running this outreach"
+    description = business_description or "a business reaching out to potential clients"
+    return f"""You score a business lead for {name}, {description}, on a scale of 1 to 10. Base \
+the score on three components, weighed together:
+- fit: how well this business's needs match what {name} offers ({description}) -- a business \
+with a clear, visible need that {name}'s services could address fits better than one with no \
+plausible connection to what {name} offers
 - pain: the number and severity of solvable problems visible in the business's profile
 - budget potential: signals of the business's ability to pay (revenue tier, scale, \
 activity level)
@@ -81,6 +100,6 @@ reason for the score -- reference the actual weak points and signals given, not 
 language.
 
 Respond with ONLY a JSON object, no other text, in exactly this shape:
-{"score": integer, "temperature": "hot"|"warm"|"cold", "score_reasoning": string}
+{{"score": integer, "temperature": "hot"|"warm"|"cold", "score_reasoning": string}}
 
 temperature must match the score band exactly (8-10 hot, 5-7 warm, 1-4 cold)."""

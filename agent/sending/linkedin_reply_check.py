@@ -71,7 +71,8 @@ import datetime as dt
 
 from playwright.sync_api import Page
 
-from agent.core.session import SessionManager
+from agent.core.pacing import human_delay
+from agent.core.session import ProxyIpMismatch, SessionManager
 from agent.crm.reply_detection import handle_reply_detected
 from agent.db import repositories as repo
 
@@ -125,6 +126,7 @@ def _open_thread_for_lead(page: Page, business_name: str) -> bool:
     item = page.locator(_CONVERSATION_LIST_ITEM_SELECTOR, has_text=business_name).first
     if item.count() == 0:
         return False
+    human_delay()
     item.click()
     return True
 
@@ -207,7 +209,35 @@ def check_linkedin_replies() -> list[dict]:
             if not account:
                 continue
 
-            context, page = sessions.open(account)
+            try:
+                context, page, new_verified_ip = sessions.open(account)
+            except ProxyIpMismatch as exc:
+                # Skip just this lead's reply check -- every other lead under
+                # a DIFFERENT account still gets checked this run. The same
+                # mismatched account will be retried (and skipped again) on
+                # the next run until Account Health's proxy fields are fixed;
+                # not worth a separate "already warned this run" cache here
+                # since accounts_by_id already avoids repeating the
+                # repo.get_account() lookup. repo.insert_error() directly
+                # (not scheduler.log_error(), which lives in scheduler.py --
+                # scheduler.py itself imports this module, so importing back
+                # from it here would be circular) -- same underlying error
+                # log table, tenant_id resolved from the active
+                # tenant_scope() the same way, this file just doesn't have
+                # its own error-logging wrapper the way scheduler.py's
+                # try/except blocks do.
+                try:
+                    repo.insert_error({
+                        "stage": "proxy_ip_mismatch", "channel": "linkedin",
+                        "account_id": account["id"], "error_message": str(exc), "is_expected": False,
+                    })
+                except Exception:  # noqa: BLE001 -- logging itself must never crash this run
+                    pass
+                results.append({"lead_id": lead["id"], "replied": False, "error": str(exc)})
+                continue
+            if new_verified_ip and not account.get("verified_proxy_ip"):
+                repo.update_account(account["id"], {"verified_proxy_ip": new_verified_ip})
+                account["verified_proxy_ip"] = new_verified_ip
             try:
                 found = _open_thread_for_lead(page, business_name)
                 body = _newest_message_if_from_lead(page, business_name) if found else None

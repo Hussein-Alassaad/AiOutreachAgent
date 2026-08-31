@@ -140,5 +140,12 @@ def dispatch_due_followups() -> list[dict]:
             results.append({"follow_up_id": follow_up["id"], "lead": lead.get("business_name"), "ok": True, "channel": channel})
         except Exception as exc:  # noqa: BLE001 -- one bad follow-up shouldn't stop the batch
             results.append({"follow_up_id": follow_up["id"], "lead": lead.get("business_name"), "ok": False, "error": str(exc)})
+            try:
+                repo.insert_error({
+                    "stage": "followup", "channel": channel, "lead_id": lead_id,
+                    "account_id": lead.get("account_id"), "error_message": str(exc), "is_expected": False,
+                })
+            except Exception:  # noqa: BLE001 -- logging itself must never crash the pipeline
+                pass
 
     return results

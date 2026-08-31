@@ -11,6 +11,7 @@ from __future__ import annotations
 from agent import config
 from agent.analysis import client as claude_client
 from agent.analysis import prompts
+from agent.db import repositories as repo
 
 
 def format_lead_context(lead: dict) -> str:
@@ -42,5 +43,9 @@ def analyze_lead(lead: dict, model: str | None = None) -> dict:
     expect and handle, not paper over.
     """
     model = model or config.MODEL_ANALYSIS
-    system = prompts.cacheable_system(prompts.ANALYSIS_SYSTEM_PROMPT)
+    settings = repo.get_settings() or {}
+    prompt_text = prompts.analysis_system_prompt(
+        settings.get("business_name") or "", settings.get("business_description") or ""
+    )
+    system = prompts.cacheable_system(prompt_text)
     return claude_client.call_json(system, format_lead_context(lead), model)

@@ -1,9 +1,22 @@
 """
-Runs each account at its own configured time.
+Runs each tenant's accounts at their own configured times.
 
-Each of the 3 accounts has an independent run time, staggered through the day
-and editable from the dashboard. Opens a row in `runs` at start and closes it
-with the finish time -- that's what the dashboard Run Status panel displays.
+PORTED 2026-08-20 to be multi-tenant (see PROGRESS.md's dated entry for the
+full writeup). Every orchestration function below now loops over
+repo.list_active_tenant_ids() -- every tenant with at least one active
+LinkedIn or Instagram OutreachAccount row -- and, within each tenant, over
+that tenant's own due accounts (see core/account_pool.py). Each tenant's
+whole slice of a cycle runs inside `with repo.tenant_scope(tenant_id):`,
+which is what lets every downstream call into messaging/*, crm/*,
+sending/*, notifications/*, and core/health.py|warmup.py -- none of which
+were changed by this port, none of which know tenant_id exists -- resolve
+the right tenant's rows without their call signatures changing (see
+db/repositories.py's module docstring, "DISCREPANCY FLAGGED" section, for
+why that fallback exists).
+
+Error isolation now has ONE MORE level than before the port: one tenant's
+failure must not stop other tenants' processing, in addition to the
+existing one-account/one-lead/one-message isolation already in place below.
 
 Two ways to use this module:
   - `run_cycle(...)` does the real work for whichever accounts are due right
@@ -24,6 +37,7 @@ import datetime as dt
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 from agent import config
 from agent.analysis import analyze
@@ -33,48 +47,156 @@ from agent.analysis import whatsapp_detect
 from agent.core import account_pool as pool
 from agent.core import health
 from agent.core import warmup
-from agent.core.session import SessionManager
+from agent.core.session import ProxyIpMismatch, SessionManager
 from agent.crm import followup
 from agent.db import repositories as repo
-from agent.discovery import instagram, linkedin
+from agent.discovery import findymail, hunter, instagram, linkedin
 from agent.discovery.qualify import qualify_profile
 from agent.messaging import approval
 from agent.messaging import generate as message_generate
 from agent.messaging import style as message_style
 from agent.notifications import whatsapp_notify
 from agent.sending import (
-    instagram_queue,
+    instagram_reply_check,
+    instagram_send,
     linkedin_reply_check,
     linkedin_send,
     whatsapp_reply_check,
     whatsapp_send,
 )
+from agent.sending.instagram_send import NoExistingThread as InstagramNoExistingThread
+from agent.sending.instagram_send import NoMessageButtonAvailable as InstagramNoMessageButtonAvailable
+from agent.sending.linkedin_send import MessageLengthInvalid, NoMessageButtonAvailable
+from agent.sending.linkedin_send import NoExistingThread as LinkedInNoExistingThread
+from agent.sending.whatsapp_send import WhatsAppNotConfigured
 
 # Phase 2 has no real discovery yet -- this is a harmless, neutral page used
 # purely to prove a session can open, navigate, and be health-checked. Phase 3
 # replaces this with the actual LinkedIn/Instagram search entry points.
 DEFAULT_TEST_URL = "https://example.com"
 
+# Exceptions that represent a normal, expected "can't do this one thing"
+# outcome rather than a genuine failure worth flagging -- e.g. a LinkedIn
+# company page simply not having Page messaging enabled. Used by log_error()
+# below so the dashboard's Errors page can separate real problems from
+# routine skip reasons by default (see database/007_add_error_log.sql).
+_EXPECTED_EXCEPTIONS = (
+    NoMessageButtonAvailable,
+    MessageLengthInvalid,
+    WhatsAppNotConfigured,
+    LinkedInNoExistingThread,
+    InstagramNoMessageButtonAvailable,
+    InstagramNoExistingThread,
+)
+
+
+def log_error(
+    stage: str,
+    exc: Exception,
+    *,
+    channel: str | None = None,
+    lead_id: str | None = None,
+    account_id: str | None = None,
+) -> None:
+    """
+    Record one caught pipeline failure to error_log so it's visible on the
+    dashboard's Errors page instead of only existing in an in-memory results
+    list that gets discarded the moment the calling function returns --
+    every try/except block below already isolates one bad lead/message from
+    stopping a whole run, this just stops the exception's details from
+    being silently thrown away once that's done. Never itself raises --
+    a logging failure must not turn a handled, isolated error into an
+    unhandled one that takes down the whole cycle.
+    """
+    try:
+        repo.insert_error({
+            "stage": stage,
+            "channel": channel,
+            "lead_id": lead_id,
+            "account_id": account_id,
+            "error_message": str(exc),
+            "is_expected": isinstance(exc, _EXPECTED_EXCEPTIONS),
+        })  # tenant_id resolved from the active tenant_scope(...), see repo.insert_error()'s docstring
+    except Exception:  # noqa: BLE001 -- logging itself must never crash the pipeline
+        pass
+
 
 def run_cycle(target_url: str = DEFAULT_TEST_URL, force: bool = False) -> list[dict]:
     """
     Run one cycle for whichever accounts are due (or all active accounts, if
-    force=True). For each: open an isolated session, visit target_url, check
-    its health, and log the outcome as a `runs` row.
+    force=True), across every tenant that currently has active Outreach
+    accounts. For each account: open an isolated session, visit target_url,
+    check its health, and log the outcome as a `runs` row.
 
-    Returns a list of per-account result dicts, mainly so a manual test run can
-    print a clear summary of what happened to each account.
+    Returns a list of per-account result dicts (each tagged with its
+    tenant_id), mainly so a manual test run can print a clear summary of
+    what happened to each account.
+
+    Tenant-level isolation: one tenant raising here (e.g. a DB hiccup while
+    loading its accounts) is logged and skipped, same as the existing
+    per-account try/except inside the loop already isolated one bad account
+    from the rest -- this adds the one more level the port asked for so one
+    tenant can never take down another tenant's run.
     """
-    accounts = pool.get_due_accounts(force=force)
+    results = []
+
+    for tenant_id in repo.list_active_tenant_ids():
+        try:
+            with repo.tenant_scope(tenant_id):
+                results.extend(_run_cycle_for_tenant(tenant_id, target_url, force))
+        except Exception as exc:  # noqa: BLE001 -- one bad tenant must not stop the others
+            try:
+                repo.insert_error({
+                    "stage": "run_cycle", "error_message": str(exc), "is_expected": False,
+                }, tenant_id=tenant_id)
+            except Exception:  # noqa: BLE001 -- logging itself must never crash the pipeline
+                pass
+
+    return results
+
+
+def _run_cycle_for_tenant(tenant_id: str, target_url: str, force: bool) -> list[dict]:
+    accounts = pool.get_due_accounts(tenant_id, force=force)
     results = []
 
     if not accounts:
         return results
 
+    today_start = pool.today_start_iso(tenant_id)
     with SessionManager() as sessions:
         for account in accounts:
-            run = repo.start_run(account["id"])
-            context, page = sessions.open(account)
+            # Atomic claim, not the old separate start_run() -- get_due_accounts()'s
+            # own has_run_today() check above happened in an earlier, separate
+            # query, leaving a real window for a second overlapping process
+            # (e.g. server.py's cron firing the same moment a manual test run
+            # is in progress) to also see "not run yet" and duplicate this
+            # account's work, corrupting the shared browser_profiles session
+            # file and doubling its real daily send volume. claim_account_for_run()
+            # closes that window with a transaction-scoped advisory lock; None
+            # means someone else already claimed this account for today, in
+            # which case skip it exactly like "not due" rather than proceeding.
+            run = repo.claim_account_for_run(tenant_id, account["id"], today_start, skip_daily_check=force)
+            if run is None:
+                continue
+            try:
+                context, page, new_verified_ip = sessions.open(account)
+            except ProxyIpMismatch as exc:
+                # Hard stop for THIS account only -- see
+                # _run_discovery_cycle_for_tenant's identical handling for
+                # the full reasoning. The mismatched context is already
+                # closed by open() before this exception reaches here.
+                repo.finish_run(
+                    tenant_id, run["id"], leads_found=0, messages_sent=0,
+                    status="error", finished_at_iso=dt.datetime.now(dt.timezone.utc).isoformat(),
+                    notes=str(exc),
+                )
+                results.append({
+                    "tenant_id": tenant_id, "account": account["label"], "ok": False,
+                    "warning_type": "proxy_ip_mismatch", "reason": str(exc),
+                })
+                continue
+            if new_verified_ip:
+                repo.update_account(account["id"], {"verified_proxy_ip": new_verified_ip}, tenant_id)
 
             try:
                 response = page.goto(target_url, timeout=15_000)
@@ -99,7 +221,7 @@ def run_cycle(target_url: str = DEFAULT_TEST_URL, force: bool = False) -> list[d
             finished_at = dt.datetime.now(dt.timezone.utc).isoformat()
             if ok:
                 repo.finish_run(
-                    run["id"], leads_found=0, messages_sent=0,
+                    tenant_id, run["id"], leads_found=0, messages_sent=0,
                     status="completed", finished_at_iso=finished_at,
                 )
             else:
@@ -107,11 +229,12 @@ def run_cycle(target_url: str = DEFAULT_TEST_URL, force: bool = False) -> list[d
                 account["warning_type"], account["warning_reason"] = warning_type, reason
                 whatsapp_notify.notify_account_warning(account)
                 repo.finish_run(
-                    run["id"], leads_found=0, messages_sent=0,
+                    tenant_id, run["id"], leads_found=0, messages_sent=0,
                     status="error", finished_at_iso=finished_at, notes=reason,
                 )
 
             results.append({
+                "tenant_id": tenant_id,
                 "account": account["label"],
                 "ok": ok,
                 "warning_type": warning_type,
@@ -129,7 +252,7 @@ def _save_if_qualified(
     known, qualify it, and insert into `leads` with status "discovered" if it
     passes. Returns True if a new lead was actually saved.
     """
-    if repo.lead_profile_url_exists(profile_url):
+    if repo.lead_profile_url_exists(account["tenant_id"], profile_url):
         return False
 
     normalised = {**raw_profile, "platform": platform}
@@ -137,14 +260,27 @@ def _save_if_qualified(
     if not qualifies:
         return False
 
-    repo.insert_lead({
+    repo.insert_lead(account["tenant_id"], {
         "account_id": account["id"],
         "platform": platform,
         "business_name": raw_profile.get("display_name") or None,
         "profile_url": profile_url,
         "follower_count": raw_profile.get("follower_or_headcount"),
         "website": raw_profile.get("website"),
-        "bio": raw_profile.get("bio"),  # Phase 4's analysis pipeline reads this
+        # NOTE (2026-08-20 port, real behavior change -- see PROGRESS.md):
+        # "bio"/"engagement_sample" have no column on OutreachLead (see
+        # db/repositories.py's _LEAD_COLUMNS comment) -- insert_lead()
+        # silently drops unknown fields rather than erroring. They're still
+        # passed here so the dict shape stays identical to the pre-port
+        # version (harmless, just ignored on write), but analysis/*.py
+        # (untouched, out of scope) reads lead.get("bio") from a lead
+        # re-fetched from the DB in run_analysis_cycle below via
+        # leads_by_status() -- that re-fetched row will never have "bio",
+        # so analyze.py's bio-dependent analysis now always sees "none
+        # available" post-port. Not silently swallowed: flagged here and in
+        # PROGRESS.md as a real, intentional-for-now narrowing, not a bug
+        # nobody noticed.
+        "bio": raw_profile.get("bio"),
         "engagement_sample": raw_profile.get("engagement_sample"),  # Instagram only -- null on LinkedIn leads
         "status": "discovered",
         "notes": " | ".join(reasons),  # keeps the qualification reasoning on the record
@@ -154,48 +290,142 @@ def _save_if_qualified(
 
 def run_discovery_cycle(force: bool = False) -> list[dict]:
     """
-    Discover, qualify, and save new leads on both platforms for whichever
-    accounts are due (Phase 3).
+    Discover, qualify, and save new leads for whichever accounts are due,
+    across every tenant that currently has active Outreach accounts (Phase
+    3, ported multi-tenant 2026-08-20).
+
+    Channel gating (per this port's spec point 3): one OutreachAccount row =
+    one platform. LinkedIn discovery only runs for an account whose
+    platform == "linkedin"; Instagram discovery only for platform ==
+    "instagram" -- a tenant that only has an active LinkedIn account no
+    longer implicitly also gets Instagram discovery run against it (the
+    pre-port version always tried both for every account, since the
+    standalone schema didn't have a platform-per-account concept the same
+    way). This is confirmed sufficient by AccountHealthClient.tsx, which
+    already lets an owner add/remove one account per platform -- no new
+    toggle infrastructure was needed, just this gating fix.
 
     VERIFIED 2026-07-31/08-02: discovery/linkedin.py and discovery/instagram.py's
     scraping selectors were checked against real, live pages using a real
     captured login session (see each module's own docstring for exactly what
     was confirmed and which bugs that testing caught). This orchestration
-    itself -- looping accounts, widening weak searches, per-lead error
-    isolation -- has not had a full end-to-end run recorded yet; that's a
-    separate, still-open item (see PROGRESS.md), not a selector-accuracy
-    concern.
+    itself -- looping tenants and accounts, widening weak searches, per-lead
+    error isolation -- has not had a full end-to-end run recorded live since
+    this port (that's a separate, still-open item, see PROGRESS.md), not a
+    selector-accuracy concern.
+
+    Tenant-level isolation: one tenant raising here is logged and skipped,
+    same reasoning as run_cycle() above.
     """
-    settings = repo.get_settings() or {}
+    summary = []
+
+    for tenant_id in repo.list_active_tenant_ids():
+        try:
+            with repo.tenant_scope(tenant_id):
+                summary.extend(_run_discovery_cycle_for_tenant(tenant_id, force))
+        except Exception as exc:  # noqa: BLE001 -- one bad tenant must not stop the others
+            try:
+                repo.insert_error({
+                    "stage": "discovery", "error_message": str(exc), "is_expected": False,
+                }, tenant_id=tenant_id)
+            except Exception:  # noqa: BLE001 -- logging itself must never crash the pipeline
+                pass
+
+    return summary
+
+
+def _run_discovery_cycle_for_tenant(tenant_id: str, force: bool) -> list[dict]:
+    settings = repo.get_settings(tenant_id) or {}
     niche = settings.get("target_niche") or ""
     location = settings.get("target_location") or ""
     industry = settings.get("target_industry") or ""
 
-    accounts = pool.get_due_accounts(force=force)
+    accounts = pool.get_due_accounts(tenant_id, force=force)
     summary = []
 
+    today_start = pool.today_start_iso(tenant_id)
     with SessionManager() as sessions:
         for account in accounts:
-            run = repo.start_run(account["id"])
-            context, page = sessions.open(account)
+            # Atomic claim -- see _run_cycle_for_tenant()'s identical comment
+            # above for why this replaces start_run() directly.
+            run = repo.claim_account_for_run(tenant_id, account["id"], today_start, skip_daily_check=force)
+            if run is None:
+                continue
             counts = {"linkedin_found": 0, "linkedin_saved": 0,
                       "instagram_found": 0, "instagram_saved": 0,
                       "errors": [], "skipped_leads": []}
 
             try:
-                _discover_linkedin(account, page, niche, location, industry, counts)
-            except Exception as exc:  # noqa: BLE001 -- a whole-platform failure, not one bad lead
-                counts["errors"].append(f"linkedin: {exc}")
+                context, page, login_error, new_verified_ip = sessions.open_or_login(account)
+            except ProxyIpMismatch as exc:
+                # Hard stop for THIS account only -- open_or_login() itself
+                # refuses to proceed to login when the proxy's real IP
+                # doesn't match what this account verified before (see
+                # ProxyIpMismatch's own docstring); the mismatched context is
+                # already closed by open() before this exception reaches
+                # here. Other accounts in this tenant's batch are
+                # unaffected -- only letting this propagate past here would
+                # abort the whole tenant's cycle, which one account's proxy
+                # problem doesn't warrant.
+                counts["errors"].append(f"proxy_ip_mismatch: {exc}")
+                log_error("proxy_ip_mismatch", exc, account_id=account["id"])
+                repo.finish_run(
+                    tenant_id, run["id"], leads_found=0, messages_sent=0,
+                    status="error", finished_at_iso=dt.datetime.now(dt.timezone.utc).isoformat(),
+                    notes=str(exc),
+                )
+                summary.append({"tenant_id": tenant_id, "account": account["label"], **counts})
+                continue
 
-            try:
-                _discover_instagram(account, page, niche, counts)
-            except Exception as exc:  # noqa: BLE001
-                counts["errors"].append(f"instagram: {exc}")
+            if new_verified_ip:
+                repo.update_account(account["id"], {"verified_proxy_ip": new_verified_ip}, tenant_id)
+
+            if login_error:
+                # A credential login was attempted (no saved session existed
+                # yet) and failed -- report it to the account row so the
+                # tenant sees why in their dashboard (AccountHealthClient's
+                # loginStatus/loginError fields), and skip discovery entirely
+                # this run rather than proceeding on a context that never
+                # actually got logged in.
+                repo.update_account(account["id"], {"login_status": "failed", "login_error": login_error}, tenant_id)
+                counts["errors"].append(f"login: {login_error}")
+                log_error("login", RuntimeError(login_error), channel=account.get("platform"), account_id=account["id"])
+            else:
+                if account.get("login_email") and account.get("login_password_enc") and account.get("login_status") != "connected":
+                    # Either this run's own login attempt just succeeded, or a
+                    # saved session from a prior successful login was reused --
+                    # either way, credentials exist and nothing failed, so this
+                    # account is (still) genuinely connected.
+                    repo.update_account(
+                        account["id"],
+                        {
+                            "login_status": "connected",
+                            "login_error": None,
+                            "login_connected_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                        },
+                        tenant_id,
+                    )
+
+                if account.get("platform") == "linkedin":
+                    try:
+                        _discover_linkedin(account, page, niche, location, industry, counts)
+                    except Exception as exc:  # noqa: BLE001 -- a whole-platform failure, not one bad lead
+                        counts["errors"].append(f"linkedin: {exc}")
+                        log_error("discovery", exc, channel="linkedin", account_id=account["id"])
+                elif account.get("platform") == "instagram":
+                    try:
+                        _discover_instagram(account, page, niche, counts)
+                    except Exception as exc:  # noqa: BLE001
+                        counts["errors"].append(f"instagram: {exc}")
+                        log_error("discovery", exc, channel="instagram", account_id=account["id"])
+                # else: platform == "email" (or anything else) -- no browser-automation
+                # discovery exists for that channel; the Next.js app owns email entirely.
 
             sessions.close(account["id"], context)
 
             finished_at = dt.datetime.now(dt.timezone.utc).isoformat()
             repo.finish_run(
+                tenant_id,
                 run["id"],
                 leads_found=counts["linkedin_saved"] + counts["instagram_saved"],
                 messages_sent=0,
@@ -205,7 +435,7 @@ def run_discovery_cycle(force: bool = False) -> list[dict]:
                 skipped_leads=counts["skipped_leads"],
             )
 
-            summary.append({"account": account["label"], **counts})
+            summary.append({"tenant_id": tenant_id, "account": account["label"], **counts})
 
     return summary
 
@@ -279,6 +509,7 @@ def _discover_linkedin(account: dict, page, niche: str, location: str, industry:
                 "identifier": result.get("display_name") or profile_url,
                 "reason": str(exc),
             })
+            log_error("discovery", exc, channel="linkedin", account_id=account["id"])
 
 
 def _discover_instagram(account: dict, page, niche: str, counts: dict) -> None:
@@ -349,22 +580,128 @@ def _discover_instagram(account: dict, page, niche: str, counts: dict) -> None:
                 "identifier": post.get("post_url"),
                 "reason": str(exc),
             })
+            log_error("discovery", exc, channel="instagram", account_id=account["id"])
 
 
 def run_analysis_cycle(limit: int | None = None) -> list[dict]:
     """
-    Analyze every lead currently sitting at status "discovered" (Phase 4):
-    deep analysis, founder detection, WhatsApp number detection, and scoring.
+    Analyze every lead currently sitting at status "discovered", across
+    every tenant that currently has active Outreach accounts (Phase 4,
+    ported multi-tenant 2026-08-20).
 
     Task 10 from the spec: the full enriched record is saved to
     client_history BEFORE any message is generated (see
     run_message_generation_cycle() below, Phase 5) -- client_history exists
     permanently, whether or not this lead is ever contacted.
 
-    `limit` caps how many leads are processed in one call -- useful for a
-    careful first test rather than analysing an entire backlog at once.
+    `limit` caps how many leads are processed PER TENANT in one call --
+    useful for a careful first test rather than analysing an entire backlog
+    at once.
+
+    Tenant-level isolation: one tenant raising here is logged and skipped,
+    same reasoning as run_cycle() above.
     """
-    leads = repo.leads_by_status("discovered")
+    results = []
+    for tenant_id in repo.list_active_tenant_ids():
+        try:
+            with repo.tenant_scope(tenant_id):
+                results.extend(_run_analysis_cycle_for_tenant(tenant_id, limit))
+        except Exception as exc:  # noqa: BLE001 -- one bad tenant must not stop the others
+            try:
+                repo.insert_error({
+                    "stage": "analysis", "error_message": str(exc), "is_expected": False,
+                }, tenant_id=tenant_id)
+            except Exception:  # noqa: BLE001 -- logging itself must never crash the pipeline
+                pass
+    return results
+
+
+def _bare_domain(website: str | None) -> str | None:
+    """
+    "https://www.acmesecurity.com/about" -> "acmesecurity.com". Findymail's
+    /search/name endpoint takes a bare domain (per its docs, e.g.
+    "tesla.com"), not a full URL -- LinkedIn's captured website field is
+    whatever a company put in their profile, which can be either shape.
+    Returns None for anything that doesn't parse into a real host, rather
+    than passing a garbage value to a paid API call.
+    """
+    if not website:
+        return None
+    from urllib.parse import urlparse
+
+    parsed = urlparse(website if "://" in website else f"https://{website}")
+    host = parsed.netloc or parsed.path.split("/")[0]
+    host = host.removeprefix("www.")
+    return host or None
+
+
+def _maybe_find_email(tenant_id: str, lead: dict, founder_name: str | None) -> None:
+    """
+    Best-effort: if this (LinkedIn) lead has a website and a known founder/
+    decision-maker name, look up their email via Findymail and -- if
+    found -- create a SEPARATE, linked `email`-platform OutreachLead for
+    the same company (not a field bolted onto the LinkedIn lead itself),
+    so the existing per-platform message-generation/approval/sending
+    pipeline (run_message_generation_cycle, run_sending_cycle) handles it
+    identically to any other email lead, no special-casing needed anywhere
+    downstream. Same company, hit on two channels -- the tenant's explicit
+    choice (see PROGRESS.md's dated entry on this feature).
+
+    Silent no-op (not an error) when: no website, no founder name yet,
+    FINDYMAIL_API_KEY isn't set, or Findymail genuinely has no match --
+    every one of these is a normal, expected outcome for SOME leads, not
+    a failure. Only a real Findymail API error (bad key, no credits)
+    propagates, so the caller's existing per-lead try/except and
+    log_error() isolation catches it the same way any other per-lead
+    external-service failure already is.
+    """
+    if lead.get("platform") != "linkedin" or not founder_name:
+        return
+    domain = _bare_domain(lead.get("website"))
+    if not domain:
+        return
+
+    # Hunter is the ACTIVE provider (trialing its 50 free credits/month
+    # first, per the tenant's explicit choice -- see discovery/hunter.py's
+    # module docstring). Findymail stays wired and importable as the
+    # fallback/comparison provider but is not called here; swap this one
+    # call if the trial concludes Icypeas or Findymail should be used
+    # instead, no other code needs to change either provider's own
+    # exception names line up (HunterNotConfigured mirrors
+    # FindymailNotConfigured) so this except clause needs no changes on swap.
+    try:
+        email = hunter.find_email(founder_name, domain)
+    except hunter.HunterNotConfigured:
+        return  # no API key set yet -- not an error, just not wired up
+
+    if not email:
+        return
+
+    # Dedup by the mailto: profile_url (same mechanism discovery already
+    # uses for LinkedIn/Instagram profile URLs, see _save_if_qualified) --
+    # a Findymail lookup that returns the same email a second time (e.g. a
+    # stray re-analysis pass) must not create a duplicate email lead.
+    profile_url = f"mailto:{email}"
+    if repo.lead_profile_url_exists(tenant_id, profile_url):
+        return
+
+    accounts = repo.list_accounts(tenant_id)
+    email_account = next((a for a in accounts if a.get("platform") == "email" and a.get("status") == "active"), None)
+
+    repo.insert_lead(tenant_id, {
+        "account_id": email_account["id"] if email_account else None,
+        "platform": "email",
+        "business_name": lead.get("business_name"),
+        "profile_url": profile_url,  # no real "profile" for an email lead -- mailto: URI doubles as both display value and the dedup key
+        "website": lead.get("website"),
+        "contact_email": email,
+        "status": "discovered",
+        "notes": f"Email found via Findymail for {founder_name}, linked from LinkedIn lead {lead.get('id')}.",
+    })
+
+
+def _run_analysis_cycle_for_tenant(tenant_id: str, limit: int | None) -> list[dict]:
+    leads = repo.leads_by_status("discovered", tenant_id=tenant_id)
     if limit is not None:
         leads = leads[:limit]
 
@@ -377,6 +714,7 @@ def run_analysis_cycle(limit: int | None = None) -> list[dict]:
             score_result = scoring.score_lead(lead, analysis)
         except Exception as exc:  # noqa: BLE001 -- one bad lead shouldn't stop the batch
             results.append({"lead": lead.get("business_name"), "ok": False, "error": str(exc)})
+            log_error("analysis", exc, lead_id=lead.get("id"), account_id=lead.get("account_id"))
             continue
 
         update_fields = {
@@ -399,7 +737,16 @@ def run_analysis_cycle(limit: int | None = None) -> list[dict]:
         }
         repo.update_lead(lead["id"], update_fields)
 
-        repo.insert_client_history({
+        # Best-effort, same channel-isolation guarantee as every other
+        # per-lead step here: an email-lookup problem for THIS lead must not
+        # lose the analysis/scoring work already committed above for it,
+        # or stop the rest of the batch.
+        try:
+            _maybe_find_email(tenant_id, lead, founder_result.get("founder_name"))
+        except Exception as exc:  # noqa: BLE001 -- e.g. HunterLookupFailed (bad key, no credits)
+            log_error("email_lookup", exc, lead_id=lead.get("id"), account_id=lead.get("account_id"))
+
+        repo.insert_client_history(tenant_id, {
             "lead_id": lead["id"],
             "business_name": lead.get("business_name"),
             "platform": lead.get("platform"),
@@ -432,25 +779,56 @@ def run_analysis_cycle(limit: int | None = None) -> list[dict]:
 def run_message_generation_cycle(limit: int | None = None) -> list[dict]:
     """
     Generate outreach messages for every lead currently sitting at status
-    "analyzed" (Phase 5): one message on the lead's discovery platform, plus
-    an additional WhatsApp message if Phase 4 found a public WhatsApp number
-    -- WhatsApp is always an ADDITIONAL channel, never a replacement for the
-    primary one (see whatsapp_detect.py's module docstring).
+    "analyzed", across every tenant that currently has active Outreach
+    accounts (Phase 5, ported multi-tenant 2026-08-20): one message on the
+    lead's discovery platform, plus an additional WhatsApp message if Phase
+    4 found a public WhatsApp number -- WhatsApp is always an ADDITIONAL
+    channel, never a replacement for the primary one (see
+    whatsapp_detect.py's module docstring).
 
-    The active style (direct/discovery) is read once per cycle, not once per
-    lead -- style.get_active_style() only rotates on elapsed duration, so
-    every lead in the same run gets the same style, which is also what makes
-    the per-(channel, style) system prompt actually reuse the cache across
-    the whole batch rather than just within one lead's calls.
+    The active style (direct/discovery) is read once PER TENANT per cycle,
+    not once per lead -- style.get_active_style() only rotates on elapsed
+    duration, so every lead in the same tenant's batch gets the same style
+    (each tenant has its own settings row and therefore its own style/
+    rotation clock).
 
-    `limit` caps how many leads are processed in one call, same reasoning as
-    run_analysis_cycle's `limit`.
+    `limit` caps how many leads are processed PER TENANT in one call, same
+    reasoning as run_analysis_cycle's `limit`.
+
+    Tenant-level isolation: one tenant raising here is logged and skipped,
+    same reasoning as run_cycle() above.
     """
+    results = []
+    for tenant_id in repo.list_active_tenant_ids():
+        try:
+            with repo.tenant_scope(tenant_id):
+                results.extend(_run_message_generation_cycle_for_tenant(limit))
+        except Exception as exc:  # noqa: BLE001 -- one bad tenant must not stop the others
+            try:
+                repo.insert_error({
+                    "stage": "message_generation", "error_message": str(exc), "is_expected": False,
+                }, tenant_id=tenant_id)
+            except Exception:  # noqa: BLE001 -- logging itself must never crash the pipeline
+                pass
+    return results
+
+
+def _run_message_generation_cycle_for_tenant(limit: int | None) -> list[dict]:
     leads = repo.leads_by_status("analyzed")
     if limit is not None:
         leads = leads[:limit]
 
     active_style = message_style.get_active_style()
+    # Read once per tenant per cycle (settings don't change mid-cycle), same
+    # reasoning as active_style above -- OutreachSettings.approvalRequired,
+    # dashboard-editable (Settings > Contact rules > "Require approval before
+    # sending"). Defaults to True (the safe default) if settings can't be
+    # read at all, same fallback posture the rest of this module already
+    # uses for approval_reminder_hours.
+    settings = repo.get_settings() or {}
+    approval_required = settings.get("approval_required")
+    if approval_required is None:
+        approval_required = True
     results = []
 
     for lead in leads:
@@ -464,23 +842,52 @@ def run_message_generation_cycle(limit: int | None = None) -> list[dict]:
                 body = message_generate.generate_message(lead, channel, active_style)
                 if channel == lead.get("platform"):
                     primary_body = body
-                repo.insert_message({
+                message = repo.insert_message({
                     "lead_id": lead["id"],
                     "channel": channel,
                     "body": body,
                 })
+                if not approval_required:
+                    # Tenant has explicitly turned off the human approval
+                    # gate (Settings) -- mark this message approved so it's
+                    # eligible for sending, same approval_status a human's
+                    # Approve click sets. approved_by is left null (NOT set
+                    # to a placeholder string) since OutreachMessage.approvedById
+                    # is a real foreign key to User.id -- writing anything
+                    # other than a real user id there would violate the FK
+                    # constraint outright. The "this was auto-approved, not
+                    # a person" fact is what the pipeline-history row below
+                    # (changed_by="auto-approved", a plain string field, not
+                    # an FK) actually records for the audit trail; a null
+                    # approved_by combined with that history entry is enough
+                    # to distinguish this from a human approval later if
+                    # ever needed. NOT calling approve_message() itself here
+                    # -- its _maybe_advance_lead() only fires when the lead
+                    # is ALREADY "awaiting_approval", which it isn't yet at
+                    # this point in the loop (still "analyzed"), so that
+                    # call would silently no-op; the lead's own status
+                    # transition is handled explicitly below instead, once,
+                    # after every channel's message is in.
+                    repo.update_message(message["id"], {
+                        "approval_status": "approved",
+                        "approved_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                    })
 
+            new_lead_status = "approved" if not approval_required else "awaiting_approval"
             repo.update_lead(lead["id"], {
                 "generated_message": primary_body,
                 "message_style_used": active_style,
-                "status": "awaiting_approval",
+                "status": new_lead_status,
             })
+            if not approval_required:
+                repo.record_stage_change(lead["id"], "analyzed", "approved", changed_by="auto-approved")
             results.append({
                 "lead": lead.get("business_name"), "ok": True,
                 "channels": channels, "style": active_style,
             })
         except Exception as exc:  # noqa: BLE001 -- one bad lead shouldn't stop the batch
             results.append({"lead": lead.get("business_name"), "ok": False, "error": str(exc)})
+            log_error("message_generation", exc, lead_id=lead.get("id"), account_id=lead.get("account_id"))
 
     return results
 
@@ -489,9 +896,14 @@ def run_sending_cycle(limit: int | None = None) -> list[dict]:
     """
     Route every approved, not-yet-sent message to its channel (Phase 7).
 
-    Instagram never auto-sends -- Instagram's ToS bans automated cold
-    outreach, so it's queued for a human to send by hand via
-    instagram_queue.queue_for_manual_send(), exactly as the spec requires.
+    Instagram auto-sends through instagram_send.send_cold_message() -- NOT
+    YET LIVE-VERIFIED (see that module's docstring). This replaced the
+    original instagram_queue.queue_for_manual_send() manual-only design; the
+    platform owner explicitly accepted the higher cold-DM-automation ban
+    risk in exchange for the account never being touched from a location
+    other than the agent's own consistent proxy. instagram_queue.py is kept
+    for its mark_sent() bookkeeping shape reference only and is no longer
+    called from this cycle.
 
     WhatsApp auto-sends through whatsapp_send.send_message() (Twilio's REST
     API) -- if agent/.env's WHATSAPP_* fields are still empty, that call
@@ -506,10 +918,35 @@ def run_sending_cycle(limit: int | None = None) -> list[dict]:
     missing WhatsApp number does for that channel, rather than crashing the
     cycle.
 
-    `limit` caps how many messages are processed in one call, same reasoning
-    as the analysis/message-generation cycles' `limit`.
+    `limit` caps how many messages are processed PER TENANT in one call,
+    same reasoning as the analysis/message-generation cycles' `limit`.
+
+    Ported multi-tenant 2026-08-20: loops over every tenant with active
+    Outreach accounts, same one-more-level tenant isolation as the other
+    cycle functions above.
     """
-    messages = repo.messages_approved_pending()
+    results = []
+    for tenant_id in repo.list_active_tenant_ids():
+        try:
+            with repo.tenant_scope(tenant_id):
+                results.extend(_run_sending_cycle_for_tenant(limit))
+        except Exception as exc:  # noqa: BLE001 -- one bad tenant must not stop the others
+            try:
+                repo.insert_error({
+                    "stage": "sending", "error_message": str(exc), "is_expected": False,
+                }, tenant_id=tenant_id)
+            except Exception:  # noqa: BLE001 -- logging itself must never crash the pipeline
+                pass
+    return results
+
+
+def _run_sending_cycle_for_tenant(limit: int | None) -> list[dict]:
+    # Reply-tagged messages (is_reply=True, from "Reply Here") are
+    # deliberately excluded here -- run_reply_send_cycle() below picks them
+    # up on its own fast ~2-3 min poll instead of waiting for this cycle's
+    # normal once-daily cadence, so a reply feels close to real-time. This
+    # cycle only ever sees fresh cold-outreach messages.
+    messages = [m for m in repo.messages_approved_pending() if not m.get("is_reply")]
     if limit is not None:
         messages = messages[:limit]
 
@@ -518,10 +955,18 @@ def run_sending_cycle(limit: int | None = None) -> list[dict]:
         channel = message.get("channel")
         try:
             if channel == "instagram":
-                instagram_queue.queue_for_manual_send(message)
+                # DELIBERATE PRODUCT DECISION: Instagram cold sends used to
+                # queue for manual send (instagram_queue.queue_for_manual_send)
+                # specifically because automating unsolicited first-contact
+                # DMs is Instagram's highest-risk automation pattern -- see
+                # instagram_send.py's module docstring for why that tradeoff
+                # was explicitly accepted anyway (keeping every send on the
+                # agent's own consistent proxy/location, never the account
+                # owner's real device).
+                instagram_send.send_cold_message(message)
                 results.append({
                     "message_id": message["id"], "channel": channel,
-                    "ok": True, "action": "queued_for_manual_send",
+                    "ok": True, "action": "sent",
                 })
             elif channel == "whatsapp":
                 whatsapp_send.send_message(message)
@@ -536,46 +981,137 @@ def run_sending_cycle(limit: int | None = None) -> list[dict]:
                     "ok": True, "action": "sent",
                 })
             else:
+                # Unreachable in practice, not a missing feature: repo.messages_approved_pending()
+                # only ever queries channel IN ('linkedin', 'instagram', 'whatsapp') -- email is
+                # deliberately excluded there since the Next.js app's own SES path (src/lib/
+                # outreach/ses.ts) owns sending it entirely, this agent never touches email
+                # messages at all. Kept as a defensive branch (a future channel value slipping
+                # through here should be a visible "ok": False, not a silent KeyError) rather
+                # than an assert, since one malformed message shouldn't crash the whole cycle.
                 results.append({
                     "message_id": message["id"], "channel": channel, "ok": False,
-                    "reason": f"{channel} auto-send not yet implemented",
+                    "reason": f"unrecognized channel {channel!r} -- expected linkedin/instagram/whatsapp",
                 })
         except Exception as exc:  # noqa: BLE001 -- one bad message shouldn't stop the rest
             results.append({"message_id": message["id"], "channel": channel, "ok": False, "error": str(exc)})
+            log_error("sending", exc, channel=channel, lead_id=message.get("lead_id"))
 
     return results
 
 
-def run_approval_reminder_check() -> dict | None:
+def run_reply_send_cycle() -> list[dict]:
     """
-    Phase 8's approval reminder trigger: if any message has sat "awaiting"
-    longer than settings.approval_reminder_hours, notify Mohamad once with
-    the count. Returns the logged notification, or None if nothing is overdue.
+    Delivers tenant-written replies (is_reply=True, from the "Reply Here"
+    dashboard page -- src/lib/actions/outreach-replies.ts's
+    sendReplyAction()) into each lead's EXISTING conversation thread, on a
+    fast poll separate from run_sending_cycle()'s once-daily cadence (see
+    build_daily_schedule()'s IntervalTrigger job for this function) so a
+    reply feels close to real-time instead of waiting for the next full
+    cycle.
+
+    Deliberately calls each channel's send_reply() (thread-reply delivery),
+    NOT send_message()/send_cold_message() (fresh connection request / new
+    thread) -- a reply must land in the conversation the lead already
+    started, not open a new one. Same per-tenant, per-message error
+    isolation as _run_sending_cycle_for_tenant() above; email is excluded
+    the same way (repo.replies_pending() only ever queries channel IN
+    ('linkedin', 'instagram', 'whatsapp'), matching
+    messages_approved_pending()'s own scoping).
     """
-    pending = approval.messages_needing_reminder()
-    if not pending:
-        return None
-    return whatsapp_notify.notify_approval_reminder(len(pending))
+    results = []
+    for tenant_id in repo.list_active_tenant_ids():
+        try:
+            with repo.tenant_scope(tenant_id):
+                results.extend(_run_reply_send_cycle_for_tenant())
+        except Exception as exc:  # noqa: BLE001 -- one bad tenant must not stop the others
+            try:
+                repo.insert_error({
+                    "stage": "reply_sending", "error_message": str(exc), "is_expected": False,
+                }, tenant_id=tenant_id)
+            except Exception:  # noqa: BLE001 -- logging itself must never crash the pipeline
+                pass
+    return results
+
+
+def _run_reply_send_cycle_for_tenant() -> list[dict]:
+    messages = repo.replies_pending()
+
+    results = []
+    for message in messages:
+        channel = message.get("channel")
+        try:
+            if channel == "instagram":
+                instagram_send.send_reply(message)
+            elif channel == "whatsapp":
+                whatsapp_send.send_message(message)
+            elif channel == "linkedin":
+                linkedin_send.send_reply(message)
+            else:
+                results.append({
+                    "message_id": message["id"], "channel": channel, "ok": False,
+                    "reason": f"unrecognized channel {channel!r} -- expected linkedin/instagram/whatsapp",
+                })
+                continue
+            results.append({"message_id": message["id"], "channel": channel, "ok": True, "action": "sent"})
+        except Exception as exc:  # noqa: BLE001 -- one bad reply shouldn't stop the rest
+            results.append({"message_id": message["id"], "channel": channel, "ok": False, "error": str(exc)})
+            log_error("reply_sending", exc, channel=channel, lead_id=message.get("lead_id"))
+
+    return results
+
+
+def run_approval_reminder_check() -> dict:
+    """
+    Phase 8's approval reminder trigger, across every tenant that currently
+    has active Outreach accounts (ported multi-tenant 2026-08-20): if any
+    tenant has a message that's sat "awaiting" longer than that tenant's
+    settings.approval_reminder_hours, notify once with the count. Returns a
+    dict keyed by tenant_id -> the logged notification (or None if nothing
+    was overdue for that tenant).
+
+    Tenant-level isolation: one tenant raising here is logged and skipped,
+    same reasoning as run_cycle() above.
+    """
+    results: dict[str, dict | None] = {}
+    for tenant_id in repo.list_active_tenant_ids():
+        try:
+            with repo.tenant_scope(tenant_id):
+                pending = approval.messages_needing_reminder()
+                results[tenant_id] = (
+                    whatsapp_notify.notify_approval_reminder(len(pending)) if pending else None
+                )
+        except Exception as exc:  # noqa: BLE001 -- one bad tenant must not stop the others
+            try:
+                repo.insert_error({
+                    "stage": "approval_reminder", "error_message": str(exc), "is_expected": False,
+                }, tenant_id=tenant_id)
+            except Exception:  # noqa: BLE001 -- logging itself must never crash the pipeline
+                pass
+            results[tenant_id] = None
+    return results
 
 
 def run_full_pipeline_cycle() -> dict:
     """
     Runs every downstream step once, in spec order: analysis -> message
     generation -> sending -> approval-reminder check -> WhatsApp reply
-    check -> LinkedIn reply check -> due follow-up dispatch. This is what
-    build_daily_schedule() schedules once daily (see its docstring for why
-    this isn't per-account, unlike discovery).
+    check -> LinkedIn reply check -> Instagram reply check -> due follow-up
+    dispatch. This is what build_daily_schedule() schedules once daily (see
+    its docstring for why this isn't per-account, unlike discovery).
 
-    Each step already isolates its own per-lead/per-message failures (see
-    each cycle function's own docstring) -- the two reply-check steps get
-    an extra try/except here on top of that, since each raises outright
-    (not a per-item result list) on its own precondition failing (missing
-    Twilio config; any future LinkedIn selector drift), which would
-    otherwise wipe out the results of the steps that already ran
-    successfully before it. linkedin_reply_check.py's selectors were
-    re-verified live 2026-08-08 against a real inbox (see that module's
-    docstring) -- this try/except stays regardless, same defensive posture
-    as whatsapp's, since either platform can change its DOM/API at any time.
+    Ported multi-tenant 2026-08-20: run_analysis_cycle/run_message_generation
+    _cycle/run_sending_cycle/run_approval_reminder_check each already loop
+    over every active tenant internally (see their own docstrings) -- called
+    plainly here, same as before the port. The reply-check and follow-up
+    steps below do NOT loop internally (whatsapp_reply_check.py,
+    linkedin_reply_check.py, and crm/followup.py are all out of scope for
+    this port -- they only call repo.*, never the DB directly), so this
+    function wraps each of them in its own per-tenant tenant_scope(...) loop
+    instead, with the SAME try/except defensive posture as before (each
+    reply-check step still raises outright rather than returning a per-item
+    result list, so a per-tenant AND overall try/except both stay) plus one
+    more level of isolation so one tenant's reply-check/follow-up failure
+    can't wipe out another tenant's results within the same step.
 
     Follow-up dispatch runs LAST, after both reply checks -- a lead that
     replied today must have its follow-up already cancelled (see
@@ -587,18 +1123,34 @@ def run_full_pipeline_cycle() -> dict:
     messages = run_message_generation_cycle()
     sending = run_sending_cycle()
     reminder = run_approval_reminder_check()
-    try:
-        whatsapp_replies = whatsapp_reply_check.check_whatsapp_replies()
-    except Exception as exc:  # noqa: BLE001 -- e.g. WhatsAppNotConfigured; don't lose the steps above
-        whatsapp_replies = {"ok": False, "error": str(exc)}
-    try:
-        linkedin_replies = linkedin_reply_check.check_linkedin_replies()
-    except Exception as exc:  # noqa: BLE001 -- e.g. unverified selector mismatch; don't lose the steps above
-        linkedin_replies = {"ok": False, "error": str(exc)}
-    try:
-        followups_dispatched = followup.dispatch_due_followups()
-    except Exception as exc:  # noqa: BLE001 -- don't lose the steps above over one bad batch
-        followups_dispatched = {"ok": False, "error": str(exc)}
+
+    whatsapp_replies: dict[str, dict] = {}
+    linkedin_replies: dict[str, dict] = {}
+    instagram_replies: dict[str, dict] = {}
+    followups_dispatched: dict[str, list] = {}
+
+    for tenant_id in repo.list_active_tenant_ids():
+        with repo.tenant_scope(tenant_id):
+            try:
+                whatsapp_replies[tenant_id] = whatsapp_reply_check.check_whatsapp_replies()
+            except Exception as exc:  # noqa: BLE001 -- e.g. WhatsAppNotConfigured; don't lose the steps above
+                whatsapp_replies[tenant_id] = {"ok": False, "error": str(exc)}
+                log_error("reply_check", exc, channel="whatsapp")
+            try:
+                linkedin_replies[tenant_id] = linkedin_reply_check.check_linkedin_replies()
+            except Exception as exc:  # noqa: BLE001 -- e.g. unverified selector mismatch; don't lose the steps above
+                linkedin_replies[tenant_id] = {"ok": False, "error": str(exc)}
+                log_error("reply_check", exc, channel="linkedin")
+            try:
+                instagram_replies[tenant_id] = instagram_reply_check.check_instagram_replies()
+            except Exception as exc:  # noqa: BLE001 -- e.g. unverified selector mismatch; don't lose the steps above
+                instagram_replies[tenant_id] = {"ok": False, "error": str(exc)}
+                log_error("reply_check", exc, channel="instagram")
+            try:
+                followups_dispatched[tenant_id] = followup.dispatch_due_followups()
+            except Exception as exc:  # noqa: BLE001 -- don't lose the steps above over one bad batch
+                followups_dispatched[tenant_id] = {"ok": False, "error": str(exc)}
+                log_error("followup", exc)
 
     return {
         "analysis": analysis,
@@ -608,6 +1160,7 @@ def run_full_pipeline_cycle() -> dict:
         "whatsapp_replies": whatsapp_replies,
         "followups_dispatched": followups_dispatched,
         "linkedin_replies": linkedin_replies,
+        "instagram_replies": instagram_replies,
     }
 
 
@@ -618,21 +1171,38 @@ def run_full_pipeline_cycle() -> dict:
 _DOWNSTREAM_HOUR = 20
 _DOWNSTREAM_MINUTE = 0
 
+# How often run_reply_send_cycle() polls for tenant-written replies waiting
+# to go out -- see build_daily_schedule()'s IntervalTrigger job. Short
+# enough that a reply feels close to real-time, long enough not to hammer
+# LinkedIn/Instagram with constant inbox-open requests across every tenant
+# with a reply-less-empty queue.
+_REPLY_POLL_INTERVAL_MINUTES = 3
 
-def build_daily_schedule(accounts: list[dict]) -> BackgroundScheduler:
+
+def build_daily_schedule() -> BackgroundScheduler:
     """
-    Wire up the full daily pipeline for the always-on server (Phase 10):
-    one discovery cron trigger per account at its own configured run_time,
-    replacing run_cycle's Phase 2 placeholder role now that Phase 3's real
-    discovery exists (run_cycle itself is untouched and still used for the
-    manual test entry point below) -- plus one shared downstream-pipeline
-    trigger (run_full_pipeline_cycle) that runs once daily.
+    Wire up the full daily pipeline for the always-on server (Phase 10),
+    across every tenant that currently has active Outreach accounts: one
+    discovery cron trigger per (tenant, account) pair at that account's own
+    configured run_time, replacing run_cycle's Phase 2 placeholder role now
+    that Phase 3's real discovery exists (run_cycle itself is untouched and
+    still used for the manual test entry point below) -- plus one shared
+    downstream-pipeline trigger (run_full_pipeline_cycle) that runs once
+    daily and already loops over every active tenant internally.
+
+    Ported multi-tenant 2026-08-20: no longer takes an `accounts` list --
+    it discovers tenants and their accounts itself via
+    repo.list_active_tenant_ids() + account_pool.load_accounts(tenant_id),
+    since this is now a per-tenant, not a fixed, account set. Each job
+    closure captures its own tenant_id so a later add_job for a different
+    tenant can't shadow an earlier one's discovery run.
 
     The downstream steps are scheduled just once, not per account, because
-    each of them processes every pending record across all 3 accounts in a
-    single pass (repo.leads_by_status(), repo.messages_approved_pending(),
-    etc.) -- unlike discovery, they aren't scoped to "this one account's
-    turn" to begin with.
+    each of them already loops over every tenant AND processes every
+    pending record within that tenant in a single pass (see
+    run_analysis_cycle/run_message_generation_cycle/run_sending_cycle/
+    run_approval_reminder_check's own docstrings) -- unlike discovery, they
+    aren't scoped to "this one account's turn" to begin with.
 
     Returns the scheduler unstarted -- calling code (the always-on server
     process, from Phase 10) decides when to call .start() and keep the
@@ -640,21 +1210,55 @@ def build_daily_schedule(accounts: list[dict]) -> BackgroundScheduler:
     """
     scheduler = BackgroundScheduler(timezone=config.TIMEZONE)
 
-    for account in accounts:
-        hour, minute = (int(p) for p in account["run_time"].split(":")[:2])
-        scheduler.add_job(
-            run_discovery_cycle,
-            trigger=CronTrigger(hour=hour, minute=minute),
-            id=f"discovery-{account['id']}",
-            name=f"Daily discovery: {account['label']}",
-            replace_existing=True,
-        )
+    for tenant_id in repo.list_active_tenant_ids():
+        # Resolved once per tenant, not per account -- every account for a
+        # tenant shares the same scheduling timezone (see
+        # OutreachSettings.timezone / repo.get_outreach_timezone()'s own
+        # docstring). Falls back to config.TIMEZONE if unset, matching the
+        # scheduler-level default above.
+        tenant_tz = repo.get_outreach_timezone(tenant_id)
+
+        for account in pool.load_accounts(tenant_id):
+            if account.get("status") != "active":
+                continue
+            hour, minute = (int(p) for p in account["run_time"].split(":")[:2])
+
+            def _run_discovery_for_this_account(tenant_id: str = tenant_id, account_id: str = account["id"]) -> None:
+                # Runs the FULL tenant-wide discovery cycle (run_discovery_cycle
+                # already loops over every due account for the tenant and gates
+                # linkedin/instagram per account's own platform) -- scheduling
+                # granularity is per-account (this account's own run_time), but
+                # the work itself reuses the same tenant-scoped cycle function
+                # rather than a separate single-account code path, so there is
+                # exactly one discovery implementation, not two.
+                run_discovery_cycle()
+
+            scheduler.add_job(
+                _run_discovery_for_this_account,
+                trigger=CronTrigger(hour=hour, minute=minute, timezone=tenant_tz),
+                id=f"discovery-{tenant_id}-{account['id']}",
+                name=f"Daily discovery: tenant {tenant_id} / {account['label']}",
+                replace_existing=True,
+            )
 
     scheduler.add_job(
         run_full_pipeline_cycle,
         trigger=CronTrigger(hour=_DOWNSTREAM_HOUR, minute=_DOWNSTREAM_MINUTE),
         id="downstream-pipeline",
         name="Daily analysis -> messages -> sending -> reminders -> replies",
+        replace_existing=True,
+    )
+
+    # Fast poll for tenant-written replies ("Reply Here") -- deliberately
+    # NOT on the once-daily cadence above, so a reply a tenant sends from
+    # the dashboard feels close to real-time rather than waiting up to 24h
+    # for the next downstream-pipeline run. See run_reply_send_cycle()'s
+    # own docstring.
+    scheduler.add_job(
+        run_reply_send_cycle,
+        trigger=IntervalTrigger(minutes=_REPLY_POLL_INTERVAL_MINUTES),
+        id="reply-send-poll",
+        name="Fast poll: deliver tenant-written replies",
         replace_existing=True,
     )
 
@@ -668,9 +1272,9 @@ if __name__ == "__main__":
     outcomes = run_cycle(force=True)
 
     if not outcomes:
-        print("No active accounts found.")
+        print("No active accounts found across any tenant.")
     for outcome in outcomes:
         status = "OK" if outcome["ok"] else f"WARNING ({outcome['warning_type']})"
-        print(f"  {outcome['account']}: {status}")
+        print(f"  [{outcome['tenant_id']}] {outcome['account']}: {status}")
         if not outcome["ok"]:
             print(f"    reason: {outcome['reason']}")

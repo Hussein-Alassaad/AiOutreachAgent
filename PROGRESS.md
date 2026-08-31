@@ -51,6 +51,16 @@ watch LinkedIn reply-detection against a real inbox and fix any selector mismatc
 deploy and warm up. **Do not start `agent/server.py` for real until that first round of
 supervised verification is done** — see `DEPLOY.md`.
 
+**Update 2026-08-20:** the data layer underneath everything above was ported off the
+standalone single-tenant Supabase project onto the main Next.js SaaS's own multi-tenant
+Postgres database — full writeup in the dedicated section below ("Multi-tenant Postgres
+port"). This did NOT touch any discovery/analysis/messaging/CRM/sending business logic,
+and does NOT change any of the still-open gaps above (no channel has completed a real
+supervised send; that remains the actual next step). The 3 LinkedIn + 5 Instagram bakery
+leads mentioned above lived in the OLD Supabase database, not this one — they were not
+carried over, since this is a genuinely different, separate live database (the main SaaS's
+own), not a migration of that old data.
+
 ---
 
 ## Phase status
@@ -518,6 +528,205 @@ of them from the current (already-renamed) HTML sources on 2026-08-02.
 
 ---
 
+## Multi-tenant Postgres port: agent now shares the main SaaS's own database (2026-08-20)
+
+Ported the agent's ENTIRE data-access layer off its standalone single-tenant Supabase
+project onto the main Next.js SaaS's own multi-tenant Postgres database (a real, live
+Supabase Postgres project the Next.js app already migrates via Prisma —
+`prisma/schema.prisma`'s `Outreach*` models, lines ~740–1004). This is a data-layer-only
+port: no discovery/analysis/messaging/CRM/sending business logic changed. Business logic
+files (`discovery/*.py`, `analysis/*.py`, `messaging/*.py`, `crm/*.py`, `sending/*.py`,
+`notifications/*.py`, `core/pacing.py`, `core/health.py`) were confirmed by grep to only
+ever call `agent.db.repositories`, never touch the database directly — none of them
+changed, and that claim held for every file on the do-not-touch list.
+
+**Files changed/created:**
+- `agent/db/postgres_client.py` (new) — psycopg2 + `ThreadedConnectionPool` (chosen over
+  psycopg3: no async need anywhere in this codebase, psycopg2-binary was already in
+  `agent/venv`, and a small explicit pool returns connections promptly to Supabase's
+  transaction-mode pooler). Also strips `pgbouncer=true` and other Prisma-only query
+  params from `DATABASE_URL` before connecting — **confirmed live**: psycopg2 rejects that
+  param outright ("invalid dsn: invalid URI query parameter") since it's meaningful to
+  Prisma's own client, not real libpq.
+- `agent/db/crypto.py` (new) — AES-256-GCM decrypt-only mirror of
+  `src/lib/outreach/crypto.ts`, read carefully for the exact wire format
+  (`iv_hex:authTag_hex:ciphertext_hex`, 12-byte IV, tag kept separate by Node's API but
+  re-concatenated for `cryptography`'s `AESGCM.decrypt()`). Returns `None` on any failure
+  (missing key, malformed value, tampered ciphertext) rather than raising, matching
+  `crypto.ts`'s own `decryptSecret()` contract.
+- `agent/db/repositories.py` (rewritten) — every function now tenant-scoped. See
+  "Discrepancy" note below for a real deviation from the original port spec, and the
+  "JSON-as-TEXT" and "id/updated_at" notes below for two real bugs the smoke test caught
+  and fixed.
+- `agent/db/smoke_test_postgres.py` (new) — live round-trip test, see below.
+- `agent/core/session.py` — `build_proxy_config()` now decrypts `proxy_password_enc`
+  via `db/crypto.py` before handing it to Playwright; falls back to no password (not a
+  crash) if decryption fails, same graceful-degradation posture as everywhere else in
+  this codebase.
+- `agent/core/account_pool.py` — `load_accounts()`/`get_due_accounts()` now take
+  `tenant_id` and scope to that tenant only.
+- `agent/scheduler.py` — every orchestration function (`run_cycle`, `run_discovery_cycle`,
+  `run_analysis_cycle`, `run_message_generation_cycle`, `run_sending_cycle`,
+  `run_approval_reminder_check`, `run_full_pipeline_cycle`, `build_daily_schedule`) now
+  loops `repo.list_active_tenant_ids()` and runs each tenant's slice inside
+  `repo.tenant_scope(tenant_id)`, with an added tenant-level try/except so one tenant's
+  failure can't crash another tenant's processing (one more isolation level than the
+  existing per-account/per-lead/per-message isolation, which is untouched). Discovery now
+  also gates `_discover_linkedin`/`_discover_instagram` on the due account's own
+  `platform` field — the pre-port version ran BOTH platform searches for every account
+  regardless of that account's actual platform, which was harmless before (all 3 old
+  accounts implicitly meant "do both"), but is wrong once one OutreachAccount row = one
+  real platform.
+- `agent/main.py`, `agent/server.py` — switched off the deprecated `db.client` module;
+  `server.py`'s `main()` no longer takes/builds a fixed account list (multi-tenant
+  `build_daily_schedule()` discovers its own tenants/accounts now).
+- `agent/config.py` — `DATABASE_URL` + `OUTREACH_ENCRYPTION_KEY` replace
+  `SUPABASE_URL`/`SUPABASE_SERVICE_KEY`.
+- `agent/requirements.txt` — `psycopg2-binary`, `cryptography` added; `supabase` removed
+  (with a comment explaining why — its REST/PostgREST client is no longer used anywhere).
+- `agent/.env` (real secrets file) — `DATABASE_URL` added (same value as the main app's
+  own `.env`); old `SUPABASE_URL`/`SUPABASE_SERVICE_KEY` kept but marked deprecated, not
+  deleted, so `db/client.py` (untouched) still imports without erroring if anyone re-runs
+  it by hand. `OUTREACH_ENCRYPTION_KEY` added **commented out** — see note below.
+- `outreach/.env.example` — documents `DATABASE_URL` as "must be the exact same value as
+  the main app's own `.env`"; documents `OUTREACH_ENCRYPTION_KEY`; the old `dashboard/.env`
+  section marked superseded (see README note below) rather than deleted.
+- `outreach/DEPLOY.md` — env var list updated to `DATABASE_URL`/`OUTREACH_ENCRYPTION_KEY`.
+- `outreach/README.md` — added a note at the top flagging the architecture change (agent
+  now shares the main app's Postgres DB, the standalone `dashboard/` React PWA is
+  superseded by the Next.js app's own Outreach pages), light-touch fixes to the two most
+  misleading paragraphs (Layout section, Stack section). Not a full rewrite.
+
+**Files deliberately left untouched, and why:**
+- `agent/db/client.py` — the old Supabase client. Marked deprecated in a one-line comment
+  at the top, per the spec's instruction, but not rewritten or deleted — nothing imports
+  it anymore except itself.
+- `agent/db/smoke_test.py` — the old Supabase-checking smoke test. Same reasoning: dead
+  code now that nothing calls it, kept as historical reference rather than deleted; a new,
+  separate `smoke_test_postgres.py` was written instead of modifying this one.
+- `discovery/linkedin.py`, `discovery/instagram.py`, `sending/linkedin_send.py`,
+  `sending/instagram_queue.py`, `sending/whatsapp_send.py`, `sending/*_reply_check.py`,
+  `analysis/*.py`, `messaging/*.py`, `core/pacing.py`, `core/health.py`, `core/warmup.py`,
+  `crm/*.py`, `notifications/*.py` — confirmed by grep to only call
+  `agent.db.repositories`, never the database directly. Their business logic (LinkedIn/
+  Instagram selectors, Claude prompts, message style rules, warm-up ramp math, pipeline
+  stage rules) is completely unchanged by this port.
+- `outreach/dashboard/` (the standalone React PWA) and `outreach/database/` (the original
+  Supabase schema SQL) — out of scope per the spec; noted as superseded in README.md but
+  their own files not touched.
+- Nothing under `src/` (the Next.js app) was modified — `src/lib/outreach/crypto.ts` and
+  `src/app/(outreach)/outreach/accounts/AccountHealthClient.tsx` were read-only reference
+  for this port.
+
+**Discrepancy from the original port spec, flagged rather than silently resolved:** the
+spec called for every `repositories.py` function to take `tenant_id` as a required first
+parameter, with every caller updated to pass it. In practice `messaging/*.py`,
+`crm/*.py`, `sending/*.py`, `notifications/*.py`, `core/health.py`, `core/warmup.py` — all
+confirmed out of scope for this port — call these functions with their OLD, pre-port
+argument shapes (e.g. `repo.get_lead(lead_id)`, `repo.get_settings()` with zero arguments,
+`repo.record_stage_change(lead_id, from_stage, to_stage, changed_by=...)`). Making
+`tenant_id` a required first parameter everywhere would have broken every one of those
+call sites, which the spec explicitly says not to rewrite. Resolved with a contextvar:
+`tenant_id` is an OPTIONAL parameter on every function (positioned to match each
+untouched caller's existing argument order, documented per-function in
+`repositories.py`), falling back to `repo.current_tenant_id()` when omitted — a value
+`scheduler.py`'s per-tenant loop sets via `with repo.tenant_scope(tenant_id): ...` before
+calling into any downstream module for that tenant's slice of a cycle. New call sites
+(`scheduler.py` itself, `account_pool.py`, the smoke test) pass `tenant_id` explicitly,
+the form the original spec asked for; only the untouched legacy call sites rely on the
+fallback. Every query still runs `WHERE tenant_id = %s` with a real, correct value either
+way — this changes how the value is threaded through, not whether the scoping is real.
+
+**JSON-as-TEXT, confirmed live:** `platform_handles`, `social_platforms`, `weak_points`,
+`ai_opportunities`, `outreach_languages`, `target_needs`, `skipped_leads`, `recipients`,
+and `snapshot` are TEXT columns holding `JSON.stringify`'d values (per schema.prisma's own
+header comment — deliberate SQLite-compat carried into Postgres, not a gap). The old
+Supabase/PostgREST client auto-marshalled `jsonb` natively; psycopg2 does not
+auto-marshal TEXT, so every read now runs `json.loads()` (fallback to `[]`/`{}` on
+`None`/empty string) and every write runs `json.dumps()`. The smoke test specifically
+round-tripped a `weak_points` list through `insert_lead`/`get_lead` and confirmed it comes
+back as a real Python list, not a JSON string — this would have been a silent, hard-to-spot
+bug (every caller doing `for wp in lead["weak_points"]` would have iterated characters of a
+string instead) if it had shipped unverified.
+
+**Two real bugs the smoke test caught and fixed (not found by `py_compile`, which only
+checks syntax):**
+1. `id` columns have NO Postgres-level default. Prisma's `@id @default(cuid())` is a
+   CLIENT-side default generated by Prisma's own JS runtime at insert time — it does not
+   translate into a database `DEFAULT`. A bare `INSERT` omitting `id` failed live with
+   `NotNullViolation`. Fixed with a `_new_id()` helper (`uuid.uuid4()` — not a cuid, since
+   neither psycopg2 nor Postgres has a cuid generator on hand, but an equally valid unique
+   TEXT primary key; nothing reads these ids as being specifically cuid-shaped) used by
+   every dynamic-column `INSERT` in `repositories.py` (`insert_lead`, `insert_message`,
+   `insert_reply`, `insert_follow_up`, `insert_client_history`); the raw-SQL inserts
+   (`insert_error`, `record_stage_change`, `log_notification`, `start_run`) already used
+   `gen_random_uuid()::text` directly, confirmed working natively without any extension.
+2. `OutreachLead.updatedAt` is Prisma's `@updatedAt` — also client-managed, also NOT NULL,
+   also no DB default. `insert_lead` now sets it explicitly to `now()` in the INSERT.
+   Confirmed this is the ONLY other Outreach model field with this shape (grepped every
+   `@updatedAt` in the schema; `OutreachSettings.updatedAt` is the other one, but the
+   agent never inserts a settings row, only updates an existing one, so it was never at
+   risk).
+3. (Not a bug, but confirmed live and worth flagging): `ErrorLog`'s columns are NOT
+   snake_case like every other table this module touches — `ErrorLog` has no `@map(...)`
+   on any field in schema.prisma, so its real Postgres columns are the literal camelCase
+   `"tenantId"`, `"createdAt"`, `"isExpected"` (confirmed via
+   `information_schema.columns`). `insert_error`/`recent_errors`/`mark_error_resolved`
+   double-quote these three column names specifically; every other function in this
+   module intentionally does not quote, because every other table's columns genuinely are
+   snake_case.
+
+**Proxy password decryption — NOT YET LIVE-EXERCISED with a real credential:** the
+Next.js app's own `OUTREACH_ENCRYPTION_KEY` is still commented out / unset in the repo
+root `.env` as of this port (confirmed by reading it) — meaning no real
+`proxyPasswordEnc` value has ever actually been produced yet (the Next.js app's own
+`encryptSecret()` requires that same var). `agent/db/crypto.py`'s `decrypt_secret()` was
+NOT tested against a real ciphertext produced by `crypto.ts` for this reason — there
+isn't one to test against yet. What WAS verified: the module imports cleanly, and its
+byte-layout logic (IV length, tag placement, key derivation) was written by reading
+`crypto.ts`'s exact implementation, not guessed at. Once a real key is set on both sides
+and a real proxy password is saved through the dashboard, this still needs one live
+round-trip check before being trusted in production.
+
+**Live database used for verification:** the one real tenant currently in this Postgres
+database ("Zimmar" / `zimmar`, created through the actual signup flow — not
+`prisma/seed.ts`'s "vantage" demo tenant, which does not appear to have been run against
+this particular database) has an `OutreachSettings` row but zero `OutreachAccount` rows
+(nobody has added a LinkedIn/Instagram account through the real UI yet). The smoke test
+confirmed this is CORRECTLY reflected as `list_active_tenant_ids() == []` at rest, then
+created its own throwaway account + lead (both cleaned up, confirmed zero residual rows
+after) to exercise the full live path.
+
+**Still NOT live-verified by this port (unchanged from before it, per this project's own
+honesty norms — distinguishing "built"/"type-checks" from "live-tested"):**
+- The actual LinkedIn Send click has never been exercised against a real account — this
+  was already true before this port (see Phase 7 above) and this port does not change
+  that fact. Nothing in this port touched `sending/linkedin_send.py`'s send logic.
+- No Playwright browser was opened, and no LinkedIn/Instagram/Twilio action of any kind
+  was run, as part of this port — confirmed by design (the smoke test only ever imports
+  `agent.db.*`, never `agent.core.session` or any `discovery`/`sending` module that opens
+  a browser).
+- ~~The new per-tenant scheduler loop ... has NOT had a live end-to-end run with two or
+  more real tenants each having active accounts~~ — **RESOLVED 2026-08-22, see the
+  dedicated section below.** `db/smoke_test_multitenant.py` now exercises exactly this:
+  two real, simultaneously-active throwaway tenants, each with an active linkedin
+  account, run through `list_active_tenant_ids()` + `tenant_scope()` + an ambient
+  (zero-arg) `get_settings()` call — the exact composition `scheduler.py`'s real loop
+  uses. All checks passed, DB left clean. This proves the ORCHESTRATION layer
+  (tenant-loop + contextvar resolution + cross-tenant isolation) is correct with two
+  tenants alive at once — it does NOT touch Playwright/LinkedIn/Instagram/Twilio, so the
+  supervised-send gap below is still fully open; this only closes the "does the
+  multi-tenant plumbing itself work" question, which was a separate, real gap.
+- `agent/db/crypto.py`'s decryption has not been checked against a real
+  `crypto.ts`-produced ciphertext (see note above — no such ciphertext exists yet in this
+  environment).
+- `agent/server.py` should still not be started for real against a live deployment until
+  the pre-existing supervised-send verification (Phase 7/10, still open per PROGRESS.md
+  above) happens — this port does not change that guidance, it only changes what database
+  `server.py` reads from once it does eventually run.
+
+---
+
 ## Decisions log
 
 | Date | Decision |
@@ -530,3 +739,6 @@ of them from the current (already-renamed) HTML sources on 2026-08-02.
 | 2026-08-03 | Built `agent/sending/linkedin_reply_check.py`, the piece `crm/reply_detection.py` had explicitly deferred until LinkedIn sending existed. No real LinkedIn inbox with an actual conversation was available to inspect (same gap `linkedin_send.py`'s person path already had), so its DOM selectors are inferred from LinkedIn's own naming conventions rather than confirmed live — flagged honestly in the module's docstring rather than presented as verified, and wired into `run_full_pipeline_cycle` with the same defensive try/except already used for the WhatsApp reply check so a selector mismatch there can't wipe out the other steps' results. |
 | 2026-08-03 | At Hussein's explicit request ("test everything, catch any bug"), ran real discovery/analysis/message-generation live rather than trusting the code on paper — no send-capable action was run unattended. Caught and fixed 7 real, independent bugs (2 Playwright navigation hangs; LinkedIn's about-page/post-timestamp/search-result-name selectors all drifted since 2026-07-31; Instagram's hashtag page now redirects to a slow client-rendered search page with no wait in the original code; Instagram's bio extraction was reading the logged-in viewer's own bio, not the target account's) — full writeup in the dedicated section above. All fixes verified by re-running live against the same real pages, not just by inspection. Chose not to guess at Instagram's now-unreadable website/bio-link field (sits behind a button with no `href`) rather than fake a value. |
 | 2026-08-03 | 3 real LinkedIn leads and 5 real Instagram leads discovered during the live test round were deliberately left in the database rather than deleted, at Hussein's choice — they're genuine, correctly-qualified businesses, not corrupted test artifacts, so they're now real pipeline data awaiting his approval. Corrupted intermediate saves from mid-fix test runs (3 LinkedIn leads with concatenated `business_name` text, 5 Instagram leads with `business_name: null`) WERE deleted, each confirmed corrupted before removal. |
+| 2026-08-20 | Ported the agent's whole data-access layer off its standalone single-tenant Supabase project onto the main Next.js SaaS's own multi-tenant Postgres database — full writeup in the dedicated section above. Deviated from the original port spec on one point (every `repositories.py` function was supposed to take a required `tenant_id` first parameter; made it optional with a contextvar fallback instead, since the untouched `messaging/crm/sending/notifications/core.health/core.warmup` modules call these functions with their old, pre-port argument shapes and rewriting them was out of scope) — flagged as a discrepancy rather than silently done. The smoke test (`db/smoke_test_postgres.py`, run live against the real database) caught and fixed 2 real bugs neither `py_compile` nor code review had surfaced: `id` columns have no Postgres-level default (Prisma's `cuid()` default is client-side only), and `OutreachLead.updatedAt` is NOT NULL with no DB default either. Also confirmed live that `ErrorLog`'s columns are literal camelCase (`"tenantId"`, `"createdAt"`, `"isExpected"`), unlike every other Outreach table, since that model has no `@map(...)` in the schema. Proxy password decryption (`db/crypto.py`) was NOT tested against a real ciphertext, since `OUTREACH_ENCRYPTION_KEY` is still unset on the Next.js app's side too — nothing to decrypt yet. This port does not change the still-open fact that no channel has completed an actual supervised live send. |
+| 2026-08-22 | Onboarded a second real Outreach tenant ("Insurance") via the admin dashboard's real `createTenantAction`, alongside the existing "Zimmar" tenant — the first time this live database has had two real, distinct Outreach tenants at once. Added `OutreachSettings.businessName`/`businessDescription` (previously the AI's own identity was hardcoded to "Nexaris, a CGI/VFX/3D anamorphic billboard agency" in `messaging/generate.py` and `analysis/prompts.py`, which would have been wrong for any tenant that isn't Nexaris) — now read per-tenant via an ambient `repo.get_settings()` call at generation time, same call shape as everything else. Made LinkedIn/Email/Instagram independently toggleable per tenant from the admin dashboard's existing Sections UI (the mechanism already existed for other products; Outreach's own account-creation dropdown just wasn't gating on it yet) — confirmed live that disabling a channel removes it from both the nav and the "Add account" platform list. Built `db/smoke_test_multitenant.py` to directly answer the open question two entries above ("has NOT had a live end-to-end run with two or more real tenants each having active accounts") — creates two real throwaway tenants with active linkedin accounts, runs them through the exact `list_active_tenant_ids()` + `tenant_scope()` + ambient-`get_settings()` composition `scheduler.py`'s real loop uses, confirms cross-tenant reads are blocked both directions, confirms the contextvar resets cleanly between iterations. All checks passed; this is a database-and-orchestration-layer test only (no Playwright/LinkedIn/Instagram/Twilio touched), so the supervised-send gap remains fully open — it closes the separate "does the multi-tenant plumbing itself work" question, not "does sending actually work." |
+| 2026-08-22 | A parallel adversarial code review (3 agents covering server actions, the Python agent, and schema/API-routes/React) surfaced two real concurrency bugs, both fixed same day and proven under actual concurrent load (not just reasoned about): **(1)** `src/lib/actions/outreach-approvals.ts`'s `sendIfEmailChannel()` had a check-then-act race on the daily email cap — `approveAllMessagesAction`'s `Promise.all(messages.map(sendIfEmailChannel))` let every concurrent call read the same `sentToday` count before any of them wrote its own `sent` row back, so bulk-approving N messages on an account with a lower cap could send all N, blowing the cap several times over (exactly the spam-flagging risk the cap exists to prevent). Fixed with a `db.$transaction` that takes a Postgres row lock (`SELECT ... FOR UPDATE`) on the account before counting, and claims the slot (writes `sendStatus: "sent"` provisionally) *inside* that same locked transaction, before the real SES call — corrected back to `"failed"` after if the send itself fails. Verified live: 5 concurrent claims against a cap of 2 resulted in exactly 2 successful sends, reproducibly. **(2)** `scheduler.py`'s `_run_cycle_for_tenant`/`_run_discovery_cycle_for_tenant` had the same class of bug: `account_pool.get_due_accounts()`'s `has_run_today()` check and the later `repo.start_run()` insert were two separate, unguarded steps, so two overlapping processes (e.g. the always-on server's cron firing an account's job at the same moment a manual `python -m agent.scheduler` test run is in progress) could both see "not run yet today" and both proceed — corrupting the shared `browser_profiles/{account_id}.json` session file (two Playwright contexts both writing `storage_state()` to the same path) and doubling that account's real daily send/discovery volume, undermining the whole warm-up/pacing system. Fixed with a new `repo.claim_account_for_run()` using `pg_advisory_xact_lock(hashtext(account_id))` (transaction-scoped, not session-scoped, since `get_cursor()` returns connections to the pgbouncer pool between blocks — a session-scoped lock would release before the caller did anything with it) wrapping the check-and-insert atomically; a `skip_daily_check` param preserves `force=True`'s existing "Hussein can re-test without a stale run row blocking it" behavior while still taking the lock. Verified live: 10 concurrent threads claiming the same account resulted in exactly 1 successful claim; separately confirmed the force-test path still works when `skip_daily_check=True`. Both fixes' test scripts created their own throwaway tenants/accounts and cleaned up fully afterward — no residual data. |

@@ -76,10 +76,42 @@ import datetime as dt
 
 from playwright.sync_api import Page
 
+from agent.core.pacing import human_delay, human_type
 from agent.core.session import SessionManager
 from agent.crm import pipeline
 from agent.db import repositories as repo
 from agent.messaging import approval
+from agent.sending import attachments
+
+# Reuses linkedin_reply_check.py's already-live-verified thread-opening
+# selectors (see that module's own docstring for the real DOM these were
+# confirmed against) -- a reply is delivered INTO the lead's existing
+# conversation thread, not via the company/person "Message" button flow
+# above (which opens a fresh connection request / new thread instead).
+from agent.sending.linkedin_reply_check import (
+    _CONVERSATION_LIST_ITEM_SELECTOR,
+    LINKEDIN_MESSAGING_URL,
+)
+
+_THREAD_CONTENTEDITABLE_SELECTOR = "div.msg-form__contenteditable[contenteditable=true]"
+_THREAD_SEND_BUTTON_SELECTOR = "button.msg-form__send-button"
+# NOT yet live-verified -- LinkedIn's messaging widget attach/media button,
+# inferred from its aria-label convention (same reasoning as
+# _PERSON_MESSAGE_BUTTON_SELECTOR above). Watch closely on first real use.
+_THREAD_ATTACHMENT_BUTTON_SELECTOR = "button[aria-label*='attach' i], button[aria-label*='media' i]"
+
+
+class NoExistingThread(RuntimeError):
+    """
+    Raised when a reply is queued for a lead with no existing LinkedIn
+    conversation to reply into -- shouldn't happen in practice (a reply only
+    ever gets created after the lead already messaged us, see
+    src/lib/actions/outreach-replies.ts's sendReplyAction()), but a real
+    account-side edge case (thread archived/deleted on LinkedIn's side
+    between the reply detection and this send) is possible, so this is a
+    normal "couldn't send" outcome, not a crash -- same treatment as
+    NoMessageButtonAvailable above.
+    """
 
 # The company-page message modal requires picking one of a fixed set of
 # topics (real values scraped from the live <select>, see module docstring).
@@ -145,10 +177,18 @@ def _send_to_company(page: Page, lead: dict, body: str) -> None:
             "Message button enabled on its LinkedIn company page."
         )
 
+    # Human-scale pacing before every platform-visible action -- an instant
+    # click/fill the moment the page loads, or a body typed in one atomic
+    # DOM write, is itself a detectable automation signal (see
+    # agent/core/pacing.py's module docstring).
+    human_delay()
     message_button.click()
     page.locator(_COMPANY_MODAL_SELECTOR).wait_for(state="visible", timeout=10_000)
+    human_delay()
     page.locator(_COMPANY_TOPIC_SELECT_SELECTOR).select_option(value=_TOPIC_URN)
-    page.locator(_COMPANY_TEXTAREA_SELECTOR).fill(body)
+    human_delay()
+    human_type(page.locator(_COMPANY_TEXTAREA_SELECTOR), body)
+    human_delay()
     page.locator(_COMPANY_SEND_BUTTON_SELECTOR).click()
 
 
@@ -160,10 +200,13 @@ def _send_to_person(page: Page, lead: dict, body: str) -> None:
             "reachable Message button (not connected, no open profile/InMail)."
         )
 
+    human_delay()
     message_button.click()
     box = page.locator(_PERSON_CONTENTEDITABLE_SELECTOR).first
     box.wait_for(state="visible", timeout=10_000)
-    box.fill(body)
+    human_delay()
+    human_type(box, body)
+    human_delay()
     page.locator(_PERSON_SEND_BUTTON_SELECTOR).first.click()
 
 
@@ -200,7 +243,16 @@ def send_message(message: dict) -> dict:
         raise ValueError(f"Lead {lead['id']} has no owning account to send from.")
 
     with SessionManager() as sessions:
-        context, page = sessions.open(account)
+        # ProxyIpMismatch propagates straight out of open() here, uncaught --
+        # exactly the right behavior: the caller (scheduler.run_sending_cycle())
+        # already turns any exception from this function into a normal
+        # "ok": False result (see this function's own docstring), the same
+        # treatment NoMessageButtonAvailable already gets, so a real send
+        # attempt never proceeds on an account whose proxy resolved to an
+        # unexpected IP.
+        context, page, new_verified_ip = sessions.open(account)
+        if new_verified_ip and not account.get("verified_proxy_ip"):
+            repo.update_account(account["id"], {"verified_proxy_ip": new_verified_ip})
         try:
             # RE-VERIFIED 2026-08-03: default wait_until="load" caused real,
             # reproducible timeouts elsewhere in this codebase that day
@@ -229,3 +281,99 @@ def send_message(message: dict) -> dict:
     repo.mark_client_history_contacted(message["lead_id"])
 
     return updated_message
+
+
+def send_reply(message: dict) -> dict:
+    """
+    Delivers a tenant-written reply (message["is_reply"] == True, created by
+    src/lib/actions/outreach-replies.ts's sendReplyAction()) INTO the lead's
+    existing LinkedIn conversation thread -- NOT via _send_to_company/
+    _send_to_person above, which both open a fresh connection request /
+    company-page inbox modal instead of continuing an existing thread.
+
+    Reuses linkedin_reply_check.py's thread-finding approach (match the
+    conversation list by the lead's business_name) since that selector set
+    is already live-verified against a real LinkedIn inbox -- see that
+    module's docstring. The reply-composer selectors below
+    (msg-form__contenteditable / msg-form__send-button) are the SAME shared
+    LinkedIn messaging widget send_message()'s PERSON path already uses
+    (see _PERSON_CONTENTEDITABLE_SELECTOR/_PERSON_SEND_BUTTON_SELECTOR
+    above) -- reused here under a separate name since this path opens the
+    thread differently (via the inbox list, not a profile's Message
+    button), even though the widget itself is identical once open.
+
+    Called by scheduler.py's run_reply_send_cycle() -- a fast poll (~every
+    2-3 min), separate from the once-daily run_sending_cycle() above, so a
+    reply feels close to real-time. Mirrors send_message()'s own
+    bookkeeping (send_status/sent_at/sent_via_account) but deliberately
+    does NOT call pipeline.move_stage() or contact_count/first_contacted_at
+    -- those already happened when the ORIGINAL outbound message was sent;
+    a reply to an ongoing conversation isn't a new first contact.
+
+    If message["attachment_url"] is set (a photo/video/voice note attached
+    from "Reply Here" -- see src/lib/outreach/reply-attachments.ts), it's
+    downloaded to a temp file (sending/attachments.py) and attached via
+    LinkedIn's own file-picker button BEFORE typing the body, so the
+    attachment preview is visible before Send is clicked, matching how a
+    real person would compose the message. Attachment-picker selector is
+    NOT yet live-verified -- same caveat as every other new DOM interaction
+    this session.
+    """
+    lead = repo.get_lead(message["lead_id"])
+    if not lead or not lead.get("profile_url"):
+        raise ValueError(f"Message {message['id']} has no lead profile_url to send to.")
+
+    business_name = lead.get("business_name") or ""
+    body = approval.active_body(message)
+    attachment_url = message.get("attachment_url")
+    attachment_path = None
+
+    account = repo.get_account(lead["account_id"])
+    if not account:
+        raise ValueError(f"Lead {lead['id']} has no owning account to send from.")
+
+    try:
+        if attachment_url:
+            attachment_path = attachments.download_attachment(attachment_url, message.get("attachment_name"))
+
+        with SessionManager() as sessions:
+            context, page, new_verified_ip = sessions.open(account)
+            if new_verified_ip and not account.get("verified_proxy_ip"):
+                repo.update_account(account["id"], {"verified_proxy_ip": new_verified_ip})
+            try:
+                page.goto(LINKEDIN_MESSAGING_URL, timeout=30_000, wait_until="domcontentloaded")
+                item = page.locator(_CONVERSATION_LIST_ITEM_SELECTOR, has_text=business_name).first
+                if item.count() == 0:
+                    raise NoExistingThread(
+                        f"No existing LinkedIn conversation found for {business_name or lead['profile_url']}."
+                    )
+                human_delay()
+                item.click()
+
+                box = page.locator(_THREAD_CONTENTEDITABLE_SELECTOR).first
+                box.wait_for(state="visible", timeout=10_000)
+
+                if attachment_path:
+                    human_delay()
+                    with page.expect_file_chooser() as fc_info:
+                        page.locator(_THREAD_ATTACHMENT_BUTTON_SELECTOR).first.click()
+                    fc_info.value.set_files(str(attachment_path))
+                    human_delay()
+
+                if body:
+                    human_delay()
+                    human_type(box, body)
+                human_delay()
+                page.locator(_THREAD_SEND_BUTTON_SELECTOR).first.click()
+            finally:
+                sessions.close(account["id"], context)
+    finally:
+        if attachment_path:
+            attachments.cleanup_attachment(attachment_path)
+
+    now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
+    return repo.update_message(message["id"], {
+        "send_status": "sent",
+        "sent_at": now_iso,
+        "sent_via_account": account["id"],
+    })

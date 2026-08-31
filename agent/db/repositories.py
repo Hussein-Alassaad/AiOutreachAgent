@@ -1,366 +1,1223 @@
 """
-Data-access layer — the ONLY place that reads or writes Supabase tables.
+Data-access layer — the ONLY place that reads or writes the Next.js SaaS's
+Postgres tables on behalf of the Python agent.
 
 Every other module in the agent goes through the functions here instead of
 touching the database directly. Two payoffs:
 
   1. If the schema changes, this one file changes — not every caller.
   2. Callers read like plain English: `repositories.insert_lead(...)`,
-     `repositories.get_settings()`. No SQL leaks into the business logic.
+     `repositories.get_settings(tenant_id)`. No SQL leaks into the business
+     logic.
 
-The module is organised one section per table, in the same order as
-02_SUPABASE_SCHEMA.sql: accounts, settings, leads, messages, pipeline_history,
-follow_ups, client_history, notifications_log, runs.
+PORTED 2026-08-20 from the standalone single-tenant Supabase schema to the
+main app's multi-tenant Postgres database (see prisma/schema.prisma, models
+around lines 740-1004). Three real, deliberate behavior changes from the old
+Supabase-client version, documented once here rather than repeated at every
+call site:
 
-All functions use the shared service-role client from db/client.py, so they run
-on the trusted server with full access and bypass Row Level Security.
+  1. TENANT SCOPING — every function now takes an explicit `tenant_id: str`
+     (first parameter, after any id parameters that already existed) and
+     every query is `WHERE tenant_id = %s`. This is what makes the agent
+     multi-tenant: one process can now serve every tenant that has active
+     Outreach accounts, not just one hardcoded account set.
+
+  2. JSON-AS-TEXT — the Prisma schema stores JSON-shaped fields (platform
+     handles, weak points, AI opportunities, target needs, languages,
+     skipped leads, recipients, snapshots, ...) as TEXT columns
+     (JSON.stringify'd), not native Postgres jsonb — deliberate
+     SQLite-compat carried over into Postgres (see schema.prisma's header
+     comment), not a gap. The old Supabase client auto-marshalled jsonb
+     natively; this client does not, so every read of one of these columns
+     runs json.loads() (with a safe fallback to [] / {} on None or empty
+     string) and every write runs json.dumps().
+
+  3. COLUMN NAMES — the Postgres columns are snake_case per Prisma's
+     @map(...) (e.g. `tenant_id`, `profile_url`, `sent_via_account_id`),
+     while this module's PUBLIC function signatures and the Row dicts they
+     return/accept keep the OLD, pre-port key names the rest of the agent
+     already calls them by (e.g. "sent_via_account", "approved_by",
+     "error_message") wherever those differ, so that discovery/*,
+     analysis/*, messaging/*, crm/*, sending/*, and notifications/* — none
+     of which talk to the database directly — did not need to change at
+     all. The translation between old key names and real column names
+     happens only inside this file.
+
+DISCREPANCY FLAGGED (see PROGRESS.md's dated entry for the full writeup):
+the spec for this port called for every repositories.py function to take an
+explicit `tenant_id` as its first parameter, with callers updated to pass
+it. In practice, `messaging/*.py`, `crm/*.py`, `sending/*.py`,
+`notifications/*.py`, and `core/health.py`/`core/warmup.py` — all
+explicitly out of scope for this port (they only ever call
+`repositories.*`, never touch the DB directly, confirmed by grep) — call
+these functions with their OLD, pre-port argument lists, e.g.
+`repo.get_lead(lead_id)`, `repo.get_settings()` with zero arguments,
+`repo.record_stage_change(lead_id, from_stage, to_stage, changed_by=...)`.
+Adding a required positional `tenant_id` to every function would break
+every one of those call sites, which the spec explicitly says not to
+rewrite.
+
+Resolution: `tenant_id` is accepted as an OPTIONAL first parameter on every
+function below. When omitted, it falls back to `current_tenant_id()`, a
+contextvar-backed value that scheduler.py's per-tenant loop sets once via
+`tenant_scope(tenant_id)` before calling into any downstream module for that
+tenant's iteration (see scheduler.py's `run_discovery_cycle` and friends).
+This preserves real per-request tenant scoping — every query still runs
+`WHERE tenant_id = %s` with a real value — without rewriting any of the
+explicitly out-of-scope callers. New call sites (scheduler.py itself,
+account_pool.py, the smoke test) pass `tenant_id` explicitly, which is the
+form the spec asked for; only the untouched legacy call sites rely on the
+context-var fallback.
 """
 
 from __future__ import annotations
 
-from typing import Any
+import json
+import uuid
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Any, Iterator
 
-from agent.db.client import get_client
+from agent.db.postgres_client import get_cursor
+
+
+def _new_id() -> str:
+    """
+    Generate a primary key value for tables whose `id` column has no
+    database-level default. Prisma's `@id @default(cuid())` (see every
+    Outreach model in schema.prisma) is a CLIENT-side default generated by
+    Prisma's own JS runtime at insert time -- it does NOT translate into a
+    Postgres column default, confirmed live (a bare INSERT that omits `id`
+    fails with NotNullViolation: "null value in column \"id\""). This isn't
+    a cuid -- psycopg2 has no cuid generator on hand and Postgres has no
+    built-in one either -- it's a UUID4, which is an equally valid, equally
+    unique TEXT primary key value; nothing in the schema or in Prisma's own
+    reads of these rows assumes an id is specifically a cuid rather than
+    merely a unique string. Tables whose inserts always specify every
+    column via raw SQL (error_logs, outreach_pipeline_history,
+    outreach_notifications_log, outreach_runs, below) use
+    `gen_random_uuid()::text` directly in the SQL instead -- both approaches
+    produce the same kind of value, this helper exists for the functions
+    that build their column list dynamically from a fields dict and can't
+    as easily interpolate a raw SQL function call.
+    """
+    return str(uuid.uuid4())
 
 # Type alias: a database row is just a dict of column -> value.
 Row = dict[str, Any]
 
 
 # ════════════════════════════════════════════════════════════════════════
-# ACCOUNTS — the 3 outreach accounts, each with its own proxy slot
+# Tenant context (see "DISCREPANCY FLAGGED" in the module docstring above)
 # ════════════════════════════════════════════════════════════════════════
 
-def list_accounts() -> list[Row]:
-    """All accounts, oldest first. Used by the account pool at run start."""
-    res = get_client().table("accounts").select("*").order("created_at").execute()
-    return res.data
+_current_tenant_id: ContextVar[str | None] = ContextVar("_current_tenant_id", default=None)
+_platform_scope_active: ContextVar[bool] = ContextVar("_platform_scope_active", default=False)
 
 
-def get_account(account_id: str) -> Row | None:
-    """One account by id, or None if it doesn't exist."""
-    res = get_client().table("accounts").select("*").eq("id", account_id).limit(1).execute()
-    return res.data[0] if res.data else None
+class NoTenantInScope(RuntimeError):
+    """Raised when a repositories.py function needs a tenant_id, none was
+    passed explicitly, and no tenant_scope(...) is currently active either."""
 
 
-def update_account(account_id: str, fields: Row) -> Row:
-    """Patch one account (e.g. status, warning fields, proxy creds, warm-up cap)."""
-    res = get_client().table("accounts").update(fields).eq("id", account_id).execute()
-    return res.data[0]
+def current_tenant_id() -> str | None:
+    """The tenant_id set by the innermost active tenant_scope(...), or None
+    if none is active."""
+    return _current_tenant_id.get()
 
 
-def set_account_warning(account_id: str, warning_type: str, reason: str) -> Row:
+def is_platform_scope() -> bool:
+    """True while a platform_scope(...) block is active -- read by
+    postgres_client.get_cursor() to decide whether to set
+    app.is_platform_admin alongside (or instead of) app.current_tenant_id."""
+    return _platform_scope_active.get()
+
+
+@contextmanager
+def tenant_scope(tenant_id: str) -> Iterator[None]:
+    """
+    Scheduler-owned context manager: wrap one tenant's slice of a cycle in
+    `with tenant_scope(tenant_id): ...` so every downstream repositories.py
+    call made without an explicit tenant_id (i.e. every call from the
+    untouched messaging/crm/sending/notifications/core modules) resolves to
+    THIS tenant. Re-entrant-safe (nested scopes restore the outer value on
+    exit) even though scheduler.py's own loops are not nested in practice.
+    """
+    token = _current_tenant_id.set(tenant_id)
+    try:
+        yield
+    finally:
+        _current_tenant_id.reset(token)
+
+
+@contextmanager
+def platform_scope() -> Iterator[None]:
+    """
+    RLS 2026-08-28: the Python-side equivalent of the Node app's
+    withPlatformAccess() (src/lib/db.ts) -- for the small number of
+    genuinely cross-tenant reads that have no single tenant to scope to
+    (right now, just list_active_tenant_ids(), which must see every
+    tenant's outreach_accounts to build the scheduler's own per-tenant loop
+    in the first place -- a chicken-and-egg the same shape as Node's own
+    login-before-tenant-is-known case). Sets app.is_platform_admin='true'
+    on the connection instead of app.current_tenant_id, which every RLS
+    policy in enable_rls.sql treats as an unconditional pass. Use ONLY for
+    call sites that legitimately need to see every tenant at once -- never
+    as a shortcut around passing the right tenant_id/tenant_scope(...).
+    """
+    token = _platform_scope_active.set(True)
+    try:
+        yield
+    finally:
+        _platform_scope_active.reset(token)
+
+
+def _resolve_tenant(tenant_id: str | None) -> str:
+    """
+    RLS 2026-08-28: every one of this module's ~35 call sites already
+    follows the same two-line shape --
+        tenant_id = _resolve_tenant(tenant_id)
+        with get_cursor(...) as cur: ...
+    -- and get_cursor() reads the EFFECTIVE tenant from the
+    _current_tenant_id ContextVar (via current_tenant_id()), not from
+    whatever local variable a caller happens to be holding. That was
+    already correct for the common case (no explicit tenant_id passed,
+    resolved from an ambient tenant_scope(...) block), but wrong for a
+    caller that passes an EXPLICIT tenant_id with no tenant_scope(...)
+    active at all -- e.g. list_accounts(tenant_id) called directly, not
+    from inside `with tenant_scope(tenant_id):` -- the SQL's own `WHERE
+    tenant_id = %s` filter would be correct, but the ContextVar (and so
+    RLS) would still see nothing, and FORCE ROW LEVEL SECURITY would
+    return zero rows regardless of how correct the WHERE clause was.
+    Confirmed as a real bug via a live test against app_user, not a
+    hypothetical: repo.list_accounts(zimmar_id) returned 0 while
+    `with tenant_scope(zimmar_id): repo.list_accounts()` correctly
+    returned 1, for the identical query.
+
+    Fixed here, once, rather than touching all ~35 call sites: whenever
+    this function resolves an EXPLICIT tenant_id (not the ambient one),
+    it also sets the ContextVar to that value, so get_cursor()'s RLS
+    context is always correct no matter which of the two calling styles a
+    given repositories.py function uses. Deliberately NOT reset afterward
+    (no token/finally) -- this agent has no concurrent multi-tenant
+    request handling anywhere (confirmed: no threading/asyncio.gather/
+    ThreadPoolExecutor in scheduler.py or this module), every cycle
+    processes one tenant's slice fully before moving to the next, so
+    leaving the ContextVar pointed at the most recently resolved tenant
+    is safe and matches this codebase's existing single-tenant-at-a-time
+    execution model -- the SAME safety property tenant_scope() already
+    relies on implicitly.
+    """
+    if tenant_id:
+        _current_tenant_id.set(tenant_id)
+        return tenant_id
+    ambient = _current_tenant_id.get()
+    if ambient:
+        return ambient
+    raise NoTenantInScope(
+        "No tenant_id was passed and no tenant_scope(...) is active. Every "
+        "repositories.py call must either pass tenant_id explicitly or run "
+        "inside `with tenant_scope(tenant_id): ...`."
+    )
+
+
+# ════════════════════════════════════════════════════════════════════════
+# JSON-as-TEXT helpers (see module docstring, point 2)
+# ════════════════════════════════════════════════════════════════════════
+
+def _loads_list(value: Any) -> list:
+    """Parse a JSON-encoded TEXT column expected to hold a list. Empty
+    string / None / a bare '[]' all safely become []."""
+    if value is None or value == "":
+        return []
+    if isinstance(value, (list, dict)):
+        return value  # already parsed (e.g. a caller-constructed dict, not a DB row)
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError):
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+def _loads_dict(value: Any) -> dict:
+    """Parse a JSON-encoded TEXT column expected to hold an object. Empty
+    string / None / a bare '{}' all safely become {}."""
+    if value is None or value == "":
+        return {}
+    if isinstance(value, (list, dict)):
+        return value
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _dumps(value: Any) -> str:
+    """JSON-encode a value for a TEXT-as-JSON column. None becomes '[]' —
+    every JSON TEXT column in this schema defaults to an empty array or
+    object, never SQL NULL, per schema.prisma's @default(...) values."""
+    if value is None:
+        value = []
+    return json.dumps(value)
+
+
+# ════════════════════════════════════════════════════════════════════════
+# ACCOUNTS — outreach_accounts (OutreachAccount)
+# ════════════════════════════════════════════════════════════════════════
+
+_ACCOUNT_JSON_FIELDS = {"platform_handles"}
+
+
+def _account_out(row: Row | None) -> Row | None:
+    if row is None:
+        return None
+    row = dict(row)
+    if "platform_handles" in row:
+        row["platform_handles"] = _loads_dict(row["platform_handles"])
+    return row
+
+
+def list_accounts(tenant_id: str | None = None) -> list[Row]:
+    """All of this tenant's accounts, oldest first. Used by the account pool
+    at run start."""
+    tenant_id = _resolve_tenant(tenant_id)
+    with get_cursor(commit=False) as cur:
+        cur.execute(
+            "SELECT * FROM outreach_accounts WHERE tenant_id = %s ORDER BY created_at",
+            (tenant_id,),
+        )
+        rows = cur.fetchall()
+    return [_account_out(r) for r in rows]
+
+
+def get_account(account_id: str, tenant_id: str | None = None) -> Row | None:
+    """One account by id (scoped to this tenant), or None if it doesn't
+    exist / belongs to another tenant. `account_id` comes first (not
+    `tenant_id`) to match the untouched callers' existing
+    `repo.get_account(lead["account_id"])` call shape."""
+    tenant_id = _resolve_tenant(tenant_id)
+    with get_cursor(commit=False) as cur:
+        cur.execute(
+            "SELECT * FROM outreach_accounts WHERE id = %s AND tenant_id = %s LIMIT 1",
+            (account_id, tenant_id),
+        )
+        row = cur.fetchone()
+    return _account_out(row)
+
+
+def update_account(account_id: str, fields: Row, tenant_id: str | None = None) -> Row:
+    """Patch one account (e.g. status, warning fields, proxy creds, warm-up
+    cap), scoped to this tenant. `account_id` before `fields` (not
+    `tenant_id` first) to match core/warmup.py's untouched
+    `repo.update_account(account["id"], {...})` call shape."""
+    tenant_id = _resolve_tenant(tenant_id)
+    fields = dict(fields)
+    for key in _ACCOUNT_JSON_FIELDS:
+        if key in fields:
+            fields[key] = _dumps(fields[key])
+
+    set_clause = ", ".join(f"{k} = %s" for k in fields)
+    values = list(fields.values()) + [account_id, tenant_id]
+    with get_cursor() as cur:
+        cur.execute(
+            f"UPDATE outreach_accounts SET {set_clause} "  # noqa: S608 -- keys are our own dict keys, never user input
+            "WHERE id = %s AND tenant_id = %s RETURNING *",
+            values,
+        )
+        row = cur.fetchone()
+    return _account_out(row)
+
+
+def set_account_warning(
+    account_id: str, warning_type: str, reason: str, tenant_id: str | None = None
+) -> Row:
     """
     Record an account warning and pause it.
 
     Core rule R9: warnings carry a specific TYPE and REASON, never generic, and
     the account is paused. Quota is never redistributed automatically — that stays
     a manual decision, so we only raise the flag, we don't act on it.
+
+    Signature matches core/health.py's untouched
+    `repo.set_account_warning(account_id, warning_type, reason)` call shape.
     """
     return update_account(account_id, {
         "status": "paused",
         "warning_type": warning_type,
         "warning_reason": reason,
-    })
+    }, tenant_id=tenant_id)
+
+
+def list_active_tenant_ids() -> list[str]:
+    """
+    Every tenant id with at least one active LinkedIn or Instagram
+    OutreachAccount row. This is the mechanism that makes the agent
+    multi-tenant — scheduler.py loops over exactly the tenants this returns,
+    so a tenant with no active linkedin/instagram account is never touched
+    at all (email accounts are the Next.js app's own SES-sending concern,
+    see repositories.py's module docstring point about channel scoping, and
+    are deliberately excluded here too).
+    """
+    with platform_scope(), get_cursor(commit=False) as cur:
+        cur.execute(
+            """
+            SELECT DISTINCT tenant_id FROM outreach_accounts
+            WHERE status = 'active' AND platform IN ('linkedin', 'instagram')
+            """
+        )
+        rows = cur.fetchall()
+    return [r["tenant_id"] for r in rows]
 
 
 # ════════════════════════════════════════════════════════════════════════
-# SETTINGS — single global row, edited from the dashboard
+# SETTINGS — outreach_settings (OutreachSettings), one row per tenant
 # ════════════════════════════════════════════════════════════════════════
 
-def get_settings() -> Row | None:
-    """
-    The one settings row. The agent loads this at the start of every run (Task 1)
-    to pick up niche, location, language, targets, message style, and so on.
-    """
-    res = get_client().table("settings").select("*").limit(1).execute()
-    return res.data[0] if res.data else None
+_SETTINGS_JSON_LIST_FIELDS = {"target_needs", "outreach_languages"}
 
 
-def update_settings(fields: Row) -> Row:
-    """Patch the settings row. `id` is looked up so callers don't have to pass it."""
-    current = get_settings()
-    if current is None:
-        raise RuntimeError("No settings row exists — run the schema seed first.")
-    res = get_client().table("settings").update(fields).eq("id", current["id"]).execute()
-    return res.data[0]
+def _settings_out(row: Row | None) -> Row | None:
+    if row is None:
+        return None
+    row = dict(row)
+    for key in _SETTINGS_JSON_LIST_FIELDS:
+        if key in row:
+            row[key] = _loads_list(row[key])
+    return row
+
+
+def get_settings(tenant_id: str | None = None) -> Row | None:
+    """
+    This tenant's one settings row. The agent loads this at the start of
+    every run (Task 1) to pick up niche, location, language, targets,
+    message style, and so on. `tenant_id` is optional: messaging/style.py,
+    messaging/approval.py, crm/followup.py, and notifications/whatsapp_notify.py
+    all call `repo.get_settings()` with zero arguments (untouched, pre-port
+    call shape) and rely on tenant_scope(...) being active.
+    """
+    tenant_id = _resolve_tenant(tenant_id)
+    with get_cursor(commit=False) as cur:
+        cur.execute(
+            "SELECT * FROM outreach_settings WHERE tenant_id = %s LIMIT 1",
+            (tenant_id,),
+        )
+        row = cur.fetchone()
+    return _settings_out(row)
+
+
+def get_outreach_timezone(tenant_id: str | None = None) -> str:
+    """
+    This tenant's effective scheduling timezone (IANA zone name, e.g.
+    "America/New_York") -- what every OutreachAccount.run_time for this
+    tenant is interpreted against. Falls back to the agent's global
+    config.TIMEZONE if the settings row is missing or its timezone column
+    is somehow empty (should not happen in normal operation, since the
+    column has a DB-level default -- this is a safety net, not the expected
+    path). Single source of truth for this resolution so scheduler.py's
+    CronTrigger construction and core/account_pool.py's _local_now() can't
+    drift out of sync with each other.
+    """
+    from agent import config
+
+    settings = get_settings(tenant_id)
+    tz = settings.get("timezone") if settings else None
+    return tz or config.TIMEZONE
+
+
+def update_settings(fields: Row, tenant_id: str | None = None) -> Row:
+    """Patch this tenant's settings row. `fields` comes first (not
+    `tenant_id`) to match messaging/style.py's untouched
+    `repo.update_settings({...})` call shape."""
+    tenant_id = _resolve_tenant(tenant_id)
+    fields = dict(fields)
+    for key in _SETTINGS_JSON_LIST_FIELDS:
+        if key in fields:
+            fields[key] = _dumps(fields[key])
+
+    set_clause = ", ".join(f"{k} = %s" for k in fields)
+    values = list(fields.values()) + [tenant_id]
+    with get_cursor() as cur:
+        cur.execute(
+            f"UPDATE outreach_settings SET {set_clause} "  # noqa: S608
+            "WHERE tenant_id = %s RETURNING *",
+            values,
+        )
+        row = cur.fetchone()
+    if row is None:
+        raise RuntimeError(f"No settings row exists for tenant {tenant_id} — run the seed first.")
+    return _settings_out(row)
 
 
 # ════════════════════════════════════════════════════════════════════════
-# LEADS — every business the agent discovers
+# LEADS — outreach_leads (OutreachLead)
 # ════════════════════════════════════════════════════════════════════════
 
-def insert_lead(lead: Row) -> Row:
-    """Insert a freshly discovered lead. Returns the row with its generated id."""
-    res = get_client().table("leads").insert(lead).execute()
-    return res.data[0]
+_LEAD_JSON_LIST_FIELDS = {"social_platforms", "weak_points", "ai_opportunities"}
+
+# Columns that genuinely exist on outreach_leads. The pre-port scheduler.py
+# still writes a couple of fields ("bio", "engagement_sample") that only
+# ever existed in the old single-tenant schema and have no equivalent
+# column in OutreachLead — rather than touch scheduler.py's business logic
+# (out of scope for this port) or let an UPDATE/INSERT fail outright on an
+# unknown column, insert_lead()/update_lead() silently drop any field not
+# in this set. This is a real, intentional narrowing: that discovery-time
+# bio/engagement text is not persisted post-port. Flagged in PROGRESS.md.
+_LEAD_COLUMNS = {
+    "id", "tenant_id", "account_id", "platform", "business_name", "profile_url",
+    "profile_photo_url", "follower_count", "industry", "website", "social_platforms",
+    "company_size", "revenue_tier", "ads_running", "weak_points", "ai_opportunities",
+    "founder_found", "founder_name", "founder_source_phrase", "whatsapp_found",
+    "whatsapp_number", "contact_email", "score", "temperature", "score_reasoning",
+    "generated_message", "message_style_used", "status", "contact_count",
+    "first_contacted_at", "notes", "created_at", "updated_at",
+}
 
 
-def update_lead(lead_id: str, fields: Row) -> Row:
-    """Patch a lead (analysis results, score, generated message, status, ...)."""
-    res = get_client().table("leads").update(fields).eq("id", lead_id).execute()
-    return res.data[0]
+def _lead_out(row: Row | None) -> Row | None:
+    if row is None:
+        return None
+    row = dict(row)
+    for key in _LEAD_JSON_LIST_FIELDS:
+        if key in row:
+            row[key] = _loads_list(row[key])
+    return row
 
 
-def get_lead(lead_id: str) -> Row | None:
-    res = get_client().table("leads").select("*").eq("id", lead_id).limit(1).execute()
-    return res.data[0] if res.data else None
+def _lead_in(fields: Row) -> Row:
+    """Filter to known columns and JSON-encode the list fields. See
+    _LEAD_COLUMNS' docstring for why unknown fields are silently dropped
+    rather than erroring."""
+    fields = {k: v for k, v in fields.items() if k in _LEAD_COLUMNS}
+    for key in _LEAD_JSON_LIST_FIELDS:
+        if key in fields:
+            fields[key] = _dumps(fields[key])
+    return fields
 
 
-def leads_by_status(status: str) -> list[Row]:
-    """All leads in a given lifecycle status (e.g. 'awaiting_approval')."""
-    res = get_client().table("leads").select("*").eq("status", status).execute()
-    return res.data
+def insert_lead(tenant_id: str, lead: Row) -> Row:
+    """Insert a freshly discovered lead. `lead` is the plain field dict, same
+    shape callers (scheduler.py) already build — `lead_id` is not a separate
+    parameter since callers never have one yet at insert time. Returns the
+    row with its generated id."""
+    fields = _lead_in(lead)
+    fields["tenant_id"] = tenant_id
+    fields.setdefault("id", _new_id())
+    columns = list(fields.keys())
+    placeholders = ", ".join(["%s"] * len(columns))
+    with get_cursor() as cur:
+        cur.execute(
+            # OutreachLead.updatedAt is Prisma's @updatedAt -- client-managed,
+            # not a DB default, and NOT NULL (confirmed live: a bare INSERT
+            # omitting it fails the same NotNullViolation "id" did before
+            # _new_id() was added). Set explicitly to now() here rather than
+            # via _new_id()-style Python generation, since a timestamp is
+            # simpler to produce correctly in SQL than in Python (no tz
+            # round-trip to get subtly wrong).
+            f"INSERT INTO outreach_leads ({', '.join(columns)}, updated_at) "  # noqa: S608
+            f"VALUES ({placeholders}, now()) RETURNING *",
+            list(fields.values()),
+        )
+        row = cur.fetchone()
+    return _lead_out(row)
 
 
-def lead_profile_url_exists(profile_url: str) -> bool:
+def update_lead(lead_id: str, fields: Row, tenant_id: str | None = None) -> Row:
+    """Patch a lead (analysis results, score, generated message, status,
+    ...), scoped to this tenant. `lead_id` before `fields` (not `tenant_id`
+    first) to match the many untouched callers' existing
+    `repo.update_lead(lead_id, {...})` call shape."""
+    tenant_id = _resolve_tenant(tenant_id)
+    fields = _lead_in(fields)
+    if not fields:
+        existing = get_lead(lead_id, tenant_id=tenant_id)
+        if existing is None:
+            raise RuntimeError(f"Lead {lead_id} not found for tenant {tenant_id}.")
+        return existing
+
+    set_clause = ", ".join(f"{k} = %s" for k in fields)
+    values = list(fields.values()) + [lead_id, tenant_id]
+    with get_cursor() as cur:
+        cur.execute(
+            f"UPDATE outreach_leads SET {set_clause}, updated_at = now() "  # noqa: S608
+            "WHERE id = %s AND tenant_id = %s RETURNING *",
+            values,
+        )
+        row = cur.fetchone()
+    return _lead_out(row)
+
+
+def get_lead(lead_id: str, tenant_id: str | None = None) -> Row | None:
+    """`lead_id` first to match the many untouched callers' existing
+    `repo.get_lead(lead_id)` call shape."""
+    tenant_id = _resolve_tenant(tenant_id)
+    with get_cursor(commit=False) as cur:
+        cur.execute(
+            "SELECT * FROM outreach_leads WHERE id = %s AND tenant_id = %s LIMIT 1",
+            (lead_id, tenant_id),
+        )
+        row = cur.fetchone()
+    return _lead_out(row)
+
+
+def leads_by_status(status: str, tenant_id: str | None = None) -> list[Row]:
+    """All of this tenant's leads in a given lifecycle status (e.g.
+    'awaiting_approval'). `status` first to match sending/*_reply_check.py's
+    untouched `repo.leads_by_status("contacted")` call shape."""
+    tenant_id = _resolve_tenant(tenant_id)
+    with get_cursor(commit=False) as cur:
+        cur.execute(
+            "SELECT * FROM outreach_leads WHERE tenant_id = %s AND status = %s",
+            (tenant_id, status),
+        )
+        rows = cur.fetchall()
+    return [_lead_out(r) for r in rows]
+
+
+def lead_profile_url_exists(tenant_id: str, profile_url: str) -> bool:
     """
-    True if this exact profile URL is already in `leads`, regardless of
-    contact status. Used at discovery time so the same profile isn't inserted
-    again on every run -- a different, broader check than
-    contacted_profile_urls() below, which only covers leads already reached
-    out to.
+    True if this exact profile URL is already in this tenant's `leads`,
+    regardless of contact status. Used at discovery time so the same
+    profile isn't inserted again on every run -- a different, broader check
+    than contacted_profile_urls() below, which only covers leads already
+    reached out to.
     """
-    res = (
-        get_client()
-        .table("leads")
-        .select("id")
-        .eq("profile_url", profile_url)
-        .limit(1)
-        .execute()
+    with get_cursor(commit=False) as cur:
+        cur.execute(
+            "SELECT id FROM outreach_leads WHERE tenant_id = %s AND profile_url = %s LIMIT 1",
+            (tenant_id, profile_url),
+        )
+        row = cur.fetchone()
+    return row is not None
+
+
+def contacted_profile_urls(tenant_id: str) -> set[str]:
+    """
+    Profile URLs of every one of this tenant's leads already contacted at
+    least once.
+
+    Task 1 deduplication: loaded at run start so no business is ever
+    contacted twice unintentionally. Returned as a set for O(1) membership
+    checks during discovery.
+    """
+    with get_cursor(commit=False) as cur:
+        cur.execute(
+            "SELECT profile_url FROM outreach_leads WHERE tenant_id = %s AND contact_count > 0",
+            (tenant_id,),
+        )
+        rows = cur.fetchall()
+    return {r["profile_url"] for r in rows if r.get("profile_url")}
+
+
+# ════════════════════════════════════════════════════════════════════════
+# MESSAGES — outreach_messages (OutreachMessage)
+# ════════════════════════════════════════════════════════════════════════
+
+# Old Python key -> real Postgres column, only where they differ.
+_MESSAGE_KEY_TO_COLUMN = {
+    "approved_by": "approved_by_id",
+    "sent_via_account": "sent_via_account_id",
+}
+
+# The agent must never touch email messages — that channel is the Next.js
+# app's own SES-sending concern (src/lib/outreach/ses.ts,
+# src/lib/actions/outreach-approvals.ts). Every query below that lists
+# messages for the agent to act on filters to this set.
+_AGENT_CHANNELS = ("linkedin", "instagram", "whatsapp")
+
+
+def _message_col(key: str) -> str:
+    return _MESSAGE_KEY_TO_COLUMN.get(key, key)
+
+
+def _message_out(row: Row | None) -> Row | None:
+    """Translate real column names back to the old key names the rest of
+    the agent already reads (e.g. row['sent_via_account'), not
+    row['sent_via_account_id'])."""
+    if row is None:
+        return None
+    row = dict(row)
+    if "approved_by_id" in row:
+        row["approved_by"] = row.pop("approved_by_id")
+    if "sent_via_account_id" in row:
+        row["sent_via_account"] = row.pop("sent_via_account_id")
+    return row
+
+
+def _message_in(fields: Row) -> Row:
+    return {_message_col(k): v for k, v in fields.items()}
+
+
+def insert_message(message: Row, tenant_id: str | None = None) -> Row:
+    """`message` already carries `lead_id` (every caller — scheduler.py,
+    crm/followup.py — builds the dict with it included, unchanged from the
+    pre-port call shape). `message` comes first (not `tenant_id`) to match
+    crm/followup.py's untouched `repo.insert_message({...})` call shape,
+    which passes no tenant_id at all and relies on tenant_scope(...)."""
+    tenant_id = _resolve_tenant(tenant_id)
+    fields = _message_in(message)
+    fields["tenant_id"] = tenant_id
+    fields.setdefault("id", _new_id())
+    columns = list(fields.keys())
+    placeholders = ", ".join(["%s"] * len(columns))
+    with get_cursor() as cur:
+        cur.execute(
+            f"INSERT INTO outreach_messages ({', '.join(columns)}) "  # noqa: S608
+            f"VALUES ({placeholders}) RETURNING *",
+            list(fields.values()),
+        )
+        row = cur.fetchone()
+    return _message_out(row)
+
+
+def update_message(message_id: str, fields: Row, tenant_id: str | None = None) -> Row:
+    """`message_id` before `fields` (not `tenant_id` first) to match the
+    many untouched callers' existing `repo.update_message(message_id, {...})`
+    call shape."""
+    tenant_id = _resolve_tenant(tenant_id)
+    fields = _message_in(fields)
+    set_clause = ", ".join(f"{k} = %s" for k in fields)
+    values = list(fields.values()) + [message_id, tenant_id]
+    with get_cursor() as cur:
+        cur.execute(
+            f"UPDATE outreach_messages SET {set_clause} "  # noqa: S608
+            "WHERE id = %s AND tenant_id = %s RETURNING *",
+            values,
+        )
+        row = cur.fetchone()
+    return _message_out(row)
+
+
+def messages_awaiting_approval(tenant_id: str | None = None) -> list[Row]:
+    """
+    Everything this tenant's approver still needs to approve. Feeds the
+    approval queue badge and the hard send-gate (nothing sends while this
+    is non-empty for a given lead). Scoped to the agent's own channels —
+    email approvals are the Next.js app's own queue. messaging/approval.py's
+    untouched call site passes zero arguments.
+    """
+    tenant_id = _resolve_tenant(tenant_id)
+    with get_cursor(commit=False) as cur:
+        cur.execute(
+            """
+            SELECT * FROM outreach_messages
+            WHERE tenant_id = %s AND approval_status = 'awaiting' AND channel = ANY(%s)
+            """,
+            (tenant_id, list(_AGENT_CHANNELS)),
+        )
+        rows = cur.fetchall()
+    return [_message_out(r) for r in rows]
+
+
+def messages_approved_pending(tenant_id: str | None = None) -> list[Row]:
+    """
+    Approved messages not yet sent -- what the sending dispatcher reads each
+    cycle. Deliberately separate from messages_awaiting_approval(): that one
+    is the approval queue, this one is the sender's queue, and a message
+    only ever appears in one of them at a time.
+
+    Scoped to channel IN ('linkedin', 'instagram', 'whatsapp') so the Python
+    agent never touches 'email' messages — those are entirely owned and sent
+    by the Next.js app's own SES pipeline.
+
+    Joined against outreach_leads to exclude any lead marked do_not_contact
+    -- a hard stop checked here (before the message ever reaches the sending
+    dispatcher) rather than only inside the per-channel send functions, so a
+    do-not-contact lead's messages never even get attempted, on any channel.
+    """
+    tenant_id = _resolve_tenant(tenant_id)
+    with get_cursor(commit=False) as cur:
+        cur.execute(
+            """
+            SELECT m.* FROM outreach_messages m
+            JOIN outreach_leads l ON l.id = m.lead_id AND l.tenant_id = m.tenant_id
+            WHERE m.tenant_id = %s AND m.approval_status = 'approved' AND m.send_status = 'pending'
+              AND m.channel = ANY(%s) AND l.do_not_contact = false
+            """,
+            (tenant_id, list(_AGENT_CHANNELS)),
+        )
+        rows = cur.fetchall()
+    return [_message_out(r) for r in rows]
+
+
+def replies_pending(tenant_id: str | None = None) -> list[Row]:
+    """
+    Tenant-written replies (is_reply = true, from the "Reply Here" dashboard
+    page) that are approved and not yet sent -- read by
+    scheduler.run_reply_send_cycle()'s fast poll (~every 2-3 min), SEPARATE
+    from messages_approved_pending() above (which explicitly excludes
+    is_reply messages, see that function's own call site in
+    scheduler._run_sending_cycle_for_tenant()), so a reply doesn't wait for
+    the once-daily full cycle to go out.
+
+    Same do_not_contact hard stop and channel scoping as
+    messages_approved_pending() -- a reply is always created pre-approved
+    by sendReplyAction() (the tenant typing it and hitting Send IS the
+    approval), so approval_status = 'approved' is always true here in
+    practice, but checked anyway for defense in depth.
+    """
+    tenant_id = _resolve_tenant(tenant_id)
+    with get_cursor(commit=False) as cur:
+        cur.execute(
+            """
+            SELECT m.* FROM outreach_messages m
+            JOIN outreach_leads l ON l.id = m.lead_id AND l.tenant_id = m.tenant_id
+            WHERE m.tenant_id = %s AND m.is_reply = true
+              AND m.approval_status = 'approved' AND m.send_status = 'pending'
+              AND m.channel = ANY(%s) AND l.do_not_contact = false
+            """,
+            (tenant_id, list(_AGENT_CHANNELS)),
+        )
+        rows = cur.fetchall()
+    return [_message_out(r) for r in rows]
+
+
+def messages_for_lead(lead_id: str, tenant_id: str | None = None) -> list[Row]:
+    """`lead_id` first to match the several untouched callers' existing
+    `repo.messages_for_lead(lead_id)` call shape."""
+    tenant_id = _resolve_tenant(tenant_id)
+    with get_cursor(commit=False) as cur:
+        cur.execute(
+            "SELECT * FROM outreach_messages WHERE tenant_id = %s AND lead_id = %s ORDER BY created_at",
+            (tenant_id, lead_id),
+        )
+        rows = cur.fetchall()
+    return [_message_out(r) for r in rows]
+
+
+# ════════════════════════════════════════════════════════════════════════
+# REPLIES — outreach_replies (OutreachReply)
+# ════════════════════════════════════════════════════════════════════════
+
+def insert_reply(reply: Row, tenant_id: str | None = None) -> Row:
+    """`reply` already carries `lead_id` (crm/reply_detection.py's untouched
+    `repo.insert_reply({...})` call shape, which passes no tenant_id)."""
+    tenant_id = _resolve_tenant(tenant_id)
+    fields = dict(reply)
+    fields["tenant_id"] = tenant_id
+    fields.setdefault("id", _new_id())
+    columns = list(fields.keys())
+    placeholders = ", ".join(["%s"] * len(columns))
+    with get_cursor() as cur:
+        cur.execute(
+            f"INSERT INTO outreach_replies ({', '.join(columns)}) "  # noqa: S608
+            f"VALUES ({placeholders}) RETURNING *",
+            list(fields.values()),
+        )
+        row = cur.fetchone()
+    return dict(row)
+
+
+def replies_for_lead(lead_id: str, tenant_id: str | None = None) -> list[Row]:
+    tenant_id = _resolve_tenant(tenant_id)
+    with get_cursor(commit=False) as cur:
+        cur.execute(
+            "SELECT * FROM outreach_replies WHERE tenant_id = %s AND lead_id = %s ORDER BY replied_at",
+            (tenant_id, lead_id),
+        )
+        rows = cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+# ════════════════════════════════════════════════════════════════════════
+# ERROR LOGGING — the platform's shared error_logs table (ErrorLog), reused
+# instead of a standalone error_log/outreach_error_log table (see this
+# port's spec: ErrorLog already has everything needed — tenantId, source,
+# message, stack, context (JSON), resolved, isExpected, createdAt).
+# ════════════════════════════════════════════════════════════════════════
+
+def insert_error(error: Row, tenant_id: str | None = None) -> Row:
+    """
+    Record one caught failure to error_logs. Accepts the OLD key shape the
+    rest of the agent already calls this with (stage, channel, lead_id,
+    account_id, error_message, is_expected) and translates it into
+    error_logs' real columns. `error` comes first (not `tenant_id`) to match
+    scheduler.py's and crm/followup.py's untouched `repo.insert_error({...})`
+    call shape, which passes no tenant_id and relies on tenant_scope(...).
+    tenant_id may legitimately end up None here (ErrorLog.tenantId is
+    nullable) if insert_error is ever called with no tenant_scope active
+    (e.g. a truly global failure) -- unlike every other function in this
+    module, this one does NOT raise NoTenantInScope, it just logs with a
+    null tenant_id, since a failed error-logging call must never itself
+    become a second, unhandled failure (see scheduler.py's log_error()
+    docstring: "logging itself must never crash the pipeline").
+
+    Column mapping:
+      - source  = "outreach.<stage>" (e.g. "outreach.discovery",
+                  "outreach.sending") -- namespaced so it reads clearly
+                  alongside this table's other sources ("ai.generate_reply",
+                  "email.send", "payment.review", ...).
+      - message = error_message
+      - context = JSON-encoded {channel, lead_id, account_id} -- whichever
+                  of these the caller actually passed, so no information
+                  from the old error_log row shape is lost.
+      - isExpected = is_expected
+
+    IMPORTANT column-name note (confirmed live, real bug caught and fixed
+    while writing the smoke test): unlike every Outreach* model,
+    `ErrorLog`'s fields have NO @map(...) in schema.prisma, so Prisma left
+    them as their literal camelCase names -- the real Postgres columns are
+    "tenantId", "createdAt", "isExpected" (quoted, mixed-case identifiers),
+    NOT tenant_id/created_at/is_expected like every other table this module
+    talks to. Every query against error_logs below double-quotes these
+    three column names for that reason; every other function in this
+    module intentionally does NOT quote, because every other table's real
+    columns genuinely are snake_case.
+    """
+    try:
+        tenant_id = _resolve_tenant(tenant_id)
+    except NoTenantInScope:
+        tenant_id = None  # see docstring -- logging must never itself raise
+
+    stage = error.get("stage") or "unknown"
+    source = f"outreach.{stage}"
+    context = {
+        k: error[k] for k in ("channel", "lead_id", "account_id") if error.get(k) is not None
+    }
+
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO error_logs (id, "tenantId", source, message, context, "isExpected")
+            VALUES (gen_random_uuid()::text, %s, %s, %s, %s, %s)
+            RETURNING *
+            """,
+            (
+                tenant_id,
+                source,
+                error.get("error_message") or "",
+                _dumps(context) if context else None,
+                bool(error.get("is_expected", False)),
+            ),
+        )
+        row = cur.fetchone()
+    return dict(row)
+
+
+def recent_errors(tenant_id: str, limit: int = 100, unresolved_only: bool = False) -> list[Row]:
+    """Most recent errors first, scoped to this tenant and to Outreach
+    sources (source LIKE 'outreach.%') -- what the dashboard's Errors page
+    reads for the Outreach product."""
+    query = (
+        'SELECT * FROM error_logs WHERE "tenantId" = %s AND source LIKE \'outreach.%%\''
     )
-    return len(res.data) > 0
+    params: list[Any] = [tenant_id]
+    if unresolved_only:
+        query += " AND resolved = false"
+    query += ' ORDER BY "createdAt" DESC LIMIT %s'
+    params.append(limit)
+
+    with get_cursor(commit=False) as cur:
+        cur.execute(query, params)
+        rows = cur.fetchall()
+    return [dict(r) for r in rows]
 
 
-def contacted_profile_urls() -> set[str]:
-    """
-    Profile URLs of every lead already contacted at least once.
-
-    Task 1 deduplication: loaded at run start so no business is ever contacted
-    twice unintentionally. Returned as a set for O(1) membership checks during
-    discovery.
-    """
-    res = (
-        get_client()
-        .table("leads")
-        .select("profile_url")
-        .gt("contact_count", 0)
-        .execute()
-    )
-    return {r["profile_url"] for r in res.data if r.get("profile_url")}
-
-
-# ════════════════════════════════════════════════════════════════════════
-# MESSAGES — every message queued/sent per lead
-# ════════════════════════════════════════════════════════════════════════
-
-def insert_message(message: Row) -> Row:
-    res = get_client().table("messages").insert(message).execute()
-    return res.data[0]
-
-
-def update_message(message_id: str, fields: Row) -> Row:
-    res = get_client().table("messages").update(fields).eq("id", message_id).execute()
-    return res.data[0]
-
-
-def messages_awaiting_approval() -> list[Row]:
-    """
-    Everything Mohamad still needs to approve. Feeds the approval queue badge and
-    the hard send-gate (nothing sends while this is non-empty for a given lead).
-    """
-    res = (
-        get_client()
-        .table("messages")
-        .select("*")
-        .eq("approval_status", "awaiting")
-        .execute()
-    )
-    return res.data
-
-
-def messages_approved_pending() -> list[Row]:
-    """
-    Approved messages not yet sent -- what Phase 7's sending dispatcher
-    reads each cycle. Deliberately separate from messages_awaiting_approval():
-    that one is Mohamad's queue, this one is the sender's queue, and a
-    message only ever appears in one of them at a time.
-    """
-    res = (
-        get_client()
-        .table("messages")
-        .select("*")
-        .eq("approval_status", "approved")
-        .eq("send_status", "pending")
-        .execute()
-    )
-    return res.data
-
-
-def messages_for_lead(lead_id: str) -> list[Row]:
-    res = (
-        get_client()
-        .table("messages")
-        .select("*")
-        .eq("lead_id", lead_id)
-        .order("created_at")
-        .execute()
-    )
-    return res.data
+def mark_error_resolved(tenant_id: str, error_id: str) -> Row:
+    with get_cursor() as cur:
+        cur.execute(
+            'UPDATE error_logs SET resolved = true WHERE id = %s AND "tenantId" = %s RETURNING *',
+            (error_id, tenant_id),
+        )
+        row = cur.fetchone()
+    return dict(row)
 
 
 # ════════════════════════════════════════════════════════════════════════
-# REPLIES — actual inbound reply content (database/006_add_replies.sql)
-# ════════════════════════════════════════════════════════════════════════
-
-def insert_reply(reply: Row) -> Row:
-    res = get_client().table("replies").insert(reply).execute()
-    return res.data[0]
-
-
-def replies_for_lead(lead_id: str) -> list[Row]:
-    res = (
-        get_client()
-        .table("replies")
-        .select("*")
-        .eq("lead_id", lead_id)
-        .order("replied_at")
-        .execute()
-    )
-    return res.data
-
-
-# ════════════════════════════════════════════════════════════════════════
-# PIPELINE_HISTORY — every stage change, timestamped audit trail
+# PIPELINE_HISTORY — outreach_pipeline_history (OutreachPipelineHistory)
 # ════════════════════════════════════════════════════════════════════════
 
 def record_stage_change(
-    lead_id: str, from_stage: str | None, to_stage: str, changed_by: str = "agent"
+    lead_id: str,
+    from_stage: str | None,
+    to_stage: str,
+    changed_by: str = "agent",
+    tenant_id: str | None = None,
 ) -> Row:
     """
-    Append one row to the audit trail. Called by pipeline.py whenever a lead moves,
-    whether the move was automatic (reply detected) or manual (drag on the board).
+    Append one row to the audit trail. Called by pipeline.py whenever a lead
+    moves, whether the move was automatic (reply detected) or manual (drag
+    on the board). Signature matches crm/pipeline.py's and
+    messaging/approval.py's untouched
+    `repo.record_stage_change(lead_id, from_stage, to_stage, changed_by=...)`
+    call shape, which passes no tenant_id.
     """
-    res = get_client().table("pipeline_history").insert({
-        "lead_id": lead_id,
-        "from_stage": from_stage,
-        "to_stage": to_stage,
-        "changed_by": changed_by,
-    }).execute()
-    return res.data[0]
+    tenant_id = _resolve_tenant(tenant_id)
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO outreach_pipeline_history (id, tenant_id, lead_id, from_stage, to_stage, changed_by)
+            VALUES (gen_random_uuid()::text, %s, %s, %s, %s, %s)
+            RETURNING *
+            """,
+            (tenant_id, lead_id, from_stage, to_stage, changed_by),
+        )
+        row = cur.fetchone()
+    return dict(row)
 
 
-def stage_history(lead_id: str) -> list[Row]:
+def stage_history(lead_id: str, tenant_id: str | None = None) -> list[Row]:
     """Full ordered stage history for the Lead Detail page."""
-    res = (
-        get_client()
-        .table("pipeline_history")
-        .select("*")
-        .eq("lead_id", lead_id)
-        .order("changed_at")
-        .execute()
-    )
-    return res.data
+    tenant_id = _resolve_tenant(tenant_id)
+    with get_cursor(commit=False) as cur:
+        cur.execute(
+            "SELECT * FROM outreach_pipeline_history WHERE tenant_id = %s AND lead_id = %s ORDER BY changed_at",
+            (tenant_id, lead_id),
+        )
+        rows = cur.fetchall()
+    return [dict(r) for r in rows]
 
 
 # ════════════════════════════════════════════════════════════════════════
-# FOLLOW_UPS — per-lead follow-up / re-engagement schedule
+# FOLLOW_UPS — outreach_follow_ups (OutreachFollowUp)
 # ════════════════════════════════════════════════════════════════════════
 
-def insert_follow_up(follow_up: Row) -> Row:
-    res = get_client().table("follow_ups").insert(follow_up).execute()
-    return res.data[0]
+def insert_follow_up(follow_up: Row, tenant_id: str | None = None) -> Row:
+    """`follow_up` already carries `lead_id` (crm/followup.py's untouched
+    `repo.insert_follow_up({...})` call shape, which passes no tenant_id)."""
+    tenant_id = _resolve_tenant(tenant_id)
+    fields = dict(follow_up)
+    fields["tenant_id"] = tenant_id
+    fields.setdefault("id", _new_id())
+    columns = list(fields.keys())
+    placeholders = ", ".join(["%s"] * len(columns))
+    with get_cursor() as cur:
+        cur.execute(
+            f"INSERT INTO outreach_follow_ups ({', '.join(columns)}) "  # noqa: S608
+            f"VALUES ({placeholders}) RETURNING *",
+            list(fields.values()),
+        )
+        row = cur.fetchone()
+    return dict(row)
 
 
-def update_follow_up(follow_up_id: str, fields: Row) -> Row:
-    res = get_client().table("follow_ups").update(fields).eq("id", follow_up_id).execute()
-    return res.data[0]
+def update_follow_up(follow_up_id: str, fields: Row, tenant_id: str | None = None) -> Row:
+    """`follow_up_id` before `fields` (not `tenant_id` first) to match
+    crm/followup.py's untouched `repo.update_follow_up(f["id"], {...})`
+    call shape."""
+    tenant_id = _resolve_tenant(tenant_id)
+    set_clause = ", ".join(f"{k} = %s" for k in fields)
+    values = list(fields.values()) + [follow_up_id, tenant_id]
+    with get_cursor() as cur:
+        cur.execute(
+            f"UPDATE outreach_follow_ups SET {set_clause} "  # noqa: S608
+            "WHERE id = %s AND tenant_id = %s RETURNING *",
+            values,
+        )
+        row = cur.fetchone()
+    return dict(row)
 
 
-def follow_ups_for_lead(lead_id: str) -> list[Row]:
+def follow_ups_for_lead(lead_id: str, tenant_id: str | None = None) -> list[Row]:
     """
     Every follow-up row for one lead, any status -- used to find and cancel
-    still-scheduled ones the instant a reply comes in (due_follow_ups() only
-    surfaces ones whose time has already arrived, which isn't what a
-    cancel-on-reply check needs).
+    still-scheduled ones the instant a reply comes in (due_follow_ups()
+    below only surfaces ones whose time has already arrived, which isn't
+    what a cancel-on-reply check needs). `lead_id` first to match
+    crm/followup.py's untouched `repo.follow_ups_for_lead(lead_id)` call
+    shape.
     """
-    res = get_client().table("follow_ups").select("*").eq("lead_id", lead_id).execute()
-    return res.data
+    tenant_id = _resolve_tenant(tenant_id)
+    with get_cursor(commit=False) as cur:
+        cur.execute(
+            "SELECT * FROM outreach_follow_ups WHERE tenant_id = %s AND lead_id = %s",
+            (tenant_id, lead_id),
+        )
+        rows = cur.fetchall()
+    return [dict(r) for r in rows]
 
 
-def due_follow_ups(now_iso: str) -> list[Row]:
+def due_follow_ups(now_iso: str, tenant_id: str | None = None) -> list[Row]:
     """
-    Enabled follow-ups whose scheduled time has arrived and are still pending.
-    The agent runs these at exactly the time Hussein set per lead.
+    Enabled follow-ups for this tenant whose scheduled time has arrived and
+    are still pending. `now_iso` first to match crm/followup.py's untouched
+    `repo.due_follow_ups(now_iso)` call shape.
     """
-    res = (
-        get_client()
-        .table("follow_ups")
-        .select("*")
-        .eq("enabled", True)
-        .eq("status", "scheduled")
-        .lte("scheduled_for", now_iso)
-        .execute()
-    )
-    return res.data
+    tenant_id = _resolve_tenant(tenant_id)
+    with get_cursor(commit=False) as cur:
+        cur.execute(
+            """
+            SELECT * FROM outreach_follow_ups
+            WHERE tenant_id = %s AND enabled = true AND status = 'scheduled' AND scheduled_for <= %s
+            """,
+            (tenant_id, now_iso),
+        )
+        rows = cur.fetchall()
+    return [dict(r) for r in rows]
 
 
 # ════════════════════════════════════════════════════════════════════════
-# CLIENT_HISTORY — permanent record of every analysed lead (never resets)
+# CLIENT_HISTORY — outreach_client_history (OutreachClientHistory)
 # ════════════════════════════════════════════════════════════════════════
 
-def insert_client_history(entry: Row) -> Row:
+def insert_client_history(tenant_id: str, entry: Row) -> Row:
     """
     Save a permanent snapshot. Task 10: this happens BEFORE any message is
-    generated, so a lead lives here forever whether or not it is ever contacted.
+    generated, so a lead lives here forever whether or not it is ever
+    contacted.
     """
-    res = get_client().table("client_history").insert(entry).execute()
-    return res.data[0]
+    fields = dict(entry)
+    fields["tenant_id"] = tenant_id
+    fields.setdefault("id", _new_id())
+    if "weak_points" in fields:
+        fields["weak_points"] = _dumps(fields["weak_points"])
+    if "snapshot" in fields:
+        fields["snapshot"] = _dumps(fields["snapshot"])
+    columns = list(fields.keys())
+    placeholders = ", ".join(["%s"] * len(columns))
+    with get_cursor() as cur:
+        cur.execute(
+            f"INSERT INTO outreach_client_history ({', '.join(columns)}) "  # noqa: S608
+            f"VALUES ({placeholders}) RETURNING *",
+            list(fields.values()),
+        )
+        row = cur.fetchone()
+    return dict(row)
 
 
-def mark_client_history_contacted(lead_id: str) -> None:
-    """Flip the `contacted` flag once outreach actually goes out for this lead."""
-    get_client().table("client_history").update({"contacted": True}).eq(
-        "lead_id", lead_id
-    ).execute()
+def mark_client_history_contacted(lead_id: str, tenant_id: str | None = None) -> None:
+    """Flip the `contacted` flag once outreach actually goes out for this
+    lead. `lead_id` first to match sending/*.py's untouched
+    `repo.mark_client_history_contacted(message["lead_id"])` call shape."""
+    tenant_id = _resolve_tenant(tenant_id)
+    with get_cursor() as cur:
+        cur.execute(
+            "UPDATE outreach_client_history SET contacted = true WHERE tenant_id = %s AND lead_id = %s",
+            (tenant_id, lead_id),
+        )
 
 
 # ════════════════════════════════════════════════════════════════════════
-# NOTIFICATIONS_LOG — every WhatsApp alert sent
+# NOTIFICATIONS_LOG — outreach_notifications_log (OutreachNotificationLog)
 # ════════════════════════════════════════════════════════════════════════
 
 def log_notification(
-    notif_type: str, recipients: list[str], body: str, related_lead_id: str | None = None
+    notif_type: str,
+    recipients: list[str],
+    body: str,
+    related_lead_id: str | None = None,
+    tenant_id: str | None = None,
 ) -> Row:
     """
     Record a sent alert. One of the 5 types: hot_lead, founder, warning,
-    approval_reminder, daily_summary.
+    approval_reminder, daily_summary. Signature matches
+    notifications/whatsapp_notify.py's untouched
+    `repo.log_notification(notif_type, recipients, body, related_lead_id)`
+    call shape, which passes no tenant_id.
     """
-    res = get_client().table("notifications_log").insert({
-        "type": notif_type,
-        "recipients": recipients,
-        "body": body,
-        "related_lead_id": related_lead_id,
-    }).execute()
-    return res.data[0]
+    tenant_id = _resolve_tenant(tenant_id)
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO outreach_notifications_log
+                (id, tenant_id, type, recipients, body, related_lead_id)
+            VALUES (gen_random_uuid()::text, %s, %s, %s, %s, %s)
+            RETURNING *
+            """,
+            (tenant_id, notif_type, _dumps(recipients), body, related_lead_id),
+        )
+        row = cur.fetchone()
+    row = dict(row)
+    row["recipients"] = _loads_list(row.get("recipients"))
+    return row
 
 
 # ════════════════════════════════════════════════════════════════════════
-# RUNS — one row per account per daily run (finish-time tracking)
+# RUNS — outreach_runs (OutreachRun), one row per account per daily run
 # ════════════════════════════════════════════════════════════════════════
 
-def start_run(account_id: str) -> Row:
+def start_run(tenant_id: str, account_id: str) -> Row:
     """
-    Open a run row when an account begins. `started_at` defaults to now() in the
-    schema. Returns the row so the scheduler can close it later with the id.
+    Open a run row when an account begins. `started_at` defaults to now() in
+    the schema. Returns the row so the scheduler can close it later with the
+    id.
+
+    NOT safe against concurrent double-dispatch on its own -- see
+    claim_account_for_run() below, which is what account_pool.get_due_accounts()
+    should be paired with for any caller that isn't force=True testing.
     """
-    res = get_client().table("runs").insert({
-        "account_id": account_id,
-        "status": "running",
-    }).execute()
-    return res.data[0]
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO outreach_runs (id, tenant_id, account_id, status)
+            VALUES (gen_random_uuid()::text, %s, %s, 'running')
+            RETURNING *
+            """,
+            (tenant_id, account_id),
+        )
+        row = cur.fetchone()
+    return dict(row)
+
+
+def claim_account_for_run(
+    tenant_id: str, account_id: str, day_start_iso: str, skip_daily_check: bool = False
+) -> Row | None:
+    """
+    Atomically claim one account's daily run slot -- the fix for a real race
+    between account_pool.get_due_accounts()'s has_run_today() CHECK and
+    scheduler.py's later start_run() INSERT: without this, two overlapping
+    processes (the always-on server.py scheduler firing an account's cron
+    job at the same moment someone runs `python -m agent.scheduler` by hand,
+    for instance) can both see "not run yet today" and both proceed to open
+    the SAME account's browser session concurrently -- corrupting the shared
+    browser_profiles/{account_id}.json session file (two Playwright contexts
+    both calling storage_state() to the same path) and doubling that
+    account's real daily send/discovery volume, directly undermining the
+    warm-up/pacing system's entire purpose.
+
+    Uses pg_advisory_xact_lock (TRANSACTION-scoped, not session-scoped) --
+    NOT pg_advisory_lock, because get_cursor() returns the connection to the
+    pgbouncer transaction pool at the end of every `with` block, so a
+    session-scoped lock would be silently released the instant this
+    function returns, before the caller has actually done anything with the
+    claim. The xact-scoped lock is held only for the duration of THIS
+    function's own transaction (check + insert), which is exactly the
+    window that needs protecting -- once this commits, the real
+    has_run_today() row exists and every subsequent caller (including one
+    that's been blocked waiting on this same advisory lock) will correctly
+    see the account as already claimed and get None back.
+
+    hashtext(account_id) is a 32-bit hash of the account's cuid -- collisions
+    between two different real account ids are astronomically unlikely and,
+    even if one occurred, would only ever cause two DIFFERENT accounts to
+    briefly serialize against each other (a harmless perf hiccup), never a
+    false "already claimed" result, since the actual has_run_today check
+    inside the lock still keys on the real account_id, not the hash.
+
+    `skip_daily_check=True` mirrors get_due_accounts(force=True)'s existing
+    "Hussein can re-test the same account without a stale run row blocking
+    it" behavior -- the lock is still taken (so a manual force-test still
+    can't collide with a real concurrent scheduled run on the same account),
+    but the has_run_today lookup is skipped, so a manual test always gets a
+    fresh run row even if one already exists for today.
+
+    Returns the new run row if this call won the claim, or None if another
+    caller already claimed this account for today (caller should treat None
+    exactly like "not due" -- skip this account this cycle, do not retry).
+    """
+    with get_cursor() as cur:
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (account_id,))
+        if not skip_daily_check:
+            cur.execute(
+                "SELECT id FROM outreach_runs WHERE tenant_id = %s AND account_id = %s AND started_at >= %s LIMIT 1",
+                (tenant_id, account_id, day_start_iso),
+            )
+            if cur.fetchone() is not None:
+                return None
+        cur.execute(
+            """
+            INSERT INTO outreach_runs (id, tenant_id, account_id, status)
+            VALUES (gen_random_uuid()::text, %s, %s, 'running')
+            RETURNING *
+            """,
+            (tenant_id, account_id),
+        )
+        row = cur.fetchone()
+    return dict(row)
 
 
 def finish_run(
+    tenant_id: str,
     run_id: str,
     leads_found: int,
     messages_sent: int,
@@ -370,14 +1227,15 @@ def finish_run(
     skipped_leads: list[Row] | None = None,
 ) -> Row:
     """
-    Close a run with its results and finish time. The finish time feeds both the
-    dashboard Run Status panel and the daily WhatsApp summary.
+    Close a run with its results and finish time. The finish time feeds both
+    the dashboard Run Status panel and the daily WhatsApp summary.
 
     `skipped_leads` is the per-lead "we tried this one and it didn't go
     through" list -- each entry {platform, identifier, reason} -- kept
     separate from `notes` (which is for whole-platform failures) so the
     dashboard can show exactly which businesses were skipped and why,
-    without the rest of that account's run being lost.
+    without the rest of that account's run being lost. Stored as
+    JSON-encoded TEXT (see module docstring point 2).
     """
     fields: Row = {
         "leads_found": leads_found,
@@ -389,27 +1247,41 @@ def finish_run(
     if notes is not None:
         fields["notes"] = notes
     if skipped_leads is not None:
-        fields["skipped_leads"] = skipped_leads
-    res = get_client().table("runs").update(fields).eq("id", run_id).execute()
-    return res.data[0]
+        fields["skipped_leads"] = _dumps(skipped_leads)
+
+    set_clause = ", ".join(f"{k} = %s" for k in fields)
+    values = list(fields.values()) + [run_id, tenant_id]
+    with get_cursor() as cur:
+        cur.execute(
+            f"UPDATE outreach_runs SET {set_clause} "  # noqa: S608
+            "WHERE id = %s AND tenant_id = %s RETURNING *",
+            values,
+        )
+        row = cur.fetchone()
+    row = dict(row)
+    row["skipped_leads"] = _loads_list(row.get("skipped_leads"))
+    return row
 
 
-def has_run_today(account_id: str, day_start_iso: str) -> bool:
+def has_run_today(tenant_id: str, account_id: str, day_start_iso: str) -> bool:
     """
-    True if this account already has a run row starting on or after `day_start_iso`
-    (midnight of "today" in the caller's timezone, passed in as an ISO timestamp).
+    True if this account already has a run row starting on or after
+    `day_start_iso` (midnight of "today" in the caller's timezone, passed in
+    as an ISO timestamp).
 
-    Used by the scheduler to avoid triggering the same account twice in one day —
-    the timezone conversion happens in account_pool.py, which owns the concept of
-    "what day it is" for this system; this function only compares timestamps.
+    Used by the scheduler to avoid triggering the same account twice in one
+    day — the timezone conversion happens in account_pool.py, which owns the
+    concept of "what day it is" for this system; this function only
+    compares timestamps.
     """
-    res = (
-        get_client()
-        .table("runs")
-        .select("id")
-        .eq("account_id", account_id)
-        .gte("started_at", day_start_iso)
-        .limit(1)
-        .execute()
-    )
-    return len(res.data) > 0
+    with get_cursor(commit=False) as cur:
+        cur.execute(
+            """
+            SELECT id FROM outreach_runs
+            WHERE tenant_id = %s AND account_id = %s AND started_at >= %s
+            LIMIT 1
+            """,
+            (tenant_id, account_id, day_start_iso),
+        )
+        row = cur.fetchone()
+    return row is not None

@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { supabase } from '../lib/supabase'
 import { SkeletonCard } from '../components/Skeleton'
+import { debounce } from '../lib/debounce'
+import { subscribeChannel } from '../lib/realtimeSubscribe'
 
 /**
  * Instagram never auto-sends (agent/sending/instagram_queue.py) -- approved
@@ -18,7 +20,7 @@ export default function InstagramManualSend() {
     setLoading(true)
     const { data, error: err } = await supabase
       .from('messages')
-      .select('*, leads(id, business_name, profile_url, contact_count, first_contacted_at, status)')
+      .select('id, body, edited_body, leads(id, business_name, profile_url, contact_count, first_contacted_at, status)')
       .eq('channel', 'instagram')
       .eq('send_status', 'manual_send_pending')
       .order('created_at', { ascending: true })
@@ -30,11 +32,10 @@ export default function InstagramManualSend() {
 
   useEffect(() => {
     load()
-    const channel = supabase
-      .channel('instagram-manual-send')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, load)
-      .subscribe()
-    return () => supabase.removeChannel(channel)
+    const debouncedLoad = debounce(load, 400)
+    return subscribeChannel('instagram-manual-send', (ch) =>
+      ch.on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, debouncedLoad)
+    )
   }, [])
 
   async function markSent(message) {
@@ -47,10 +48,14 @@ export default function InstagramManualSend() {
     if (!lead?.first_contacted_at) contactUpdates.first_contacted_at = now
     await supabase.from('leads').update({ ...contactUpdates, status: 'contacted' }).eq('id', lead.id)
 
-    await supabase.from('pipeline_history').insert({
-      lead_id: lead.id, from_stage: lead?.status, to_stage: 'contacted', changed_by: 'agent',
-    })
-    await supabase.from('client_history').update({ contacted: true }).eq('lead_id', lead.id)
+    // Neither write depends on the other's result -- run them together
+    // instead of one after the other.
+    await Promise.all([
+      supabase.from('pipeline_history').insert({
+        lead_id: lead.id, from_stage: lead?.status, to_stage: 'contacted', changed_by: 'agent',
+      }),
+      supabase.from('client_history').update({ contacted: true }).eq('lead_id', lead.id),
+    ])
   }
 
   return (

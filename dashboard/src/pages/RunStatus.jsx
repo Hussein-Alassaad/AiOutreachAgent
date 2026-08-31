@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { supabase } from '../lib/supabase'
+import { debounce } from '../lib/debounce'
+import { subscribeChannel } from '../lib/realtimeSubscribe'
 
 function duration(startedAt, finishedAt) {
   if (!finishedAt) return null
@@ -61,7 +63,11 @@ export default function RunStatus() {
 
   async function load() {
     const [{ data: runsData, error: err }, { data: accountsData }] = await Promise.all([
-      supabase.from('runs').select('*').order('started_at', { ascending: false }).limit(20),
+      supabase
+        .from('runs')
+        .select('id, account_id, started_at, finished_at, status, notes')
+        .order('started_at', { ascending: false })
+        .limit(20),
       supabase.from('accounts').select('id, label'),
     ])
     if (err) setError(err.message)
@@ -71,11 +77,10 @@ export default function RunStatus() {
 
   useEffect(() => {
     load()
-    const channel = supabase
-      .channel('run-status')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'runs' }, load)
-      .subscribe()
-    return () => supabase.removeChannel(channel)
+    const debouncedLoad = debounce(load, 400)
+    return subscribeChannel('run-status', (ch) =>
+      ch.on('postgres_changes', { event: '*', schema: 'public', table: 'runs' }, debouncedLoad)
+    )
   }, [])
 
   return (

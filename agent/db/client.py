@@ -1,4 +1,11 @@
 """
+DEPRECATED / SUPERSEDED by db/postgres_client.py -- the agent now talks to
+the main Next.js SaaS's own multi-tenant Postgres database (DATABASE_URL)
+instead of this standalone project's Supabase client. Left untouched and
+unused rather than deleted, so the old single-tenant Supabase project's
+connection code stays available for reference. See PROGRESS.md's dated
+entry for the migration.
+
 Supabase connection for the agent.
 
 One shared client for the whole process. Created lazily on first use so that importing

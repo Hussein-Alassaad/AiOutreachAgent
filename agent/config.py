@@ -23,11 +23,17 @@ def _get(key: str, default: str | None = None) -> str | None:
     return value if value else default
 
 
-# ── Supabase ──────────────────────────────────────────────────────────────────
-# The agent uses the SERVICE ROLE key (full read/write, bypasses RLS) because it runs
-# on a trusted server. The dashboard uses the anon key instead — never swap these.
-SUPABASE_URL = _get("SUPABASE_URL")
-SUPABASE_SERVICE_KEY = _get("SUPABASE_SERVICE_KEY")
+# ── Database (Postgres, shared with the main SaaS app) ─────────────────────────
+# This agent no longer has its own Supabase project -- it reads/writes the same
+# multi-tenant Postgres database the Next.js app uses (Prisma-managed schema,
+# see prisma/schema.prisma's Outreach* models). Set this to the EXACT SAME
+# DATABASE_URL as the main app's own .env at the repo root, not a separate one.
+DATABASE_URL = _get("DATABASE_URL")
+
+# Same 32-byte base64 key the main app uses to encrypt OutreachAccount proxy
+# passwords (src/lib/outreach/crypto.ts) -- must match exactly, not be a
+# freshly generated key, or existing encrypted passwords become undecryptable.
+OUTREACH_ENCRYPTION_KEY = _get("OUTREACH_ENCRYPTION_KEY")
 
 # ── Claude API ────────────────────────────────────────────────────────────────
 ANTHROPIC_API_KEY = _get("ANTHROPIC_API_KEY")
@@ -44,6 +50,31 @@ WHATSAPP_PROVIDER = _get("WHATSAPP_PROVIDER", "twilio")
 WHATSAPP_API_KEY = _get("WHATSAPP_API_KEY")
 WHATSAPP_API_SECRET = _get("WHATSAPP_API_SECRET")
 WHATSAPP_FROM_NUMBER = _get("WHATSAPP_FROM_NUMBER")
+
+# ── Email lookup for LinkedIn-discovered companies ─────────────────────────────
+# Two providers, same job (name+domain -> email) -- see discovery/hunter.py and
+# discovery/findymail.py's own module docstrings for what each does and why.
+# Being trialed in this order: Hunter's 50 free credits/month first: if
+# results are good, move to Icypeas (cheaper long-term); Findymail was built
+# first but paused in favor of testing the free option before paying for
+# either. scheduler.py's _maybe_find_email() picks which one is active.
+HUNTER_API_KEY = _get("HUNTER_API_KEY")
+FINDYMAIL_API_KEY = _get("FINDYMAIL_API_KEY")
+
+# ── Live login (remote "Connect account" websocket service) ───────────────────
+# Same value as the main Next.js app's own AUTH_SECRET (src/lib/auth.ts) -- the
+# short-lived connect-account token minted by startConnectAccountAction() is
+# verified here with the identical HS256 secret, not a separately managed one.
+AUTH_SECRET = _get("AUTH_SECRET")
+
+# Port the live_login websocket server binds to, on localhost only -- a reverse
+# proxy (Caddy, see outreach/agent/DEPLOY.md) terminates TLS and forwards here.
+LIVE_LOGIN_PORT = int(_get("LIVE_LOGIN_PORT", "8765"))
+
+# Port the agent-control HTTP server (control/server.py) binds to, on
+# localhost only -- same Caddy instance reverse-proxies a second route to
+# this port, see DEPLOY.md's "Agent control service" section.
+AGENT_CONTROL_PORT = int(_get("AGENT_CONTROL_PORT", "8766"))
 
 # ── Runtime ───────────────────────────────────────────────────────────────────
 # Timezone that per-account run times are interpreted in.

@@ -9,6 +9,17 @@ on laptop and iPhone.
 
 **Status:** Phase 0 of 11 complete. See [PROGRESS.md](PROGRESS.md).
 
+> **2026-08-20 architecture note:** the Python agent (`agent/`) now reads and
+> writes the main Next.js SaaS's own multi-tenant Postgres database (via
+> `DATABASE_URL`, one connection pool, tenant-scoped queries) instead of a
+> separate standalone Supabase project. The real, current UI for
+> Outreach is that Next.js app's own pages
+> (`src/app/(outreach)/outreach/*`), not the `dashboard/` React PWA
+> referenced below, which was never wired to the multi-tenant schema. See
+> PROGRESS.md's dated entry for the full writeup; the rest of this file
+> below is left as historical reference for the agent's own internals,
+> which the port did not change.
+
 ---
 
 ## The three channel rules
@@ -66,14 +77,15 @@ agent/          Python agent — discovery, analysis, messaging, sending, CRM
   messaging/    Message generation and style rotation
   sending/      Channel routing
   crm/          Pipeline, follow-up, reply detection
-  db/           Supabase access
-dashboard/      React + Tailwind PWA
-database/       Reference copy of the Supabase schema
+  db/           Postgres access (see 2026-08-20 note above -- was Supabase access)
+dashboard/      React + Tailwind PWA (superseded, see 2026-08-20 note above)
+database/       Reference copy of the ORIGINAL standalone Supabase schema (historical)
 ```
 
-The agent and dashboard are separate apps sharing one Supabase database. The agent
-writes data; the dashboard reads it and writes back settings, approvals, and manual
-actions. Supabase Realtime keeps the dashboard live as the agent works.
+Pre-port: the agent and dashboard were separate apps sharing one Supabase database,
+with Supabase Realtime keeping the dashboard live as the agent worked. Post-port, the
+agent shares the main Next.js app's own Postgres database instead, and that app's own
+pages are the live UI (see the 2026-08-20 note above).
 
 ---
 

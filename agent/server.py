@@ -35,14 +35,18 @@ def _handle_shutdown(signum, frame) -> None:
 
 
 def main() -> None:
-    accounts = repo.list_accounts()
-    scheduler = build_daily_schedule(accounts)
+    # PORTED 2026-08-20: build_daily_schedule() is now multi-tenant and
+    # discovers its own tenants/accounts internally (see its docstring) --
+    # no longer takes an accounts list. tenant_ids is only fetched here for
+    # the startup log line.
+    tenant_ids = repo.list_active_tenant_ids()
+    scheduler = build_daily_schedule()
     scheduler.start()
 
     signal.signal(signal.SIGTERM, _handle_shutdown)
     signal.signal(signal.SIGINT, _handle_shutdown)
 
-    print(f"Scheduler started with {len(accounts)} account(s). Waiting for scheduled runs...")
+    print(f"Scheduler started for {len(tenant_ids)} tenant(s). Waiting for scheduled runs...")
     while not _shutdown:
         time.sleep(5)
 

@@ -19,4 +19,21 @@ export default defineConfig({
     host: true,
     port: 5173,
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // Heavy third-party libs get their own chunk, cached across every
+        // page navigation and every future deploy (until the lib version
+        // itself changes) -- without this they'd land inside whichever
+        // page's lazy chunk imports them first (e.g. Recharts bundled into
+        // Analytics' own chunk instead of a shared vendor chunk).
+        manualChunks: {
+          vendor: ['react', 'react-dom', 'react-router-dom'],
+          supabase: ['@supabase/supabase-js'],
+          motion: ['framer-motion'],
+          charts: ['recharts'],
+        },
+      },
+    },
+  },
 })

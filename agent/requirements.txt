@@ -2,11 +2,21 @@
 # Install:  pip install -r requirements.txt
 #           playwright install chromium
 
-# Pins are minimum-version (>=) rather than exact (==) because supabase and anthropic
-# each constrain httpx to their own range — exact pins made the set unresolvable.
+# Pins are minimum-version (>=) rather than exact (==) because anthropic
+# constrains httpx to its own range — exact pins made the set unresolvable.
 
-# Database — Supabase (Postgres + Auth + Realtime)
-supabase>=2.10.0
+# Database — PORTED 2026-08-20: the agent now talks directly to the main
+# Next.js SaaS's own multi-tenant Postgres database (DATABASE_URL) instead
+# of a standalone Supabase project, so the `supabase` package (its REST/
+# PostgREST client) is no longer used anywhere in this codebase (db/client.py
+# is kept, untouched, purely for historical reference -- nothing imports it
+# except itself). Removed rather than left unused, since it also pulls in
+# gotrue/postgrest/storage3/realtime deps this agent has never needed.
+psycopg2-binary>=2.9.9
+
+# Decrypts OutreachAccount.proxyPasswordEnc (AES-256-GCM, written by the
+# Next.js app) -- see db/crypto.py.
+cryptography>=43.0.0
 
 # Claude API — Haiku for analysis/scoring, Sonnet for message generation
 anthropic>=0.42.0
@@ -29,3 +39,25 @@ beautifulsoup4>=4.12.3
 
 # Timezone handling for per-account run times
 pytz>=2024.2
+
+# Live login (remote "Connect account" feature, agent/live_login/) -- the
+# websocket server clients connect to, and the JWT verifier that
+# authenticates each connection. websockify wraps the local VNC server
+# (x11vnc, see live_login/Dockerfile) in a WebSocket so a browser can speak
+# to it -- the actual video/input relay is VNC's own protocol now, not
+# hand-rolled JSON frame/input messages.
+websockets>=13.0
+PyJWT>=2.9.0
+websockify>=0.13.0
+
+# LIVE-CONFIRMED 2026-08-31: Xvfb's own Caps Lock modifier state persists
+# across every live-login session for the container's whole lifetime, with
+# nothing to reset it -- if it's ever left ON, a tenant's Caps Lock
+# keypresses over VNC silently do nothing (verified: Chromium's own CDP-
+# level synthetic key events do NOT toggle this real X11 state, only a
+# genuine XTEST-injected key press/release does -- see
+# live_login/session.py's _reset_caps_lock()). python-xlib is the only
+# thing in this image with XTEST bindings; core Xlib alone (already used
+# nowhere else in this codebase) can't drive or query real modifier-lock
+# state, only decorative keyboard LEDs.
+python-xlib>=0.33

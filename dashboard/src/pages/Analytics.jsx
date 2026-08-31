@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, ResponsiveContainer,
@@ -82,11 +82,24 @@ function buildBuckets(rangeKey, start, end) {
   return buckets
 }
 
-function countInBucket(rangeKey, bucketKey, leadsList, predicate = () => true) {
-  if (rangeKey === 'today') {
-    return leadsList.filter((l) => l.created_at && new Date(l.created_at).getHours() === bucketKey && predicate(l)).length
+// One pass over the leads array, grouping each lead into its bucket key --
+// replaces the old approach of re-filtering the full array once per bucket
+// per trend line (buckets * leads comparisons become a single leads pass).
+function groupByBucket(rangeKey, leadsList) {
+  const map = new Map()
+  for (const l of leadsList) {
+    if (!l.created_at) continue
+    const key = rangeKey === 'today' ? new Date(l.created_at).getHours() : l.created_at.slice(0, 10)
+    const bucket = map.get(key)
+    if (bucket) bucket.push(l)
+    else map.set(key, [l])
   }
-  return leadsList.filter((l) => l.created_at?.slice(0, 10) === bucketKey && predicate(l)).length
+  return map
+}
+
+function countInBucket(bucketKey, groupedMap, predicate = () => true) {
+  const bucket = groupedMap.get(bucketKey)
+  return bucket ? bucket.filter(predicate).length : 0
 }
 
 function ChartCard({ title, children, delay = 0 }) {
@@ -193,44 +206,62 @@ export default function Analytics() {
     load()
   }, [])
 
+  // Every KPI, bucket, and trend line derives from `leads` + the active
+  // range/custom-date state -- recomputing this on every render (including
+  // every keystroke in the custom date inputs) meant re-scanning the full,
+  // unbounded leads array 7+ times per render. Memoized so it only reruns
+  // when one of these actually changes.
+  const derived = useMemo(() => {
+    const { start, end } = resolveBounds(rangeKey, customStart, customEnd)
+    const scoped = start
+      ? leads.filter((l) => l.created_at && new Date(l.created_at) >= start && new Date(l.created_at) <= end)
+      : leads
+
+    const total = scoped.length
+    const hot = scoped.filter((l) => l.temperature === 'hot').length
+    const warm = scoped.filter((l) => l.temperature === 'warm').length
+    const cold = scoped.filter((l) => l.temperature === 'cold').length
+    const contacted = scoped.filter((l) => l.contact_count > 0 || l.status === 'contacted').length
+    const replied = scoped.filter((l) => l.status === 'replied').length
+    const linkedinCount = scoped.filter((l) => l.platform === 'linkedin').length
+    const instagramCount = scoped.filter((l) => l.platform === 'instagram').length
+
+    const buckets = buildBuckets(rangeKey, start, end)
+    const grouped = groupByBucket(rangeKey, scoped)
+    const dailyCounts = buckets.map((b) => ({ date: b.label, leads: countInBucket(b.key, grouped) }))
+
+    // Sparklines get at most the trailing 7 buckets -- a glance, not the full trend.
+    const sparkBuckets = buckets.slice(-7)
+    const trendFor = (predicate) => sparkBuckets.map((b) => countInBucket(b.key, grouped, predicate))
+    const totalTrend = trendFor(() => true)
+    const hotTrend = trendFor((l) => l.temperature === 'hot')
+    const warmTrend = trendFor((l) => l.temperature === 'warm')
+    const coldTrend = trendFor((l) => l.temperature === 'cold')
+
+    const temperatureData = [
+      { name: 'Hot', value: hot, key: 'hot' },
+      { name: 'Warm', value: warm, key: 'warm' },
+      { name: 'Cold', value: cold, key: 'cold' },
+    ].filter((d) => d.value > 0)
+
+    const platformData = [
+      { name: 'LinkedIn', leads: linkedinCount },
+      { name: 'Instagram', leads: instagramCount },
+    ]
+
+    return {
+      total, hot, warm, cold, contacted, replied, linkedinCount, instagramCount,
+      dailyCounts, totalTrend, hotTrend, warmTrend, coldTrend, temperatureData, platformData,
+    }
+  }, [leads, rangeKey, customStart, customEnd])
+
   if (error) return <p className="p-8 text-sm text-rose-400">{error}</p>
   if (loading) return <p className="p-8 text-sm text-slate-500">Loading…</p>
 
-  const { start, end } = resolveBounds(rangeKey, customStart, customEnd)
-  const scoped = start
-    ? leads.filter((l) => l.created_at && new Date(l.created_at) >= start && new Date(l.created_at) <= end)
-    : leads
-
-  const total = scoped.length
-  const hot = scoped.filter((l) => l.temperature === 'hot').length
-  const warm = scoped.filter((l) => l.temperature === 'warm').length
-  const cold = scoped.filter((l) => l.temperature === 'cold').length
-  const contacted = scoped.filter((l) => l.contact_count > 0 || l.status === 'contacted').length
-  const replied = scoped.filter((l) => l.status === 'replied').length
-  const linkedinCount = scoped.filter((l) => l.platform === 'linkedin').length
-  const instagramCount = scoped.filter((l) => l.platform === 'instagram').length
-
-  const buckets = buildBuckets(rangeKey, start, end)
-  const dailyCounts = buckets.map((b) => ({ date: b.label, leads: countInBucket(rangeKey, b.key, scoped) }))
-
-  // Sparklines get at most the trailing 7 buckets -- a glance, not the full trend.
-  const sparkBuckets = buckets.slice(-7)
-  const trendFor = (predicate) => sparkBuckets.map((b) => countInBucket(rangeKey, b.key, scoped, predicate))
-  const totalTrend = trendFor(() => true)
-  const hotTrend = trendFor((l) => l.temperature === 'hot')
-  const warmTrend = trendFor((l) => l.temperature === 'warm')
-  const coldTrend = trendFor((l) => l.temperature === 'cold')
-
-  const temperatureData = [
-    { name: 'Hot', value: hot, key: 'hot' },
-    { name: 'Warm', value: warm, key: 'warm' },
-    { name: 'Cold', value: cold, key: 'cold' },
-  ].filter((d) => d.value > 0)
-
-  const platformData = [
-    { name: 'LinkedIn', leads: linkedinCount },
-    { name: 'Instagram', leads: instagramCount },
-  ]
+  const {
+    total, hot, warm, cold, contacted, replied, linkedinCount, instagramCount,
+    dailyCounts, totalTrend, hotTrend, warmTrend, coldTrend, temperatureData, platformData,
+  } = derived
 
   const rangeLabel = RANGES.find((r) => r.key === rangeKey)?.label || 'All time'
   const subtitle =

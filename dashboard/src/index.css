@@ -40,15 +40,25 @@ body {
   background-image:
     radial-gradient(circle at 15% 0%, oklch(0.63 0.24 293 / 0.16), transparent 45%),
     radial-gradient(circle at 85% 15%, oklch(0.75 0.15 220 / 0.12), transparent 40%);
-  background-attachment: fixed;
+  /* background-attachment: fixed removed -- it forces the browser to
+     recompute this gradient on every scroll/composite pass, which combined
+     with many backdrop-blur cards on screen was a real, reported source of
+     lag tied to on-screen activity, not just scrolling. A plain scrolling
+     background costs nothing extra to render. */
 }
 
 /* Glass surface -- the base card treatment used everywhere instead of a flat
-   bg + border. Translucent so the ambient background glow reads through. */
+   bg + border. Translucent so the ambient background glow reads through.
+   blur(8px), not the original 20px -- backdrop-filter is one of the most
+   GPU-expensive CSS properties, and with dozens of .glass cards visible at
+   once (every list page) plus a fixed-attachment background behind them,
+   the combined repaint cost was a real, reported source of lag tied to
+   on-screen cursor activity. 8px keeps a visible frosted-glass look at a
+   fraction of the compositing cost. */
 .glass {
-  background: color-mix(in oklch, var(--color-slate-900) 55%, transparent);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  background: color-mix(in oklch, var(--color-slate-900) 65%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   border: 1px solid color-mix(in oklch, var(--color-slate-100) 8%, transparent);
 }
 

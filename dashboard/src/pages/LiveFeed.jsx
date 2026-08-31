@@ -4,44 +4,74 @@ import { supabase } from '../lib/supabase'
 import LeadCard from '../components/LeadCard'
 import { SkeletonCard } from '../components/Skeleton'
 import EmptyState from '../components/EmptyState'
+import { debounce } from '../lib/debounce'
+import { subscribeChannel } from '../lib/realtimeSubscribe'
+
+const PAGE_SIZE = 40
 
 /**
  * Today's leads (spec §7.1) -- everything discovered/analyzed since local
  * midnight, hottest first. Realtime-subscribed so new leads appear as the
- * agent works, without a manual refresh.
+ * agent works, without a manual refresh. Paginated -- rendering every lead
+ * as a fully animated card (score bar, layout transitions) gets genuinely
+ * heavy in the DOM on a busy day with hundreds of leads, independent of
+ * how fast the underlying query runs.
  */
 export default function LiveFeed() {
   const [leads, setLeads] = useState([])
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState(null)
+  const [page, setPage] = useState(0)
+  const [hasMore, setHasMore] = useState(true)
 
-  useEffect(() => {
+  async function load(pageNum, { append } = {}) {
+    if (append) setLoadingMore(true)
+    else setLoading(true)
+
     const todayStart = new Date()
     todayStart.setHours(0, 0, 0, 0)
 
-    async function load() {
-      setLoading(true)
-      const { data, error: err } = await supabase
-        .from('leads')
-        .select('*')
-        .gte('created_at', todayStart.toISOString())
-        .order('score', { ascending: false, nullsFirst: false })
-        .order('created_at', { ascending: false })
+    const { data, error: err } = await supabase
+      .from('leads')
+      .select('*')
+      .gte('created_at', todayStart.toISOString())
+      .order('score', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false })
+      .range(pageNum * PAGE_SIZE, pageNum * PAGE_SIZE + PAGE_SIZE - 1)
 
-      if (err) setError(err.message)
-      else setLeads(data)
-      setLoading(false)
+    if (err) {
+      setError(err.message)
+    } else {
+      setHasMore((data || []).length === PAGE_SIZE)
+      setLeads((prev) => (append ? [...prev, ...(data || [])] : data || []))
     }
+    setLoading(false)
+    setLoadingMore(false)
+  }
 
-    load()
+  useEffect(() => {
+    load(0)
 
-    const channel = supabase
-      .channel('live-feed')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'leads' }, load)
-      .subscribe()
+    // Debounced so a burst of changes (a full pipeline cycle touching many
+    // leads at once, a bulk import) collapses into one reload instead of
+    // one full refetch per row changed. Reloads only the currently-loaded
+    // pages, not the whole day's leads.
+    const reloadVisible = () => {
+      for (let p = 0; p <= page; p++) load(p, { append: p > 0 })
+    }
+    const debouncedReload = debounce(reloadVisible, 400)
+    return subscribeChannel('live-feed', (ch) =>
+      ch.on('postgres_changes', { event: '*', schema: 'public', table: 'leads' }, debouncedReload)
+    )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page])
 
-    return () => supabase.removeChannel(channel)
-  }, [])
+  function loadMore() {
+    const next = page + 1
+    setPage(next)
+    load(next, { append: true })
+  }
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-6 sm:px-8 sm:py-10">
@@ -73,6 +103,19 @@ export default function LiveFeed() {
           ))}
         </AnimatePresence>
       </div>
+
+      {!loading && hasMore && (
+        <div className="mt-6 flex justify-center">
+          <button
+            type="button"
+            onClick={loadMore}
+            disabled={loadingMore}
+            className="accent-ring rounded-lg border border-slate-800 bg-slate-900/50 px-4 py-2 text-xs font-medium text-slate-300 transition hover:border-[var(--color-accent-from)]/50 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {loadingMore ? 'Loading…' : 'Load more'}
+          </button>
+        </div>
+      )}
     </div>
   )
 }

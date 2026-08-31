@@ -5,10 +5,11 @@ The agent is one long-lived process (`agent/server.py`, APScheduler's
 needs a machine that's always on. The dashboard is a static build and goes to
 Vercel separately; this file only covers the agent.
 
-Recommended: a Hetzner CX22 (cheapest shared vCPU box, ~EUR4/mo) or Oracle
-Cloud's Always Free ARM tier if you'd rather not pay. Either is fine --
-nothing here needs more than 1-2 vCPUs and a couple GB of RAM. Ubuntu 22.04
-or later.
+Recommended: a DigitalOcean droplet (basic shared vCPU, $4-6/mo) -- chosen
+over Hetzner because Hetzner doesn't accept this account's card. Nothing
+here needs more than 1-2 vCPUs and a couple GB of RAM. Ubuntu 22.04 or
+later. (Oracle Cloud's Always Free ARM tier is a no-cost alternative if
+DigitalOcean's cost ever becomes a blocker again.)
 
 ## Choice made here: `docker run --restart unless-stopped`, not systemd
 
@@ -51,7 +52,7 @@ instead (`agent/.env` is dev-only and is never baked into the image). Same
 keys either way; see `.env.example` at the repo root for what each one is
 for:
 
-- `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`
+- `DATABASE_URL` (PORTED 2026-08-20: same connection string as the main Next.js app's own `DATABASE_URL` -- both apps share one multi-tenant Postgres database now, not a separate Supabase project), `OUTREACH_ENCRYPTION_KEY` (same value as the Next.js app's own, for decrypting proxy passwords)
 - `ANTHROPIC_API_KEY`, `MODEL_ANALYSIS`, `MODEL_MESSAGES`
 - `WHATSAPP_PROVIDER`, `WHATSAPP_API_KEY`, `WHATSAPP_API_SECRET`, `WHATSAPP_FROM_NUMBER`
 - `TIMEZONE`, `HEADLESS` (must be `true` on the server -- no display here), `DEV_MAX_LEADS_PER_ACCOUNT` (leave unset in production)

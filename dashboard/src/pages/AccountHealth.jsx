@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { supabase } from '../lib/supabase'
+import { debounce } from '../lib/debounce'
+import { subscribeChannel } from '../lib/realtimeSubscribe'
 
 const STATUS_STYLE = {
   active: 'bg-emerald-500/10 text-emerald-300 ring-emerald-400/30',
@@ -59,11 +61,10 @@ export default function AccountHealth() {
 
   useEffect(() => {
     load()
-    const channel = supabase
-      .channel('account-health')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'accounts' }, load)
-      .subscribe()
-    return () => supabase.removeChannel(channel)
+    const debouncedLoad = debounce(load, 400)
+    return subscribeChannel('account-health', (ch) =>
+      ch.on('postgres_changes', { event: '*', schema: 'public', table: 'accounts' }, debouncedLoad)
+    )
   }, [])
 
   function setDraftField(accountId, field, value) {

@@ -18,12 +18,14 @@ const NAV = [
   { to: '/', label: 'Live Feed' },
   { to: '/approval', label: 'Approval' },
   { to: '/instagram-manual', label: 'Instagram' },
+  { to: '/linkedin', label: 'LinkedIn' },
   { to: '/pipeline', label: 'Pipeline' },
   { to: '/clients', label: 'Clients' },
   { to: '/client-history', label: 'History' },
   { to: '/analytics', label: 'Analytics' },
   { to: '/accounts', label: 'Accounts' },
   { to: '/run-status', label: 'Run Status' },
+  { to: '/errors', label: 'Errors' },
   { to: '/workflow', label: 'Workflow' },
   { to: '/settings', label: 'Settings' },
 ]
@@ -40,6 +42,8 @@ function NavIcon({ to, className = 'h-5 w-5' }) {
       return <svg {...common}><path d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
     case '/instagram-manual':
       return <svg {...common}><rect x="3.5" y="5" width="17" height="16" rx="4.5" /><circle cx="12" cy="13" r="4" /><circle cx="16.8" cy="8.2" r="0.4" fill="currentColor" /></svg>
+    case '/linkedin':
+      return <svg {...common}><rect x="3.5" y="3.5" width="17" height="17" rx="2.5" /><circle cx="7.8" cy="8.2" r="0.6" fill="currentColor" stroke="none" /><path d="M7.8 11v6M12 17v-4c0-1.4 1-2.4 2.4-2.4S16.8 11.6 16.8 13v4" /></svg>
     case '/pipeline':
       return <svg {...common}><rect x="3" y="4" width="5" height="16" rx="1.4" /><rect x="9.5" y="4" width="5" height="10.5" rx="1.4" /><rect x="16" y="4" width="5" height="13.5" rx="1.4" /></svg>
     case '/clients':
@@ -52,6 +56,8 @@ function NavIcon({ to, className = 'h-5 w-5' }) {
       return <svg {...common}><circle cx="12" cy="8.5" r="3.5" /><path d="M4.5 20a7.5 7.5 0 0 1 15 0" /></svg>
     case '/run-status':
       return <svg {...common}><circle cx="10.5" cy="10.5" r="6.5" /><path d="M15 15l5.5 5.5" /></svg>
+    case '/errors':
+      return <svg {...common}><path d="M12 3 2.5 20h19L12 3Z" /><path d="M12 9.5v4.25" /><circle cx="12" cy="17" r="0.4" fill="currentColor" stroke="none" /></svg>
     case '/workflow':
       return <svg {...common}><path d="M12 3.5V10M12 10 6 17M12 10l6 7" /><circle cx="12" cy="3.5" r="1.6" fill="currentColor" stroke="none" /><circle cx="6" cy="18" r="1.6" fill="currentColor" stroke="none" /><circle cx="18" cy="18" r="1.6" fill="currentColor" stroke="none" /></svg>
     case '/settings':
@@ -161,6 +167,23 @@ export default function Layout() {
     return () => supabase.removeChannel(channel)
   }, [session])
 
+  // App-wide: notify the instant a genuine (non-"normal skip") pipeline
+  // failure is logged, same immediacy reasoning as the hot-lead/number-found
+  // watchers above -- see database/007_add_error_log.sql and
+  // scheduler.py's log_error() for where these rows come from.
+  useEffect(() => {
+    if (!session) return
+    const channel = supabase
+      .channel('global-error-watch')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'error_log' }, (payload) => {
+        if (!payload.new.is_expected) {
+          pushToast({ title: 'Agent error', body: payload.new.error_message })
+        }
+      })
+      .subscribe()
+    return () => supabase.removeChannel(channel)
+  }, [session])
+
   if (loading) {
     return <div className="min-h-full" />
   }
@@ -210,11 +233,6 @@ export default function Layout() {
             <div className="hidden md:group-hover:block">
               <p className="accent-text whitespace-nowrap text-sm font-bold uppercase tracking-widest">Nexaris</p>
               <p className="mt-0.5 whitespace-nowrap text-[11px] text-slate-600">AI Outreach Agent</p>
-              <p className="mt-2 inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-slate-800 px-1.5 py-0.5 text-[10px] text-slate-600">
-                <kbd className="font-sans">⌘</kbd>
-                <kbd className="font-sans">K</kbd>
-                <span className="ml-0.5">to search</span>
-              </p>
             </div>
           </div>
           <span className="hidden shrink-0 md:group-hover:block">
@@ -255,17 +273,20 @@ export default function Layout() {
       </div>
 
       <main className="pb-20 md:ml-16 md:pb-0">
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={location.pathname}
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            transition={{ duration: 0.2, ease: 'easeOut' }}
-          >
-            <Outlet />
-          </motion.div>
-        </AnimatePresence>
+        {/* No cross-fade here on purpose. mode="wait" blocked the incoming
+            page's mount/fetch until the outgoing page's exit animation
+            finished (~200ms of nothing on every nav). mode="popLayout"
+            removed that delay but kept both pages mounted at once during
+            the fade -- fine for two small siblings, but a real problem
+            between full, unrelated page trees: navigating away from Live
+            Feed while its realtime channel is still open, into a page like
+            Approval Queue with active Framer Motion drag gesture handlers,
+            could visibly freeze the UI for the overlap window. A plain
+            keyed div swaps instantly -- old page fully unmounts (closing
+            its subscriptions) before the new page mounts, no overlap ever. */}
+        <div key={location.pathname}>
+          <Outlet />
+        </div>
       </main>
 
       {/* Mobile bottom bar -- a single trigger instead of cramming all ten

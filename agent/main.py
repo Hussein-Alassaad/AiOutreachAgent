@@ -13,7 +13,7 @@ Run it with:   python -m agent.main
 import sys
 
 from agent import config
-from agent.db import client as db
+from agent.db import postgres_client as db
 
 
 def _status(ok: bool) -> str:
@@ -37,7 +37,7 @@ def self_check() -> bool:
     checks = [
         ("Python runtime", True, f"Python {sys.version.split()[0]}"),
         (
-            "Supabase credentials",
+            "Database credentials",
             db.is_configured(),
             "set" if db.is_configured() else "not set - needed for Phase 1",
         ),
@@ -70,7 +70,7 @@ def self_check() -> bool:
     print()
     print("-" * 62)
     print("  Phase 0 complete: the agent runs. It does no real work yet.")
-    print("  Next: Phase 1 - create the database schema in Supabase.")
+    print("  Next: Phase 1 - verify DATABASE_URL points at the shared Postgres DB.")
     print("-" * 62)
 
     return True

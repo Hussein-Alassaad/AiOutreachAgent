@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { supabase } from '../lib/supabase'
 import TemperatureBadge from '../components/TemperatureBadge'
@@ -117,29 +117,87 @@ function downloadCsv(rows) {
  * agent/scheduler.py's run_analysis_cycle, which writes here before any
  * message is ever generated).
  */
+// Only the columns the list rows actually render -- `snapshot` (the heavy
+// jsonb column CSV export needs) is fetched separately, on demand, only
+// when Export CSV is clicked, instead of on every list load/search keystroke.
+const _LIST_COLUMNS = 'id, lead_id, business_name, contacted, temperature, platform, industry, score'
+const PAGE_SIZE = 40
+
 export default function ClientHistory() {
   const [rows, setRows] = useState([])
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState(null)
   const [expandedId, setExpandedId] = useState(null)
+  const [exporting, setExporting] = useState(false)
+  const [page, setPage] = useState(0)
+  const [hasMore, setHasMore] = useState(true)
 
-  useEffect(() => {
-    async function load() {
-      setLoading(true)
-      let query = supabase.from('client_history').select('*').order('created_at', { ascending: false })
-      if (search.trim()) {
-        query = query.ilike('business_name', `%${search.trim()}%`)
-      }
-      const { data, error: err } = await query
-      if (err) setError(err.message)
-      else setRows(data)
-      setLoading(false)
+  // Paginated the same way Clients/Live Feed are -- rendering every
+  // historical lead as an animated card gets heavy in the DOM once this
+  // "never resets" table has thousands of rows, independent of query speed.
+  async function load(pageNum, { append } = {}) {
+    if (append) setLoadingMore(true)
+    else setLoading(true)
+
+    let query = supabase
+      .from('client_history')
+      .select(_LIST_COLUMNS)
+      .order('analyzed_at', { ascending: false })
+      .range(pageNum * PAGE_SIZE, pageNum * PAGE_SIZE + PAGE_SIZE - 1)
+    if (search.trim()) query = query.ilike('business_name', `%${search.trim()}%`)
+
+    const { data, error: err } = await query
+    if (err) {
+      setError(err.message)
+    } else {
+      setHasMore((data || []).length === PAGE_SIZE)
+      setRows((prev) => (append ? [...prev, ...(data || [])] : data || []))
     }
+    setLoading(false)
+    setLoadingMore(false)
+  }
 
-    const timeout = setTimeout(load, 250) // debounce while typing
+  // Search is debounced (typing shouldn't fire one query per keystroke);
+  // the initial mount load fires immediately, not after the debounce delay.
+  const mounted = useRef(false)
+  useEffect(() => {
+    if (!mounted.current) {
+      mounted.current = true
+      load(0)
+      return
+    }
+    const timeout = setTimeout(() => {
+      setPage(0)
+      load(0)
+    }, 250)
     return () => clearTimeout(timeout)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search])
+
+  function loadMore() {
+    const next = page + 1
+    setPage(next)
+    load(next, { append: true })
+  }
+
+  async function handleExport() {
+    setExporting(true)
+    // CSV export wants the full snapshot (profile url, follower count,
+    // website, WhatsApp number, founder) for every matching row, not just
+    // the currently-loaded pages -- fetched fresh here since only export
+    // needs it, capped at 5,000 rows so a huge export doesn't hang the tab.
+    let query = supabase.from('client_history').select('*').order('analyzed_at', { ascending: false }).limit(5000)
+    if (search.trim()) query = query.ilike('business_name', `%${search.trim()}%`)
+    const { data, error: err } = await query
+    setExporting(false)
+    if (err) {
+      setError(err.message)
+      return
+    }
+    downloadCsv(data || [])
+  }
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-6 sm:px-8 sm:py-10">
@@ -152,11 +210,11 @@ export default function ClientHistory() {
         </div>
         <button
           type="button"
-          disabled={rows.length === 0}
-          onClick={() => downloadCsv(rows)}
+          disabled={rows.length === 0 || exporting}
+          onClick={handleExport}
           className="accent-ring shrink-0 rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2 text-xs font-medium text-slate-200 transition hover:border-[var(--color-accent-from)]/50 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          Export CSV
+          {exporting ? 'Exporting…' : 'Export CSV'}
         </button>
       </motion.header>
 
@@ -226,6 +284,19 @@ export default function ClientHistory() {
           ))}
         </AnimatePresence>
       </div>
+
+      {!loading && hasMore && (
+        <div className="mt-6 flex justify-center">
+          <button
+            type="button"
+            onClick={loadMore}
+            disabled={loadingMore}
+            className="accent-ring rounded-lg border border-slate-800 bg-slate-900/50 px-4 py-2 text-xs font-medium text-slate-300 transition hover:border-[var(--color-accent-from)]/50 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {loadingMore ? 'Loading…' : 'Load more'}
+          </button>
+        </div>
+      )}
     </div>
   )
 }

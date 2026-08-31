@@ -4,6 +4,8 @@ import { supabase } from '../lib/supabase'
 import { SkeletonCard } from '../components/Skeleton'
 import EmptyState from '../components/EmptyState'
 import { pushToast } from '../lib/toast'
+import { debounce } from '../lib/debounce'
+import { subscribeChannel } from '../lib/realtimeSubscribe'
 
 const SWIPE_THRESHOLD = 110
 
@@ -71,7 +73,7 @@ export default function ApprovalQueue() {
     setLoading(true)
     const { data, error: err } = await supabase
       .from('messages')
-      .select('*, leads(id, business_name, platform, score, temperature)')
+      .select('id, lead_id, channel, body, edited_body, approval_status, leads(id, business_name, platform, score, temperature)')
       .eq('approval_status', 'awaiting')
       .order('created_at', { ascending: true })
 
@@ -82,20 +84,23 @@ export default function ApprovalQueue() {
 
   useEffect(() => {
     load()
-    const channel = supabase
-      .channel('approval-queue')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, load)
-      .subscribe()
-    return () => supabase.removeChannel(channel)
+    const debouncedLoad = debounce(load, 400)
+    return subscribeChannel('approval-queue', (ch) =>
+      ch.on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, debouncedLoad)
+    )
   }, [])
 
   async function maybeAdvanceLead(leadId) {
     const { data: leadMessages } = await supabase.from('messages').select('approval_status').eq('lead_id', leadId)
     if (leadMessages?.length && leadMessages.every((m) => m.approval_status === 'approved')) {
-      await supabase.from('leads').update({ status: 'approved' }).eq('id', leadId)
-      await supabase.from('pipeline_history').insert({
-        lead_id: leadId, from_stage: 'awaiting_approval', to_stage: 'approved', changed_by: 'mohamad',
-      })
+      // Neither write depends on the other's result -- run them together
+      // instead of one after the other.
+      await Promise.all([
+        supabase.from('leads').update({ status: 'approved' }).eq('id', leadId),
+        supabase.from('pipeline_history').insert({
+          lead_id: leadId, from_stage: 'awaiting_approval', to_stage: 'approved', changed_by: 'mohamad',
+        }),
+      ])
     }
   }
 
@@ -132,10 +137,24 @@ export default function ApprovalQueue() {
   }
 
   async function approveAll() {
-    for (const message of messages) {
-      if (message.approval_status === 'held') continue // holds are deliberate -- Approve All must not override them
-      await approve(message)
+    // Holds are deliberate -- Approve All must not override them.
+    const toApprove = messages.filter((m) => m.approval_status !== 'held')
+    if (!toApprove.length) return
+
+    const { error: err } = await supabase
+      .from('messages')
+      .update({ approval_status: 'approved', approved_by: 'Mohamad', approved_at: new Date().toISOString() })
+      .in('id', toApprove.map((m) => m.id))
+    if (err) {
+      pushToast({ title: 'Approve all failed', body: err.message })
+      return
     }
+    pushToast({ title: 'Approved', body: `${toApprove.length} message${toApprove.length === 1 ? '' : 's'} cleared to send.` })
+
+    // One lead can have multiple messages -- advance each affected lead once,
+    // not once per message.
+    const leadIds = [...new Set(toApprove.map((m) => m.lead_id))]
+    await Promise.all(leadIds.map((id) => maybeAdvanceLead(id)))
   }
 
   const pendingCount = messages.filter((m) => m.approval_status !== 'held').length

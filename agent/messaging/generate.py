@@ -12,6 +12,7 @@ from __future__ import annotations
 from agent import config
 from agent.analysis import client as claude_client
 from agent.analysis import prompts
+from agent.db import repositories as repo
 from agent.messaging import style as style_module
 
 _PLATFORM_TONE = {
@@ -64,14 +65,24 @@ def _greeting_name(lead: dict) -> str:
     return lead.get("founder_name") or lead.get("business_name") or "there"
 
 
-def build_system_prompt(channel: str, message_style: str, is_followup: bool = False) -> str:
+def build_system_prompt(
+    channel: str,
+    message_style: str,
+    business_name: str,
+    business_description: str,
+    is_followup: bool = False,
+) -> str:
     """
     Assemble the system prompt for one message-generation call: fixed
-    intro, the channel's tone, the active style's guide, and the fixed
-    rules block. The same (channel, style, is_followup) combination always
-    produces the exact same string, which is what lets prompt caching pay
-    off here -- every message generated on the same channel/style/kind hits
-    the cache, not just repeats within one run.
+    intro (identifying the sending business -- tenant-configurable, see
+    OutreachSettings.businessName/businessDescription, NOT a hardcoded
+    identity, since each tenant runs their own outreach for their own
+    business), the channel's tone, the active style's guide, and the fixed
+    rules block. The same (channel, style, business identity, is_followup)
+    combination always produces the exact same string, which is what lets
+    prompt caching pay off here -- every message generated on the same
+    channel/style/kind/tenant hits the cache, not just repeats within one
+    run.
 
     `is_followup` swaps in _FOLLOWUP_RULES instead of _MESSAGE_RULES -- a
     follow-up must read as a genuinely different, shorter second note, not
@@ -81,10 +92,12 @@ def build_system_prompt(channel: str, message_style: str, is_followup: bool = Fa
     tone = _PLATFORM_TONE.get(channel, _PLATFORM_TONE["linkedin"])
     guide = style_module.style_guide(message_style)
     rules = _FOLLOWUP_RULES if is_followup else _MESSAGE_RULES
+    name = business_name or "our business"
+    description = business_description or "a business reaching out to potential clients"
 
-    return f"""You write short, personalized outreach messages for Nexaris, a marketing and AI \
-automation agency, to send to businesses found on social media. The message must read as if a \
-real person wrote it -- no AI-sounding phrasing, no generic templates, no corporate buzzwords.
+    return f"""You write short, personalized outreach messages for {name}, {description}, to send \
+to businesses found on social media. The message must read as if a real person wrote it -- no \
+AI-sounding phrasing, no generic templates, no corporate buzzwords.
 
 {tone}
 
@@ -106,6 +119,18 @@ def format_personalization_context(lead: dict, original_body: str | None = None)
     return "\n".join(lines)
 
 
+def _business_identity() -> tuple[str, str]:
+    """
+    This tenant's sending identity, from OutreachSettings (relies on
+    tenant_scope() being active, same ambient-tenant call shape as every
+    other repo.get_settings() call site -- see repositories.py's docstring).
+    Two clients running simultaneously each get their own name/description
+    here, never a shared hardcoded identity.
+    """
+    settings = repo.get_settings() or {}
+    return settings.get("business_name") or "", settings.get("business_description") or ""
+
+
 def generate_message(lead: dict, channel: str, message_style: str, model: str | None = None) -> str:
     """
     Generate one personalized outreach message for one lead on one channel.
@@ -116,7 +141,10 @@ def generate_message(lead: dict, channel: str, message_style: str, model: str | 
     messages.body.
     """
     model = model or config.MODEL_MESSAGES
-    system = prompts.cacheable_system(build_system_prompt(channel, message_style))
+    business_name, business_description = _business_identity()
+    system = prompts.cacheable_system(
+        build_system_prompt(channel, message_style, business_name, business_description)
+    )
     user_content = format_personalization_context(lead)
     return claude_client.call_text(system, user_content, model)
 
@@ -132,6 +160,9 @@ def generate_followup_message(
     actually avoid restating it rather than just being told not to.
     """
     model = model or config.MODEL_MESSAGES
-    system = prompts.cacheable_system(build_system_prompt(channel, message_style, is_followup=True))
+    business_name, business_description = _business_identity()
+    system = prompts.cacheable_system(
+        build_system_prompt(channel, message_style, business_name, business_description, is_followup=True)
+    )
     user_content = format_personalization_context(lead, original_body=original_body)
     return claude_client.call_text(system, user_content, model)
