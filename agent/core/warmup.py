@@ -23,8 +23,20 @@ WARMUP_CEILING = 30    # LinkedIn's steady-state target, the higher of the two -
                        # Instagram's own lower daily_limit still applies via effective_limit()
 
 
-def _weeks_since(created_at: str, now: dt.datetime) -> int:
-    created = dt.datetime.fromisoformat(created_at)
+def _weeks_since(created_at: str | dt.datetime, now: dt.datetime) -> int:
+    # LIVE-CONFIRMED 2026-09-01: this codebase's own repositories.py
+    # (get_account() et al) returns whatever psycopg2 gives back for a
+    # TIMESTAMP column -- a real datetime.datetime object, never a string
+    # -- unlike the JSON-encoded String "enum" fields this schema
+    # otherwise uses (see schema.prisma's own header comment on that
+    # convention). fromisoformat() only accepts str and raised "argument
+    # must be str" on the very first real discovery run this account type
+    # ever completed, for every single account across every tenant --
+    # confirmed this exact type via a direct droplet test. Accept either
+    # shape rather than assuming one, same defensive posture as the
+    # `if not created_at: return WARMUP_START` fallback already just
+    # above this function's only caller.
+    created = created_at if isinstance(created_at, dt.datetime) else dt.datetime.fromisoformat(created_at)
     if created.tzinfo is None:
         created = created.replace(tzinfo=dt.timezone.utc)
     return max(0, (now - created).days // 7)

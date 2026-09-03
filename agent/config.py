@@ -76,6 +76,15 @@ LIVE_LOGIN_PORT = int(_get("LIVE_LOGIN_PORT", "8765"))
 # this port, see DEPLOY.md's "Agent control service" section.
 AGENT_CONTROL_PORT = int(_get("AGENT_CONTROL_PORT", "8766"))
 
+# Port the session-import HTTP server (live_login/import_server.py) binds
+# to, on localhost only -- runs inside the SAME container/process as the
+# live_login websocket server (started as a background thread from
+# server.py's main(), not a separate deployable unit), same Caddy instance
+# reverse-proxies a third route to this port. Backs the Nexaris Connect
+# Chrome extension's session handoff -- see import_server.py's own
+# docstring.
+IMPORT_SESSION_PORT = int(_get("IMPORT_SESSION_PORT", "8767"))
+
 # ── Runtime ───────────────────────────────────────────────────────────────────
 # Timezone that per-account run times are interpreted in.
 TIMEZONE = _get("TIMEZONE", "Asia/Beirut")

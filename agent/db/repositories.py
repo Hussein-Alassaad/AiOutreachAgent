@@ -256,10 +256,26 @@ def _loads_dict(value: Any) -> dict:
 def _dumps(value: Any) -> str:
     """JSON-encode a value for a TEXT-as-JSON column. None becomes '[]' —
     every JSON TEXT column in this schema defaults to an empty array or
-    object, never SQL NULL, per schema.prisma's @default(...) values."""
+    object, never SQL NULL, per schema.prisma's @default(...) values.
+
+    LIVE-CONFIRMED 2026-09-01: scheduler.py's own real analysis pipeline
+    passes a "snapshot" field built by spreading a whole raw lead dict
+    (`{**lead, **update_fields}`, insert_client_history()'s caller) --
+    that dict always carries real datetime.datetime objects for
+    created_at/updated_at (this module's own SELECT-returning functions
+    never stringify them, see e.g. get_account() above and its own
+    comment on this exact same real-vs-string datetime shape), which
+    json.dumps() rejects outright ("Object of type datetime is not JSON
+    serializable") with no fallback -- broke the very first real
+    end-to-end analysis run this whole feature ever completed. default=str
+    is the standard, safe way to let json.dumps stringify anything it
+    doesn't natively know how to encode (datetimes included) instead of
+    raising -- this is a snapshot for a permanent history record, not data
+    read back and type-checked later, so a stringified timestamp here is
+    harmless."""
     if value is None:
         value = []
-    return json.dumps(value)
+    return json.dumps(value, default=str)
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -301,6 +317,28 @@ def get_account(account_id: str, tenant_id: str | None = None) -> Row | None:
         cur.execute(
             "SELECT * FROM outreach_accounts WHERE id = %s AND tenant_id = %s LIMIT 1",
             (account_id, tenant_id),
+        )
+        row = cur.fetchone()
+    return _account_out(row)
+
+
+def get_account_by_reconnect_token(account_id: str, reconnect_token: str) -> Row | None:
+    """
+    Chicken-and-egg case matching platform_scope()'s own docstring exactly:
+    a Nexaris Connect extension reconnect click (live_login/import_server.py)
+    arrives with only an account_id and an opaque token it saved from a
+    PRIOR /import call -- there's no tenant_id to scope to yet, and no
+    tenant session to derive one from (unlike the code-based /import flow,
+    which gets tenant_id from a JWT a real dashboard session minted). Uses
+    platform_scope() to look the account up regardless of tenant, but the
+    actual authorization is the exact-match token comparison in the SQL
+    itself, not the scope bypass -- a wrong/stale/cleared token returns
+    None exactly like a wrong tenant_id would with get_account().
+    """
+    with platform_scope(), get_cursor(commit=False) as cur:
+        cur.execute(
+            "SELECT * FROM outreach_accounts WHERE id = %s AND extension_reconnect_token = %s LIMIT 1",
+            (account_id, reconnect_token),
         )
         row = cur.fetchone()
     return _account_out(row)
@@ -1144,6 +1182,36 @@ def start_run(tenant_id: str, account_id: str) -> Row:
             RETURNING *
             """,
             (tenant_id, account_id),
+        )
+        row = cur.fetchone()
+    return dict(row)
+
+
+def start_stage_run(tenant_id: str, stage: str) -> Row:
+    """
+    Open a run row for one of the tenant-wide pipeline stages (analysis,
+    message_generation, sending) -- these process every eligible lead
+    across the WHOLE tenant in one call, unlike discovery's one-account-
+    per-day model, so there's no single account_id to attach here (left
+    null) and no claim/lock semantics needed (nothing to race against --
+    a second concurrent call for the same tenant just does its own
+    separate, valid pass over whatever's still pending, same as calling
+    run_analysis_cycle() twice in a row already safely no-ops on leads the
+    first call already moved off "discovered").
+
+    2026-09-01: added so Run Status (previously discovery-only, see
+    OutreachRun.stage's own schema comment) shows the other three stages
+    too -- before this, a real analysis/message-generation/sending failure
+    was invisible on that page, which is what prompted this.
+    """
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO outreach_runs (id, tenant_id, stage, status)
+            VALUES (gen_random_uuid()::text, %s, %s, 'running')
+            RETURNING *
+            """,
+            (tenant_id, stage),
         )
         row = cur.fetchone()
     return dict(row)

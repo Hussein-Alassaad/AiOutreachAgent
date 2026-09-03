@@ -188,19 +188,24 @@ def extract_company_profile(page: Page) -> dict:
     discovery/qualify.py's qualify_profile() expects.
 
     ============================================================================
-    RE-VERIFIED live 2026-08-03 -- the original 2026-07-31 selectors below had
-    silently broken (LinkedIn redesigned this page; `data-test-id="about-us__*"`
-    no longer exists anywhere on it -- confirmed via `page.eval_on_selector_all`
-    returning an empty list). Caught via a real supervised discovery run against
-    Paul Bakery Beirut: every one of 5 real, legitimate leads scored as
-    "bio missing" and "zero posts" by qualify.py, which is what surfaced this.
+    RE-VERIFIED live 2026-09-01 -- `p.org-top-card-summary__tagline` (below,
+    fixed 2026-08-03 after the SAME class of break happened once already) had
+    itself silently broken again: LinkedIn moved the bio out of the top-card
+    tagline entirely, into the about-module's own body as a plain
+    `<p class="break-words white-space-pre-wrap t-black--light
+    text-body-medium">` -- confirmed via a real supervised discovery run
+    against two real companies (COMPUTEL S.A.L, AQLON Systems), both scoring
+    "bio missing" for a description that genuinely was right there on the
+    page (`page.locator("p", has_text=...)` found it instantly; the tagline
+    selector matched zero elements). That utility-class combination is itself
+    too generic/fragile to select on directly (no guarantee LinkedIn doesn't
+    reuse those same four classes elsewhere on the page) -- instead scoped to
+    the FIRST `<p>` inside `section.org-about-module__margin-bottom` (the
+    same stable container Website/Industry/size below already anchor to),
+    confirmed live to be exactly one `<p>` in that section, and it's the bio.
 
     Current real structure (`/about`, authenticated):
-      - the tagline/bio is `p.org-top-card-summary__tagline` -- also present on
-        the bare (non-/about) page, but Website/Industry/size below are not,
-        which is why this function now expects `page` to already be on
-        `/about`, not the bare company page (scheduler.py's caller was updated
-        to match).
+      - the bio is the first `<p>` inside `section.org-about-module__margin-bottom`.
       - `/about` no longer redirects anonymous/logged-out visits to login for
         at least this account's authenticated session (the original docstring's
         claim was specifically about *anonymous* visits, which was never
@@ -208,22 +213,60 @@ def extract_company_profile(page: Page) -> dict:
         always authenticated anyway (agent/core/session.py), so this is moot
         in practice.
       - Website/Industry/Company size render as a plain `<dl>` with `<h3>`
-        label text (no data-test-id, no stable class per field) inside
-        `section.org-about-module__margin-bottom` -- matched here by finding
-        the `<dt>` whose text is the label, then reading its following `<dd>`.
+        label text (no data-test-id, no stable class per field) inside the
+        same `section.org-about-module__margin-bottom` -- matched here by
+        finding the `<dt>` whose text is the label, then reading its
+        following `<dd>`.
     ============================================================================
     """
-    description = _safe_text(page.locator("p.org-top-card-summary__tagline").first)
-
     about_section = page.locator("section.org-about-module__margin-bottom").first
+    # LIVE-CONFIRMED 2026-09-01: a real distinct bug from the selector break
+    # above -- scheduler.py's caller only waits for wait_until="domcontentloaded"
+    # before calling this function, which fires once the raw HTML document
+    # parses, well before LinkedIn's client-side JS has actually populated
+    # the about-module's content (this page is a heavy SPA). Confirmed via a
+    # direct A/B: extracting immediately after goto() got an empty bio for a
+    # real company that unambiguously has one; extracting again after a
+    # couple seconds' wait got the real text. _safe_text() below
+    # deliberately does NOT wait for visibility (text_content(), not
+    # inner_text() -- see its own docstring, tuned for the SEARCH page's
+    # different problem: too many off-screen matches, not too-early
+    # extraction), so that's not where this belongs -- wait once, here,
+    # specifically for this section's own real content to exist, not just
+    # the section element's own empty shell.
+    try:
+        about_section.locator("p").first.wait_for(state="attached", timeout=8_000)
+    except Exception:  # noqa: BLE001 -- fall through to extraction below regardless; _safe_text tolerates missing text
+        pass
+
+    description = _safe_text(about_section.locator("p").first)
+
     website = _unwrap_redirect(_safe_attr(about_section.locator("dd a").first, "href"))
     size_text = _safe_text(_dd_after_label(about_section, "Company size"))
+    # LIVE-ADDED 2026-09-01: LinkedIn's own companyHqGeo search facet
+    # (build_search_url above) let a UK company (ZAM FM LTD) through a
+    # Lebanon-filtered search -- real, confirmed via the exact search URL
+    # actually used, so this is bad/stale data on LinkedIn's own side, not
+    # a bug in how that facet param gets built. This reads the About page's
+    # own "Headquarters" field as a second, independent location signal --
+    # scheduler.py's _discover_linkedin() checks it against the tenant's
+    # configured target_location before saving a lead, catching exactly
+    # this class of mismatch instead of trusting LinkedIn's search filter
+    # alone.
+    headquarters = _safe_text(_dd_after_label(about_section, "Headquarters"))
+    # 2026-09-02: added alongside headquarters, same _dd_after_label
+    # pattern -- scheduler.py's _discover_linkedin() checks this (and the
+    # bio) to skip a lead that's actually an insurance company (Insurance's
+    # own explicit exclusion: never target other insurance companies).
+    industry = _safe_text(_dd_after_label(about_section, "Industry"))
 
     return {
         "platform": "linkedin",
         "bio": description or "",
         "has_website": bool(website),
         "website": website,
+        "headquarters": headquarters or "",
+        "industry": industry or "",
         "follower_or_headcount": _parse_headcount(size_text),
         "post_count": None,       # this function doesn't visit the Posts tab -- see extract_recent_posts()
         "recent_activity": True,  # placeholder; scheduler.py overwrites both fields with extract_recent_posts()'s real read
@@ -270,7 +313,35 @@ def extract_recent_posts(page: Page) -> dict:
     only one visible post from 10 hours ago is obviously more active than
     one with three posts all from a year ago.
     """
-    content = page.content()
+    # LIVE-CONFIRMED 2026-09-01: the same class of bug as
+    # extract_company_profile()'s bio-timing fix above, but hitting
+    # page.content() itself this time -- scheduler.py's caller only waits
+    # for wait_until="domcontentloaded" before calling this function, so the
+    # Posts tab's SPA content can still be client-side navigating when
+    # page.content() runs, which Playwright surfaces as
+    # "Unable to retrieve content because the page is navigating and
+    # changing the content" rather than returning partial/stale HTML.
+    # Waiting for the feed container to attach isn't enough on its own
+    # (confirmed live: the exception still fired occasionally right after),
+    # so this also retries page.content() itself a couple of times with a
+    # short pause -- cheap and bounded, since a genuinely stuck page would
+    # keep failing and just fall through to an empty result below.
+    try:
+        page.locator("main").first.wait_for(state="attached", timeout=8_000)
+    except Exception:  # noqa: BLE001 -- fall through to the retry loop below regardless
+        pass
+
+    content = ""
+    for attempt in range(3):
+        try:
+            content = page.content()
+            break
+        except Exception:  # noqa: BLE001 -- Playwright's own transient "page is navigating" error
+            if attempt == 2:
+                content = ""
+            else:
+                page.wait_for_timeout(1_000)
+
     urns = list(dict.fromkeys(_ACTIVITY_URN_RE.findall(content)))  # de-dupe, keep order
     times = _POST_TIME_RE.findall(content)
     newest = times[0] if times else None

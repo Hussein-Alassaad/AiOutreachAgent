@@ -46,7 +46,12 @@ def _rotate_if_due(settings: dict, now: dt.datetime) -> dict:
     if not last_rotated:
         return settings
 
-    last_rotated_dt = dt.datetime.fromisoformat(last_rotated)
+    # LIVE-CONFIRMED 2026-09-01: repositories.py returns a real
+    # datetime.datetime for TIMESTAMP columns, never a string --
+    # fromisoformat() rejected it outright the first time this codebase's
+    # own discovery path hit the identical pattern (see core/warmup.py's
+    # own comment on this exact bug).
+    last_rotated_dt = last_rotated if isinstance(last_rotated, dt.datetime) else dt.datetime.fromisoformat(last_rotated)
     if last_rotated_dt.tzinfo is None:
         last_rotated_dt = last_rotated_dt.replace(tzinfo=dt.timezone.utc)
 

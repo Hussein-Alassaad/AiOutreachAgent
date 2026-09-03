@@ -24,9 +24,11 @@ _PLATFORM_TONE = {
 
 _MESSAGE_RULES = """Rules:
 - Open with a greeting using the exact name given -- never "Hi there" or "Hello business owner".
-- Reference at least one SPECIFIC weak point or AI opportunity from what's given -- never vague \
+- If a SPECIFIC weak point or AI opportunity is given, reference at least one -- never vague \
 ("I noticed some areas to improve") -- always concrete ("your booking takes 12h" not "your \
-booking could be faster").
+booking could be faster"). If none is given ("none identified"), don't wait for one or invent a \
+problem that isn't there -- open the conversation by offering the sender's services directly \
+instead (what they do, plainly, and why it could be relevant to this lead).
 - Keep it short -- 3-5 sentences, not a pitch deck. This opens a conversation, it doesn't close a sale.
 - No exclamation-point enthusiasm, no emojis, no "I hope this message finds you well".
 - Never use the words "streamline", "leverage", "revolutionize", or "unlock" -- they read as AI-generated.
@@ -131,6 +133,46 @@ def _business_identity() -> tuple[str, str]:
     return settings.get("business_name") or "", settings.get("business_description") or ""
 
 
+# 2026-09-02: the platform owner asked for Insurance's outreach to use two
+# FIXED templates instead of AI-generated text -- explicit instruction was
+# "do not add something from your own", so this is literal template text
+# the owner reviewed and approved, not an AI-written prompt. Matched on
+# business_name (unique per tenant, same identifier _business_identity()
+# above already reads) so this only ever applies to this one tenant --
+# every other tenant's generate_message() call keeps going through the
+# normal AI-generation path below, completely untouched.
+_INSURANCE_BUSINESS_NAME = "Partners Insurance Consultancy"
+
+_INSURANCE_TEMPLATE_GAP = """Hello {company_name},
+
+We're introducing Lebanon's first Dental Card — the first dental benefit of its kind offered in the market. Employees get annual coverage for cleanings, extractions, fillings, and one free consultation, plus 50-70% off implants, crowns, orthodontics, and oral surgery. No medical exams, no pre-existing condition screening, available to employees of all ages from day one — just USD 50 per person/year.
+
+I noticed {company_name} doesn't currently show a group employee insurance benefit, which is something we help companies like yours put in place. Partners Insurance Consultancy also provides Motor (All Risk), Medical/Health, and General/Commercial insurance for companies and individuals.
+
+Would it be worth a quick call to see if this fits your team's benefits?"""
+
+_INSURANCE_TEMPLATE_NO_GAP = """Hello {company_name},
+
+We're introducing Lebanon's first Dental Card — the first dental benefit of its kind offered in the market. Employees get annual coverage for cleanings, extractions, fillings, and one free consultation, plus 50-70% off implants, crowns, orthodontics, and oral surgery. No medical exams, no pre-existing condition screening, available to employees of all ages from day one — just USD 50 per person/year.
+
+Partners Insurance Consultancy also provides Motor (All Risk), Medical/Health, and General/Commercial insurance for companies and individuals.
+
+Would it be worth a quick call to see how this could fit alongside what you already offer?"""
+
+
+def _insurance_fixed_template(lead: dict) -> str:
+    """
+    Picks Template A (a real, detected gap exists) or Template B (none
+    detected) purely off whether analysis actually found something --
+    never invents a gap that isn't there, per the same "nothing from your
+    own" instruction the templates themselves follow.
+    """
+    company_name = lead.get("business_name") or "there"
+    weak_points = lead.get("weak_points") or []
+    template = _INSURANCE_TEMPLATE_GAP if weak_points else _INSURANCE_TEMPLATE_NO_GAP
+    return template.format(company_name=company_name)
+
+
 def generate_message(lead: dict, channel: str, message_style: str, model: str | None = None) -> str:
     """
     Generate one personalized outreach message for one lead on one channel.
@@ -140,8 +182,11 @@ def generate_message(lead: dict, channel: str, message_style: str, model: str | 
     points are framed. Returns the raw message text, ready to store on
     messages.body.
     """
-    model = model or config.MODEL_MESSAGES
     business_name, business_description = _business_identity()
+    if business_name == _INSURANCE_BUSINESS_NAME:
+        return _insurance_fixed_template(lead)
+
+    model = model or config.MODEL_MESSAGES
     system = prompts.cacheable_system(
         build_system_prompt(channel, message_style, business_name, business_description)
     )

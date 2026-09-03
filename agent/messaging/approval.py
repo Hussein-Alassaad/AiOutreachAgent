@@ -41,7 +41,12 @@ def _parsed_created_at(message: dict) -> dt.datetime | None:
     created_at = message.get("created_at")
     if not created_at:
         return None
-    parsed = dt.datetime.fromisoformat(created_at)
+    # LIVE-CONFIRMED 2026-09-01: repositories.py returns a real
+    # datetime.datetime for TIMESTAMP columns (psycopg2's own default),
+    # never a string -- fromisoformat() rejected it outright the first
+    # time this codebase's own discovery/warmup path hit the identical
+    # pattern (see core/warmup.py's own comment on this exact bug).
+    parsed = created_at if isinstance(created_at, dt.datetime) else dt.datetime.fromisoformat(created_at)
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=dt.timezone.utc)
     return parsed

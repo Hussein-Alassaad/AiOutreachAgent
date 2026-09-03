@@ -39,6 +39,7 @@ from websockets.datastructures import Headers
 from agent import config
 from agent.core.session import _storage_path
 from agent.db import repositories as repo
+from agent.live_login import import_server
 from agent.live_login.auth import verify_connect_token, TokenInvalid
 from agent.live_login.session import start_login_session, LiveLoginError
 
@@ -159,6 +160,12 @@ async def process_request(connection: ServerConnection, request: Request) -> Res
             "login_connecting_at": None,
             "login_error": None,
             "verified_proxy_ip": None,
+            # Also invalidates any Nexaris Connect extension that
+            # remembered this account (import_server.py's /reconnect
+            # route checks this exact field) -- a disconnected account
+            # should never be silently reconnectable by an old extension
+            # install without going through a fresh dashboard code again.
+            "extension_reconnect_token": None,
         })
 
     logger.info("Disconnected account %s (tenant %s) -- session file removed", account_id, tenant_id)
@@ -351,6 +358,15 @@ async def _watch_login_and_persist(session_handle, account_id: str, tenant_id: s
 async def main() -> None:
     if not config.AUTH_SECRET:
         raise RuntimeError("AUTH_SECRET must be set (agent/.env) before starting the live login server.")
+
+    # Runs the Nexaris Connect extension's session-import HTTP server in a
+    # background thread of this same process -- see import_server.py's own
+    # docstring for why it's here (shares this process's filesystem access
+    # to browser_profiles/) rather than a separate container/systemd unit.
+    # HTTPServer.serve_forever() is blocking/synchronous, so it can't share
+    # this module's asyncio event loop -- a plain thread, not a task.
+    import_server.start_in_background_thread()
+
     # Bind to 0.0.0.0 INSIDE the container, not 127.0.0.1 -- Docker's port
     # forwarding (docker-proxy) delivers host-side connections to the
     # container over its internal network interface, not its loopback, so a

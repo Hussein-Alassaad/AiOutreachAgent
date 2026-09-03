@@ -41,7 +41,12 @@ def _last_whatsapp_sent_at(lead_id: str) -> dt.datetime | None:
     if not sent_times:
         return None
     latest = max(sent_times)
-    parsed = dt.datetime.fromisoformat(latest)
+    # LIVE-CONFIRMED 2026-09-01: repositories.py returns a real
+    # datetime.datetime for TIMESTAMP columns, never a string --
+    # fromisoformat() rejected it outright the first time this codebase's
+    # own discovery path hit the identical pattern (see core/warmup.py's
+    # own comment on this exact bug).
+    parsed = latest if isinstance(latest, dt.datetime) else dt.datetime.fromisoformat(latest)
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt.timezone.utc)
 
 

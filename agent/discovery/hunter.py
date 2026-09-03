@@ -27,6 +27,7 @@ import httpx
 from agent import config
 
 _EMAIL_FINDER_ENDPOINT = "https://api.hunter.io/v2/email-finder"
+_DOMAIN_SEARCH_ENDPOINT = "https://api.hunter.io/v2/domain-search"
 _TIMEOUT_SECONDS = 20.0
 
 
@@ -90,3 +91,54 @@ def find_email(name: str, domain: str) -> str | None:
     data = body.get("data") or {}
     email = data.get("email")
     return email or None
+
+
+def find_company_emails(domain: str) -> str | None:
+    """
+    Fallback for when no founder/decision-maker name was detected (so
+    find_email() above has nothing to search a person by): Hunter's Domain
+    Search endpoint takes just a company domain and returns whatever real
+    email addresses it has on file for that domain -- generic role
+    addresses (info@, sales@, contact@) as well as any named people it
+    knows about, no name input required. This is what lets scheduler.py's
+    _maybe_find_email() still produce an email lead for a company whose
+    founder/decision-maker couldn't be identified, rather than that lead's
+    email side being a dead end.
+
+    Returns the single best email Hunter has on file (its own `emails`
+    array is pre-sorted by confidence -- the first entry is Hunter's own
+    top pick), or None if Hunter has nothing for this domain. Same
+    HunterLookupFailed/HunterNotConfigured error contract as find_email()
+    above, so the caller's existing per-lead try/except handles both
+    identically.
+
+    Uses more Hunter credits per successful lookup than find_email() (this
+    endpoint returns a full page of company data, not one targeted match)
+    -- see this module's own docstring on the 50 free-credits/month
+    ceiling; calling this as a fallback (not the primary path) keeps it to
+    only the leads find_email() couldn't already resolve.
+    """
+    api_key = config.HUNTER_API_KEY
+    if not api_key:
+        raise HunterNotConfigured("HUNTER_API_KEY is not set in agent/.env.")
+
+    params = {"domain": domain, "api_key": api_key, "limit": 5}
+
+    try:
+        response = httpx.get(_DOMAIN_SEARCH_ENDPOINT, params=params, timeout=_TIMEOUT_SECONDS)
+    except httpx.HTTPError as exc:
+        raise HunterLookupFailed(f"Hunter request failed: {exc}") from exc
+
+    if response.status_code == 401:
+        raise HunterLookupFailed("Hunter rejected the API key (401) -- check HUNTER_API_KEY.")
+    if response.status_code == 429:
+        raise HunterLookupFailed("Hunter rate limit or monthly credit limit reached (429).")
+    if response.status_code >= 400:
+        raise HunterLookupFailed(f"Hunter returned HTTP {response.status_code}: {response.text[:200]}")
+
+    body = response.json()
+    data = body.get("data") or {}
+    emails = data.get("emails") or []
+    if not emails:
+        return None
+    return emails[0].get("value") or None

@@ -34,6 +34,7 @@ Manual test trigger (what "Hussein can trigger a run" means in Phase 2):
 from __future__ import annotations
 
 import datetime as dt
+import random
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -74,6 +75,68 @@ from agent.sending.whatsapp_send import WhatsAppNotConfigured
 # purely to prove a session can open, navigate, and be health-checked. Phase 3
 # replaces this with the actual LinkedIn/Instagram search entry points.
 DEFAULT_TEST_URL = "https://example.com"
+
+# LIVE-VERIFIED 2026-09-01: LinkedIn's company search requires a real,
+# non-empty text keyword -- an empty niche (even paired with a real
+# companyHqGeo facet) returns 0 results, confirmed against a live run.
+# Generic filler words ("companies", "company", "business") also returned 0
+# in earlier live testing; only genuine industry/sector terms return real
+# results. For a tenant configured to target "any type of company" (empty
+# settings.target_niche), one of these is picked at random each discovery
+# cycle instead of searching with no keyword at all -- see
+# _resolve_search_niche() below.
+# 2026-09-02, real instruction from the platform owner (Insurance specifically):
+# target companies of EVERY type EXCEPT insurance companies themselves --
+# insurance is deliberately absent from this list (it's the tenant's own
+# industry, not a prospect). Expanded to a real, broad list per the
+# owner's explicit ask ("make a list for them" covering trading/software/
+# commercial/general/any type) so rotation genuinely reaches a wide mix of
+# real Lebanese companies over many runs, not a narrow handful of sectors.
+_RANDOM_INDUSTRY_TERMS = [
+    "manufacturing",
+    "trading",
+    "general trading",
+    "construction",
+    "technology",
+    "software",
+    "IT services",
+    "retail",
+    "logistics",
+    "real estate",
+    "consulting",
+    "healthcare",
+    "hospitality",
+    "education",
+    "transportation",
+    "commercial",
+    "general commercial",
+    "engineering",
+    "food and beverage",
+    "distribution",
+    "import export",
+    "textile",
+    "pharmaceutical",
+    "automotive",
+    "media",
+    "advertising",
+    "telecommunications",
+    "energy",
+    "agriculture",
+    "banking",
+]
+
+
+def _resolve_search_niche(niche: str) -> str:
+    """
+    A configured niche is used as-is. An empty niche means "target any type
+    of company" -- but LinkedIn's search has no such mode, so this picks a
+    real industry term at random instead of searching with an empty
+    keyword (which live-verified returns 0 results). Called once per
+    discovery cycle, so a fresh random term is picked each run -- over many
+    runs this covers a broad mix of industries rather than the same one
+    every time.
+    """
+    return niche or random.choice(_RANDOM_INDUSTRY_TERMS)
 
 # Exceptions that represent a normal, expected "can't do this one thing"
 # outcome rather than a genuine failure worth flagging -- e.g. a LinkedIn
@@ -336,7 +399,7 @@ def run_discovery_cycle(force: bool = False) -> list[dict]:
 
 def _run_discovery_cycle_for_tenant(tenant_id: str, force: bool) -> list[dict]:
     settings = repo.get_settings(tenant_id) or {}
-    niche = settings.get("target_niche") or ""
+    niche = _resolve_search_niche(settings.get("target_niche") or "")
     location = settings.get("target_location") or ""
     industry = settings.get("target_industry") or ""
 
@@ -448,6 +511,94 @@ def _run_discovery_cycle_for_tenant(tenant_id: str, force: bool) -> list[dict]:
 _WEAK_RESULT_FRACTION = 0.5
 _MAX_SEARCH_ATTEMPTS = 4
 
+# LIVE-CONFIRMED 2026-09-01: LinkedIn's own companyHqGeo search facet let a
+# UK company (ZAM FM LTD, Manchester) through a Lebanon-filtered search --
+# and that company's own About page had no "Headquarters" field at all to
+# cross-check against (confirmed live: most company pages don't populate
+# it), so a field-based check alone can't catch this. What the page DID
+# have was its own bio text stating "your trusted partner in Manchester"
+# outright -- this scans the bio (already scraped, no extra request) for a
+# real foreign place name as a red flag. Deliberately NOT exhaustive (no
+# list can name every place on Earth) -- this only needs to catch the
+# common case of a company plainly stating a non-Lebanon city/country in
+# its own description, same as ZAM FM did.
+_FOREIGN_LOCATION_MARKERS = [
+    "manchester", "london", "united kingdom", " uk ", "u.k.",
+    "united states", "usa", "u.s.a.", "new york", "california",
+    "canada", "toronto", "australia", "sydney", "dubai", "abu dhabi",
+    "saudi arabia", "riyadh", "jeddah", "egypt", "cairo", "jordan", "amman",
+    "france", "paris", "germany", "berlin", "india", "mumbai", "delhi",
+    "pakistan", "nigeria", "kenya", "south africa", "singapore",
+]
+
+# LIVE-CONFIRMED 2026-09-02: the headquarters-field check below originally
+# required the literal word "lebanon" to appear in the company's own
+# Headquarters text -- real-tested against Insurance's live discovery and
+# it wrongly rejected multiple genuine Lebanese companies (Arabia Insurance
+# Company: "Beirut, Beirut"; Adir Insurance: "Dora, Jdeidet Metn"; Insurance
+# & Investment Consultant s.a.r.l: "Bsalim, Beirut") because LinkedIn's own
+# Headquarters field lists a specific city/district, not the country name,
+# in the common case. This is the real fix: a maintained list of actual
+# Lebanese cities/districts to accept as a match too, not just the literal
+# country name. Deliberately not exhaustive (no list can cover every
+# village), but covers the major cities/areas real companies list.
+_LEBANON_PLACE_MARKERS = [
+    "lebanon", "beirut", "jdeidet", "jdeideh", "metn", "dora", "dbayeh",
+    "dbaye", "bsalim", "jounieh", "jbeil", "byblos", "tripoli", "sidon",
+    "saida", "tyre", "sour", "zahle", "baabda", "hazmieh", "ashrafieh",
+    "achrafieh", "hamra", "verdun", "sin el fil", "sinelfil", "mtayleb",
+    "bauchrieh", "antelias", "zalka", "jal el dib", "kaslik", "zouk",
+    "keserwan", "chouf", "aley", "batroun", "koura",
+]
+
+
+def _mentions_foreign_location(bio: str, configured_location: str) -> str | None:
+    """
+    Real, deliberately-imperfect safety net -- see _FOREIGN_LOCATION_MARKERS'
+    own comment for why this exists and what it can't cover. Returns the
+    matched marker text if the bio plainly names a location that isn't the
+    tenant's configured target, or None if nothing in the list matched
+    (not proof the company IS in the right place -- just that this specific
+    check found no red flag). Case-insensitive; only runs when a location
+    is actually configured, since there's nothing to contradict otherwise.
+    """
+    if not configured_location:
+        return None
+    bio_lower = f" {bio.lower()} "
+    for marker in _FOREIGN_LOCATION_MARKERS:
+        if marker in configured_location.lower():
+            continue  # the marker IS the configured location -- not foreign
+        if marker in bio_lower:
+            return marker.strip()
+    return None
+
+
+# 2026-09-02, real instruction from the platform owner: Insurance's
+# discovery must never target other insurance companies (their own
+# industry, not a prospect) -- searching real industry terms (trading,
+# commercial, etc.) can still surface an insurance company incidentally,
+# since these terms aren't insurance-exclusive. This is a real, positive
+# exclusion check on the company's own bio/industry text, independent of
+# which search term found it.
+_INSURANCE_COMPANY_MARKERS = [
+    "insurance", "insurer", "reinsurance", "assurance company",
+    "takaful", "underwriter", "underwriting",
+]
+
+
+def _is_insurance_company(bio: str, industry: str | None) -> bool:
+    """
+    True if the company's own bio or LinkedIn-listed industry plainly
+    identifies it as an insurance company -- checked against BOTH fields
+    since either can carry the signal (a company's stated industry is
+    often more reliable than its bio, but not every profile has one
+    filled in). Deliberately simple substring matching, same posture as
+    _mentions_foreign_location() above: not exhaustive, but catches the
+    common, plain case rather than needing an LLM call for every lead.
+    """
+    haystack = f" {bio.lower()} {(industry or '').lower()} "
+    return any(marker in haystack for marker in _INSURANCE_COMPANY_MARKERS)
+
 
 def _is_weak(found: int, limit: int) -> bool:
     return found < max(3, int(limit * _WEAK_RESULT_FRACTION))
@@ -460,7 +611,18 @@ def _discover_linkedin(account: dict, page, niche: str, location: str, industry:
     seen_urls: set[str] = set()
     counts["linkedin_search_terms"] = []
 
-    for _ in range(_MAX_SEARCH_ATTEMPTS):
+    for attempt in range(_MAX_SEARCH_ATTEMPTS):
+        if attempt > 0:
+            # LIVE-CONFIRMED 2026-09-01: LinkedIn force-logged-out a real
+            # account after a burst of back-to-back automated searches with
+            # no pause between them (confirmed via a real session that
+            # returned real results, then got redirected to /uas/login
+            # after several more rapid searches in the same run) -- this
+            # widening loop had zero delay between attempts. A real person
+            # widening a search takes a few seconds between each try, not
+            # zero; randomizing (not a fixed constant) avoids a perfectly
+            # uniform, itself-suspicious interval.
+            page.wait_for_timeout(random.randint(15_000, 30_000))
         counts["linkedin_search_terms"].append({"niche": search_niche, "location": search_location})
         page.goto(
             linkedin.build_search_url(search_niche, search_location, industry),
@@ -500,6 +662,65 @@ def _discover_linkedin(account: dict, page, niche: str, location: str, industry:
             posts_info = linkedin.extract_recent_posts(page)
             profile["post_count"] = posts_info["visible_post_count"]
             profile["recent_activity"] = posts_info["recent_activity"]
+
+            # LIVE-CONFIRMED 2026-09-01: LinkedIn's own companyHqGeo search
+            # facet let a UK company (ZAM FM LTD, Manchester) through a
+            # Lebanon-filtered search -- confirmed the exact search URL
+            # really did carry the Lebanon facet, so this is bad/stale
+            # location data on LinkedIn's own side, not a bug in how the
+            # search was built. Two independent, best-effort checks here
+            # (neither alone is sufficient -- see each's own comment):
+            # (1) the About page's own "Headquarters" field, when present
+            # (LIVE-CONFIRMED: often isn't -- ZAM FM's page had none at
+            # all, so this check alone would have missed it); (2) scanning
+            # the bio text for a known foreign place name
+            # (_FOREIGN_LOCATION_MARKERS) -- this is what actually would
+            # have caught ZAM FM, whose bio opened with "your trusted
+            # partner in Manchester".
+            headquarters = (profile.get("headquarters") or "").strip().lower()
+            configured_location = (location or "").strip().lower()
+            mismatch_reason = None
+            if configured_location and headquarters and configured_location not in headquarters:
+                # LIVE-CONFIRMED 2026-09-02: a bare country-name substring
+                # check alone false-positived on real Lebanese companies
+                # whose Headquarters field lists a city/district instead of
+                # the word "Lebanon" (see _LEBANON_PLACE_MARKERS' own
+                # comment for the real examples this caught) -- for a
+                # Lebanon-configured tenant specifically, also accept a
+                # known Lebanese place name as a match before flagging.
+                is_known_lebanon_place = (
+                    configured_location == "lebanon"
+                    and any(place in headquarters for place in _LEBANON_PLACE_MARKERS)
+                )
+                if not is_known_lebanon_place:
+                    mismatch_reason = (
+                        f"configured for {location!r}, company's own About page lists "
+                        f"headquarters as {profile.get('headquarters')!r}."
+                    )
+            else:
+                foreign_marker = _mentions_foreign_location(profile.get("bio") or "", location or "")
+                if foreign_marker:
+                    mismatch_reason = (
+                        f"configured for {location!r}, company's own bio mentions {foreign_marker!r}."
+                    )
+
+            if mismatch_reason:
+                counts["skipped_leads"].append({
+                    "platform": "linkedin",
+                    "identifier": result.get("display_name") or profile_url,
+                    "reason": f"Location mismatch: {mismatch_reason}",
+                })
+                continue
+
+            # 2026-09-02, real instruction: never target other insurance
+            # companies -- see _is_insurance_company()'s own comment.
+            if _is_insurance_company(profile.get("bio") or "", profile.get("industry")):
+                counts["skipped_leads"].append({
+                    "platform": "linkedin",
+                    "identifier": result.get("display_name") or profile_url,
+                    "reason": "Excluded: this company is itself an insurance company.",
+                })
+                continue
 
             if _save_if_qualified(account, "linkedin", profile_url, profile, niche):
                 counts["linkedin_saved"] += 1
@@ -603,16 +824,35 @@ def run_analysis_cycle(limit: int | None = None) -> list[dict]:
     """
     results = []
     for tenant_id in repo.list_active_tenant_ids():
-        try:
-            with repo.tenant_scope(tenant_id):
-                results.extend(_run_analysis_cycle_for_tenant(tenant_id, limit))
-        except Exception as exc:  # noqa: BLE001 -- one bad tenant must not stop the others
+        # start_stage_run/finish_run both write to the RLS-protected
+        # outreach_runs table -- LIVE-CONFIRMED 2026-09-01, both must run
+        # inside tenant_scope() (the earlier version called
+        # start_stage_run before entering it, which real-tested as a hard
+        # InsufficientPrivilege from Postgres's own RLS policy, not a
+        # Python-level bug).
+        with repo.tenant_scope(tenant_id):
+            run = repo.start_stage_run(tenant_id, "analysis")
             try:
-                repo.insert_error({
-                    "stage": "analysis", "error_message": str(exc), "is_expected": False,
-                }, tenant_id=tenant_id)
-            except Exception:  # noqa: BLE001 -- logging itself must never crash the pipeline
-                pass
+                tenant_results = _run_analysis_cycle_for_tenant(tenant_id, limit)
+                results.extend(tenant_results)
+                ok_count = sum(1 for r in tenant_results if r.get("ok"))
+                repo.finish_run(
+                    tenant_id, run["id"], leads_found=len(tenant_results), messages_sent=0,
+                    status="completed", finished_at_iso=dt.datetime.now(dt.timezone.utc).isoformat(),
+                    notes=f"{ok_count}/{len(tenant_results)} leads analyzed successfully." if tenant_results else "No leads to analyze.",
+                )
+            except Exception as exc:  # noqa: BLE001 -- one bad tenant must not stop the others
+                repo.finish_run(
+                    tenant_id, run["id"], leads_found=0, messages_sent=0,
+                    status="error", finished_at_iso=dt.datetime.now(dt.timezone.utc).isoformat(),
+                    notes=str(exc),
+                )
+                try:
+                    repo.insert_error({
+                        "stage": "analysis", "error_message": str(exc), "is_expected": False,
+                    }, tenant_id=tenant_id)
+                except Exception:  # noqa: BLE001 -- logging itself must never crash the pipeline
+                    pass
     return results
 
 
@@ -637,25 +877,34 @@ def _bare_domain(website: str | None) -> str | None:
 
 def _maybe_find_email(tenant_id: str, lead: dict, founder_name: str | None) -> None:
     """
-    Best-effort: if this (LinkedIn) lead has a website and a known founder/
-    decision-maker name, look up their email via Findymail and -- if
-    found -- create a SEPARATE, linked `email`-platform OutreachLead for
-    the same company (not a field bolted onto the LinkedIn lead itself),
-    so the existing per-platform message-generation/approval/sending
-    pipeline (run_message_generation_cycle, run_sending_cycle) handles it
-    identically to any other email lead, no special-casing needed anywhere
-    downstream. Same company, hit on two channels -- the tenant's explicit
-    choice (see PROGRESS.md's dated entry on this feature).
+    Best-effort: if this (LinkedIn) lead has a real website, look up an
+    email for it and -- if found -- create a SEPARATE, linked
+    `email`-platform OutreachLead for the same company (not a field bolted
+    onto the LinkedIn lead itself), so the existing per-platform
+    message-generation/approval/sending pipeline (run_message_generation_cycle,
+    run_sending_cycle) handles it identically to any other email lead, no
+    special-casing needed anywhere downstream. Same company, hit on two
+    channels -- the tenant's explicit choice (see PROGRESS.md's dated entry
+    on this feature).
 
-    Silent no-op (not an error) when: no website, no founder name yet,
-    FINDYMAIL_API_KEY isn't set, or Findymail genuinely has no match --
-    every one of these is a normal, expected outcome for SOME leads, not
-    a failure. Only a real Findymail API error (bad key, no credits)
-    propagates, so the caller's existing per-lead try/except and
-    log_error() isolation catches it the same way any other per-lead
-    external-service failure already is.
+    Two-tier lookup (2026-09-01, real behavior change -- see this
+    function's own body): a known founder/decision-maker name gets a
+    targeted person lookup first (Hunter Email Finder); if that's not
+    available or comes up empty, falls back to a domain-wide lookup
+    (Hunter Domain Search) that needs no name at all -- so a lead with no
+    detected founder still gets a real shot at an email lead instead of
+    being a dead end. The saved lead's `notes` records which of the two
+    actually found it.
+
+    Silent no-op (not an error) when: no website, HUNTER_API_KEY isn't
+    set, or Hunter genuinely has no match on either tier -- every one of
+    these is a normal, expected outcome for SOME leads, not a failure.
+    Only a real Hunter API error (bad key, no credits) propagates, so the
+    caller's existing per-lead try/except and log_error() isolation
+    catches it the same way any other per-lead external-service failure
+    already is.
     """
-    if lead.get("platform") != "linkedin" or not founder_name:
+    if lead.get("platform") != "linkedin":
         return
     domain = _bare_domain(lead.get("website"))
     if not domain:
@@ -669,10 +918,33 @@ def _maybe_find_email(tenant_id: str, lead: dict, founder_name: str | None) -> N
     # instead, no other code needs to change either provider's own
     # exception names line up (HunterNotConfigured mirrors
     # FindymailNotConfigured) so this except clause needs no changes on swap.
-    try:
-        email = hunter.find_email(founder_name, domain)
-    except hunter.HunterNotConfigured:
-        return  # no API key set yet -- not an error, just not wired up
+    #
+    # LIVE-CONFIRMED 2026-09-01: this used to require founder_name and
+    # return immediately without one -- real behavior change, per the
+    # platform owner's explicit request, to give every LinkedIn lead with a
+    # real website a SECOND chance at an email lead even when no
+    # founder/decision-maker name was ever detected. find_email() (person
+    # lookup) stays the first, more targeted try when a name exists;
+    # find_company_emails() (domain search, no name needed) is the
+    # fallback -- tried only when either no name was found, or the named
+    # lookup itself came back with nothing.
+    email = None
+    found_via = None
+    if founder_name:
+        try:
+            email = hunter.find_email(founder_name, domain)
+        except hunter.HunterNotConfigured:
+            return  # no API key set yet -- not an error, just not wired up
+        if email:
+            found_via = f"Hunter Email Finder for {founder_name}"
+
+    if not email:
+        try:
+            email = hunter.find_company_emails(domain)
+        except hunter.HunterNotConfigured:
+            return
+        if email:
+            found_via = "Hunter Domain Search (no founder name identified)"
 
     if not email:
         return
@@ -696,7 +968,7 @@ def _maybe_find_email(tenant_id: str, lead: dict, founder_name: str | None) -> N
         "website": lead.get("website"),
         "contact_email": email,
         "status": "discovered",
-        "notes": f"Email found via Findymail for {founder_name}, linked from LinkedIn lead {lead.get('id')}.",
+        "notes": f"Email found via {found_via}, linked from LinkedIn lead {lead.get('id')}.",
     })
 
 
@@ -800,16 +1072,29 @@ def run_message_generation_cycle(limit: int | None = None) -> list[dict]:
     """
     results = []
     for tenant_id in repo.list_active_tenant_ids():
-        try:
-            with repo.tenant_scope(tenant_id):
-                results.extend(_run_message_generation_cycle_for_tenant(limit))
-        except Exception as exc:  # noqa: BLE001 -- one bad tenant must not stop the others
+        with repo.tenant_scope(tenant_id):
+            run = repo.start_stage_run(tenant_id, "message_generation")
             try:
-                repo.insert_error({
-                    "stage": "message_generation", "error_message": str(exc), "is_expected": False,
-                }, tenant_id=tenant_id)
-            except Exception:  # noqa: BLE001 -- logging itself must never crash the pipeline
-                pass
+                tenant_results = _run_message_generation_cycle_for_tenant(limit)
+                results.extend(tenant_results)
+                ok_count = sum(1 for r in tenant_results if r.get("ok"))
+                repo.finish_run(
+                    tenant_id, run["id"], leads_found=len(tenant_results), messages_sent=0,
+                    status="completed", finished_at_iso=dt.datetime.now(dt.timezone.utc).isoformat(),
+                    notes=f"{ok_count}/{len(tenant_results)} leads got a message generated." if tenant_results else "No leads awaiting a message.",
+                )
+            except Exception as exc:  # noqa: BLE001 -- one bad tenant must not stop the others
+                repo.finish_run(
+                    tenant_id, run["id"], leads_found=0, messages_sent=0,
+                    status="error", finished_at_iso=dt.datetime.now(dt.timezone.utc).isoformat(),
+                    notes=str(exc),
+                )
+                try:
+                    repo.insert_error({
+                        "stage": "message_generation", "error_message": str(exc), "is_expected": False,
+                    }, tenant_id=tenant_id)
+                except Exception:  # noqa: BLE001 -- logging itself must never crash the pipeline
+                    pass
     return results
 
 
@@ -927,16 +1212,29 @@ def run_sending_cycle(limit: int | None = None) -> list[dict]:
     """
     results = []
     for tenant_id in repo.list_active_tenant_ids():
-        try:
-            with repo.tenant_scope(tenant_id):
-                results.extend(_run_sending_cycle_for_tenant(limit))
-        except Exception as exc:  # noqa: BLE001 -- one bad tenant must not stop the others
+        with repo.tenant_scope(tenant_id):
+            run = repo.start_stage_run(tenant_id, "sending")
             try:
-                repo.insert_error({
-                    "stage": "sending", "error_message": str(exc), "is_expected": False,
-                }, tenant_id=tenant_id)
-            except Exception:  # noqa: BLE001 -- logging itself must never crash the pipeline
-                pass
+                tenant_results = _run_sending_cycle_for_tenant(limit)
+                results.extend(tenant_results)
+                sent_count = sum(1 for r in tenant_results if r.get("ok"))
+                repo.finish_run(
+                    tenant_id, run["id"], leads_found=0, messages_sent=sent_count,
+                    status="completed", finished_at_iso=dt.datetime.now(dt.timezone.utc).isoformat(),
+                    notes=f"{sent_count}/{len(tenant_results)} messages sent." if tenant_results else "No approved messages pending.",
+                )
+            except Exception as exc:  # noqa: BLE001 -- one bad tenant must not stop the others
+                repo.finish_run(
+                    tenant_id, run["id"], leads_found=0, messages_sent=0,
+                    status="error", finished_at_iso=dt.datetime.now(dt.timezone.utc).isoformat(),
+                    notes=str(exc),
+                )
+                try:
+                    repo.insert_error({
+                        "stage": "sending", "error_message": str(exc), "is_expected": False,
+                    }, tenant_id=tenant_id)
+                except Exception:  # noqa: BLE001 -- logging itself must never crash the pipeline
+                    pass
     return results
 
 
