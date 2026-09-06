@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from agent import config
 from agent.control.auth import verify_control_token, TokenInvalid
@@ -28,7 +28,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 logger = logging.getLogger(__name__)
 
 _CONTAINER_NAME = "nexaris-agent"
-_ALLOWED_ACTIONS = {"start", "stop", "status"}
+_ALLOWED_ACTIONS = {"start", "stop", "status", "send_reply"}
 _SUBPROCESS_TIMEOUT_SECONDS = 15
 
 
@@ -121,6 +121,45 @@ def _docker_action(action: str) -> str:
     return _docker_status()
 
 
+def _send_reply(tenant_id: str, lead_id: str, message_id: str) -> dict:
+    """
+    Real gap fixed 2026-09-06: a tenant-written reply from "Reply Here" on
+    Instagram/LinkedIn sat at send_status "pending" forever unless the
+    Python scheduler's fast reply-send poll happened to be running --
+    which it never has been in production (see DEPLOY.md's "do not start
+    the scheduler unsupervised" gate). Email replies bypass this by calling
+    Resend directly from the Next.js server action (sendIfEmailChannel),
+    but Instagram/LinkedIn sends need the actual browser-automation
+    process, which only exists here on the droplet -- so this endpoint is
+    that same "send it right now, don't wait for a poll" bridge, for the
+    two channels email's approach can't reach directly.
+
+    Imports are deliberately local to this function, not at module level --
+    this control server also handles the lightweight start/stop/status
+    actions on every request, and importing Playwright/the full sending
+    stack unconditionally would slow down and fatten every one of those
+    unrelated calls for a code path most requests never take.
+    """
+    from agent.db import repositories as repo
+    from agent.sending import instagram_send, linkedin_send
+
+    with repo.tenant_scope(tenant_id):
+        messages = repo.messages_for_lead(lead_id, tenant_id=tenant_id)
+    message = next((m for m in messages if m["id"] == message_id), None)
+    if not message:
+        raise RuntimeError(f"Message {message_id} not found for lead {lead_id}.")
+
+    channel = message.get("channel")
+    if channel == "instagram":
+        instagram_send.send_reply(message)
+    elif channel == "linkedin":
+        linkedin_send.send_reply(message)
+    else:
+        raise RuntimeError(f"send_reply is only for instagram/linkedin, got channel={channel!r}.")
+
+    return {"sent": True, "channel": channel}
+
+
 class ControlHandler(BaseHTTPRequestHandler):
     # LIVE-VERIFIED 2026-08-26: BaseHTTPRequestHandler defaults to
     # "HTTP/1.0" -- worked fine calling the droplet directly (curl doesn't
@@ -175,6 +214,23 @@ class ControlHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": f"action must be one of {sorted(_ALLOWED_ACTIONS)}."})
             return
 
+        if action == "send_reply":
+            tenant_id = body.get("tenantId")
+            lead_id = body.get("leadId")
+            message_id = body.get("messageId")
+            if not tenant_id or not lead_id or not message_id:
+                self._send_json(400, {"error": "send_reply requires tenantId, leadId, and messageId."})
+                return
+            try:
+                logger.info("Agent control: send_reply (message=%s)", message_id)
+                result = _send_reply(tenant_id, lead_id, message_id)
+            except Exception as exc:  # noqa: BLE001 -- e.g. no message button, selector mismatch, browser crash
+                logger.exception("send_reply failed")
+                self._send_json(500, {"error": f"{type(exc).__name__}: {exc}"})
+                return
+            self._send_json(200, result)
+            return
+
         try:
             if action == "status":
                 status = _docker_status()
@@ -192,7 +248,12 @@ class ControlHandler(BaseHTTPRequestHandler):
 def main() -> None:
     if not config.AUTH_SECRET:
         raise RuntimeError("AUTH_SECRET must be set (agent/.env) before starting the control server.")
-    server = HTTPServer(("127.0.0.1", config.AGENT_CONTROL_PORT), ControlHandler)
+    # ThreadingHTTPServer, not HTTPServer -- send_reply's real browser send
+    # can take 10-30+ seconds; the plain single-threaded HTTPServer would
+    # block every other request (including a status/start/stop check) for
+    # that whole window, which defeats the point of this being a
+    # lightweight always-available control endpoint.
+    server = ThreadingHTTPServer(("127.0.0.1", config.AGENT_CONTROL_PORT), ControlHandler)
     logger.info("agent control server listening on 127.0.0.1:%s", config.AGENT_CONTROL_PORT)
     server.serve_forever()
 
