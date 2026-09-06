@@ -1358,6 +1358,74 @@ def _run_reply_send_cycle_for_tenant() -> list[dict]:
     return results
 
 
+_LINKEDIN_FEED_URL = "https://www.linkedin.com/feed/"
+_INSTAGRAM_HOME_URL = "https://www.instagram.com/"
+
+
+def run_account_health_check_cycle() -> list[dict]:
+    """
+    Real gap fixed 2026-09-06: linkedin_send.py's/instagram_send.py's own
+    _raise_if_logged_out() only ever runs AT THE MOMENT of a real send --
+    live-confirmed the same night, an account can sit genuinely logged out
+    (dashboard still showing "Connected") for hours with nothing to notice,
+    simply because nothing happened to try sending through it in that
+    window. This is the periodic counterpart: visits each active,
+    currently-"connected" LinkedIn/Instagram account's own feed/home page
+    (no send, no lead involved) on a schedule (see
+    build_daily_schedule()'s IntervalTrigger job for this function) purely
+    to catch a session going bad BETWEEN sends, not just during one.
+
+    Deliberately reuses linkedin_send._raise_if_logged_out() /
+    instagram_send._raise_if_logged_out() rather than a third copy of the
+    same detection logic -- same reasoning that made those into shared
+    per-module helpers in the first place. Only visits accounts already
+    "connected" (not_connected/failed/connecting accounts have nothing
+    useful to re-check here), and only linkedin/instagram (email has no
+    concept of a browser session to go stale; whatsapp's health is a
+    separate, already-existing concern).
+    """
+    results = []
+    for tenant_id in repo.list_active_tenant_ids():
+        try:
+            with repo.tenant_scope(tenant_id):
+                for account in pool.load_accounts(tenant_id):
+                    if account.get("platform") not in ("linkedin", "instagram"):
+                        continue
+                    if account.get("login_status") != "connected":
+                        continue
+                    try:
+                        with SessionManager() as sessions:
+                            context, page, new_verified_ip = sessions.open(account)
+                            if new_verified_ip and not account.get("verified_proxy_ip"):
+                                repo.update_account(account["id"], {"verified_proxy_ip": new_verified_ip})
+                            try:
+                                if account["platform"] == "linkedin":
+                                    page.goto(_LINKEDIN_FEED_URL, timeout=30_000, wait_until="domcontentloaded")
+                                    linkedin_send._raise_if_logged_out(page, account)
+                                else:
+                                    page.goto(_INSTAGRAM_HOME_URL, timeout=30_000, wait_until="domcontentloaded")
+                                    instagram_send._raise_if_logged_out(page, account)
+                            finally:
+                                sessions.close(account["id"], context)
+                        results.append({"account_id": account["id"], "platform": account["platform"], "ok": True})
+                    except (linkedin_send.SessionLoggedOut, instagram_send.SessionLoggedOut) as exc:
+                        # Already persisted login_status: "failed" by
+                        # _raise_if_logged_out itself -- nothing more to do
+                        # here than record the outcome.
+                        results.append({"account_id": account["id"], "platform": account["platform"], "ok": False, "reason": str(exc)})
+                    except Exception as exc:  # noqa: BLE001 -- a network hiccup here shouldn't be mistaken for a real logout
+                        results.append({"account_id": account["id"], "platform": account["platform"], "ok": False, "error": str(exc)})
+                        log_error("account_health_check", exc, account_id=account["id"])
+        except Exception as exc:  # noqa: BLE001 -- one bad tenant must not stop the others
+            try:
+                repo.insert_error({
+                    "stage": "account_health_check", "error_message": str(exc), "is_expected": False,
+                }, tenant_id=tenant_id)
+            except Exception:  # noqa: BLE001 -- logging itself must never crash the pipeline
+                pass
+    return results
+
+
 def run_approval_reminder_check() -> dict:
     """
     Phase 8's approval reminder trigger, across every tenant that currently
@@ -1476,6 +1544,15 @@ _DOWNSTREAM_MINUTE = 0
 # with a reply-less-empty queue.
 _REPLY_POLL_INTERVAL_MINUTES = 3
 
+# How often run_account_health_check_cycle() re-visits each connected
+# LinkedIn/Instagram account -- hours, not minutes, deliberately: this is
+# purely a "is the dashboard's status still true" check with no real work
+# behind it, so it doesn't need reply-poll urgency, and a real browser
+# visit per connected account per tenant adds up in request volume that's
+# worth keeping infrequent for accounts that are, in the overwhelming
+# majority of checks, going to come back genuinely fine.
+_ACCOUNT_HEALTH_CHECK_INTERVAL_HOURS = 4
+
 
 def build_daily_schedule() -> BackgroundScheduler:
     """
@@ -1557,6 +1634,19 @@ def build_daily_schedule() -> BackgroundScheduler:
         trigger=IntervalTrigger(minutes=_REPLY_POLL_INTERVAL_MINUTES),
         id="reply-send-poll",
         name="Fast poll: deliver tenant-written replies",
+        replace_existing=True,
+    )
+
+    # Catches a session going bad BETWEEN sends -- see
+    # run_account_health_check_cycle()'s own docstring for why this exists
+    # as a separate job rather than folding into the sends above (those
+    # only ever check the account they're already about to use, on their
+    # own schedule, not every connected account on a schedule of its own).
+    scheduler.add_job(
+        run_account_health_check_cycle,
+        trigger=IntervalTrigger(hours=_ACCOUNT_HEALTH_CHECK_INTERVAL_HOURS),
+        id="account-health-check",
+        name="Periodic check: is each connected LinkedIn/Instagram account still actually logged in",
         replace_existing=True,
     )
 
