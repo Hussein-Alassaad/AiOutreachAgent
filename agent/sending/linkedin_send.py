@@ -129,7 +129,19 @@ _COMPANY_TEXTAREA_SELECTOR = "textarea#org-message-page-modal-message"
 _COMPANY_SEND_BUTTON_SELECTOR = "div.artdeco-modal__actionbar button"
 
 # PERSON path -- see module docstring for exactly what is/isn't verified.
-_PERSON_MESSAGE_BUTTON_SELECTOR = "button[aria-label^='Message ']"
+# LIVE-CONFIRMED 2026-09-03: a real, live test (a genuinely 1st-degree-
+# connected profile) found LinkedIn renders "Message" as a plain
+# <a href="/messaging/compose/?profileUrn=...&interop=msgOverlay"> link on
+# a personal profile's top card, NOT the <button aria-label="Message ...">
+# the original selector assumed -- that button-only selector matched zero
+# elements even on a genuinely connected, messageable profile, so this had
+# never actually worked for ANY real personal-profile send, connected or
+# not. The `interop=msgOverlay` query param confirms this link is meant to
+# open the same inline messaging overlay a button click would (not a full
+# page navigation), so both element types lead to the same contenteditable
+# box below -- the comma-separated selector below matches either shape
+# LinkedIn might render, whichever this profile's real page uses.
+_PERSON_MESSAGE_BUTTON_SELECTOR = "button[aria-label^='Message '], a[href*='/messaging/compose/']"
 _PERSON_CONTENTEDITABLE_SELECTOR = "div.msg-form__contenteditable[contenteditable=true]"
 _PERSON_SEND_BUTTON_SELECTOR = "button.msg-form__send-button"
 
@@ -142,6 +154,19 @@ class NoMessageButtonAvailable(RuntimeError):
     legitimate, expected outcome for some leads, not a bug. Callers should
     treat it like whatsapp_send.py's WhatsAppNotConfigured: a normal
     "can't send this way" result, not a crash.
+    """
+
+
+class SessionLoggedOut(RuntimeError):
+    """
+    Raised when a saved session (cookies restored from storage_state) is no
+    longer actually authenticated on LinkedIn's side -- live-confirmed
+    2026-09-06: an account the dashboard displayed as "Connected" the whole
+    time silently failed every real send because navigating any real page
+    redirected to LinkedIn's own login/authwall. The account's
+    login_status is already corrected to "failed" by the caller before
+    this is raised, so the dashboard reflects reality on its next read
+    instead of staying stuck on a stale "Connected".
     """
 
 
@@ -201,9 +226,67 @@ def _send_to_person(page: Page, lead: dict, body: str) -> None:
         )
 
     human_delay()
-    message_button.click()
+    # LIVE-CONFIRMED 2026-09-03, five real, distinct findings from the same
+    # test session, in the order discovered:
+    # (1) a plain click first timed out with "<p ...> subtree intercepts
+    #     pointer events" -- some other element sits on top of the Message
+    #     link at the click point (an unidentified sticky/overlay piece;
+    #     its exact class hash is LinkedIn-generated and shifts per
+    #     page-load, not worth chasing by name).
+    # (2) click(force=True) bypassed the interception with no Playwright
+    #     error, but genuinely opened nothing -- LinkedIn's own frontend
+    #     intercepts this link's click via JS, and that handler needs a
+    #     real, trusted click a forced click on an occluded element
+    #     doesn't reliably deliver.
+    # (3) a normal click, given time to settle first, DID eventually land
+    #     and DID trigger a real navigation toward linkedin.com's
+    #     Messaging inbox -- but Playwright's own actionability retry loop
+    #     inside .click() (repeatedly re-checking "is this element
+    #     visible/stable" while the intercepting element kept re-covering
+    #     it) was still running WHILE that navigation was already firing
+    #     underneath it -- by the time .click() finally "succeeded", the
+    #     original link element had already been detached from the DOM
+    #     ("element was detached from the DOM, retrying"), because the
+    #     page had already moved on.
+    # (4) skipping the click entirely and page.goto()-ing the link's own
+    #     href directly was tried next -- but LinkedIn redirected that
+    #     bare navigation to the plain homepage instead of opening the
+    #     compose view. This confirmed the URL isn't a real bookmarkable
+    #     destination: it depends on being triggered by an actual in-page
+    #     click, carrying live session/page context a cold page.goto()
+    #     doesn't have.
+    # (5) Real fix: a genuine mouse-coordinate click via Playwright's
+    #     page.mouse (real x/y position, real down+up events) -- this is
+    #     what Chrome actually treats as user-trusted input (unlike a
+    #     forced DOM-level click), so LinkedIn's own click handler fires
+    #     correctly, while ALSO not going through Playwright's element-
+    #     locator actionability retry loop that caused the race in (3).
+    #     wait_for(state="attached") first (not "visible", which re-enters
+    #     the same actionability checking this is deliberately avoiding)
+    #     confirms the element genuinely exists before reading its
+    #     position.
+    message_button.wait_for(state="attached", timeout=10_000)
+    message_button.scroll_into_view_if_needed()
+    page.wait_for_timeout(1_500)
+    box_rect = message_button.bounding_box()
+    if not box_rect:
+        raise NoMessageButtonAvailable(
+            f"{lead.get('business_name') or lead['profile_url']} has a Message "
+            "element with no visible position to click."
+        )
+    click_x = box_rect["x"] + box_rect["width"] / 2
+    click_y = box_rect["y"] + box_rect["height"] / 2
+    page.mouse.move(click_x, click_y)
+    page.wait_for_timeout(200)
+    page.mouse.down()
+    page.wait_for_timeout(80)
+    page.mouse.up()
+    try:
+        page.wait_for_load_state("domcontentloaded", timeout=10_000)
+    except Exception:  # noqa: BLE001 -- no real navigation fired; the box may already be on this page (inline overlay case)
+        pass
     box = page.locator(_PERSON_CONTENTEDITABLE_SELECTOR).first
-    box.wait_for(state="visible", timeout=10_000)
+    box.wait_for(state="visible", timeout=15_000)
     human_delay()
     human_type(box, body)
     human_delay()
@@ -261,6 +344,22 @@ def send_message(message: dict) -> dict:
             # DOM, routinely exceeded 15s. Applied the same fix here
             # pre-emptively, before this path's own first live send hits it.
             page.goto(profile_url, timeout=30_000, wait_until="domcontentloaded")
+            # Real gap fixed 2026-09-06: a saved session (cookies restored
+            # from storage_state) can still be genuinely logged out on
+            # LinkedIn's side -- live-confirmed tonight, an account the
+            # dashboard showed "Connected" the whole time actually redirected
+            # to /login or /authwall on real navigation. Nothing before this
+            # ever checked for that; the account just silently failed every
+            # send while still displaying as healthy. Detecting it here,
+            # right where every real send/reply already navigates, and
+            # persisting it immediately is the earliest and only point that
+            # doesn't need new infrastructure to catch this.
+            if "/login" in page.url or "/authwall" in page.url or "/uas/login" in page.url:
+                repo.update_account(account["id"], {"login_status": "failed", "login_error": "Session logged out on LinkedIn -- reconnect via the extension."})
+                raise SessionLoggedOut(
+                    f"Account {account.get('label') or account['id']} is no longer logged in on LinkedIn "
+                    f"(redirected to {page.url})."
+                )
             send_fn(page, lead, body)
         finally:
             sessions.close(account["id"], context)
@@ -342,6 +441,12 @@ def send_reply(message: dict) -> dict:
                 repo.update_account(account["id"], {"verified_proxy_ip": new_verified_ip})
             try:
                 page.goto(LINKEDIN_MESSAGING_URL, timeout=30_000, wait_until="domcontentloaded")
+                if "/login" in page.url or "/authwall" in page.url or "/uas/login" in page.url:
+                    repo.update_account(account["id"], {"login_status": "failed", "login_error": "Session logged out on LinkedIn -- reconnect via the extension."})
+                    raise SessionLoggedOut(
+                        f"Account {account.get('label') or account['id']} is no longer logged in on LinkedIn "
+                        f"(redirected to {page.url})."
+                    )
                 item = page.locator(_CONVERSATION_LIST_ITEM_SELECTOR, has_text=business_name).first
                 if item.count() == 0:
                     raise NoExistingThread(

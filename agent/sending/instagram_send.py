@@ -84,10 +84,15 @@ _SEND_BUTTON_SELECTOR = "svg[aria-label='Send']"
 # same inference approach as _COMPOSER_SELECTOR above.
 _ATTACHMENT_BUTTON_SELECTOR = "svg[aria-label='Attach a photo or video'], div[role='button'][aria-label*='attach' i]"
 
-# Conversation list item in the inbox -- matched by visible text the same
-# way linkedin_reply_check.py matches business_name, since Instagram's own
-# conversation-list DOM has no stable per-thread identifier exposed either.
-CONVERSATION_LIST_ITEM_SELECTOR = "div[role='listitem']"
+# LIVE-CONFIRMED 2026-09-06: the inbox's conversation rows carry NO
+# role='listitem' anywhere in the DOM (confirmed: 0 matches on a real
+# inbox with several real threads visible) -- the actual clickable row is
+# 10 ancestor levels up from the name text, a div[role='button'] with
+# tabindex='0'. Matched by visible text the same way
+# linkedin_reply_check.py matches business_name, since Instagram's own
+# conversation-list DOM has no stable per-thread identifier exposed
+# either.
+CONVERSATION_LIST_ITEM_SELECTOR = "div[role='button']"
 
 
 class NoMessageButtonAvailable(RuntimeError):
@@ -104,6 +109,15 @@ class NoExistingThread(RuntimeError):
     Raised when a reply is queued for a lead with no existing Instagram DM
     thread to reply into -- same normal-outcome treatment as
     linkedin_send.py's NoExistingThread.
+    """
+
+
+class SessionLoggedOut(RuntimeError):
+    """
+    Raised when a saved session is no longer actually authenticated on
+    Instagram's side -- see linkedin_send.py's identically-named exception
+    for the full reasoning (same real gap, same fix, both channels hit it
+    live the same night).
     """
 
 
@@ -131,6 +145,21 @@ def send_cold_message(message: dict) -> dict:
             repo.update_account(account["id"], {"verified_proxy_ip": new_verified_ip})
         try:
             page.goto(lead["profile_url"], timeout=30_000, wait_until="domcontentloaded")
+            # Real gap fixed 2026-09-06: a saved session can still be
+            # genuinely logged out on Instagram's side -- live-confirmed
+            # tonight, an account the dashboard showed "Connected" the
+            # whole time actually redirected to the login page on real
+            # navigation. Same fix as linkedin_send.py's identical check:
+            # detect it here, right where every real send already
+            # navigates, and persist it immediately so the dashboard
+            # reflects reality instead of staying stuck on a stale
+            # "Connected".
+            if "/accounts/login" in page.url:
+                repo.update_account(account["id"], {"login_status": "failed", "login_error": "Session logged out on Instagram -- reconnect via the extension."})
+                raise SessionLoggedOut(
+                    f"Account {account.get('label') or account['id']} is no longer logged in on Instagram "
+                    f"(redirected to {page.url})."
+                )
             _send_from_profile(page, lead, body)
         finally:
             sessions.close(account["id"], context)
@@ -181,17 +210,38 @@ def send_reply(message: dict) -> dict:
         if attachment_url:
             attachment_path = attachments.download_attachment(attachment_url, message.get("attachment_name"))
 
+        # LIVE-CONFIRMED 2026-09-06: the inbox list row shows the person's
+        # DISPLAY NAME ("Hussein Alassaad"), not their @handle
+        # ("hussein._.alassaad") -- confirmed live: filtering by the
+        # display name matched the real row (count=1), filtering by the
+        # handle parsed from profile_url matched nothing (count=0). An
+        # earlier version of this fix assumed the opposite and was wrong.
+        # business_name is the best available proxy for the real display
+        # name for a well-formed lead; fall back to the handle only if
+        # business_name is empty, since some match is better than none.
+        profile_url = lead.get("profile_url") or ""
+        handle = profile_url.rstrip("/").rsplit("/", 1)[-1] if profile_url else ""
+        match_text = business_name or handle
+
         with SessionManager() as sessions:
             context, page, new_verified_ip = sessions.open(account)
             if new_verified_ip and not account.get("verified_proxy_ip"):
                 repo.update_account(account["id"], {"verified_proxy_ip": new_verified_ip})
             try:
                 page.goto(INSTAGRAM_INBOX_URL, timeout=30_000, wait_until="domcontentloaded")
-                item = page.locator(CONVERSATION_LIST_ITEM_SELECTOR, has_text=business_name).first
-                if item.count() == 0:
-                    raise NoExistingThread(
-                        f"No existing Instagram conversation found for {business_name or lead.get('profile_url')}."
+                if "/accounts/login" in page.url:
+                    repo.update_account(account["id"], {"login_status": "failed", "login_error": "Session logged out on Instagram -- reconnect via the extension."})
+                    raise SessionLoggedOut(
+                        f"Account {account.get('label') or account['id']} is no longer logged in on Instagram "
+                        f"(redirected to {page.url})."
                     )
+                item = page.locator(CONVERSATION_LIST_ITEM_SELECTOR, has_text=match_text).first
+                try:
+                    item.wait_for(state="visible", timeout=15_000)
+                except Exception as exc:  # noqa: BLE001 -- Playwright's TimeoutError, re-raised as our own domain exception
+                    raise NoExistingThread(
+                        f"No existing Instagram conversation found for {match_text or lead.get('profile_url')}."
+                    ) from exc
                 human_delay()
                 item.click()
 
