@@ -385,6 +385,8 @@ def run_discovery_cycle(force: bool = False) -> list[dict]:
     for tenant_id in repo.list_active_tenant_ids():
         try:
             with repo.tenant_scope(tenant_id):
+                if repo.is_tenant_paused():
+                    continue
                 summary.extend(_run_discovery_cycle_for_tenant(tenant_id, force))
         except Exception as exc:  # noqa: BLE001 -- one bad tenant must not stop the others
             try:
@@ -831,6 +833,8 @@ def run_analysis_cycle(limit: int | None = None) -> list[dict]:
         # InsufficientPrivilege from Postgres's own RLS policy, not a
         # Python-level bug).
         with repo.tenant_scope(tenant_id):
+            if repo.is_tenant_paused():
+                continue
             run = repo.start_stage_run(tenant_id, "analysis")
             try:
                 tenant_results = _run_analysis_cycle_for_tenant(tenant_id, limit)
@@ -1073,6 +1077,8 @@ def run_message_generation_cycle(limit: int | None = None) -> list[dict]:
     results = []
     for tenant_id in repo.list_active_tenant_ids():
         with repo.tenant_scope(tenant_id):
+            if repo.is_tenant_paused():
+                continue
             run = repo.start_stage_run(tenant_id, "message_generation")
             try:
                 tenant_results = _run_message_generation_cycle_for_tenant(limit)
@@ -1213,6 +1219,8 @@ def run_sending_cycle(limit: int | None = None) -> list[dict]:
     results = []
     for tenant_id in repo.list_active_tenant_ids():
         with repo.tenant_scope(tenant_id):
+            if repo.is_tenant_paused():
+                continue
             run = repo.start_stage_run(tenant_id, "sending")
             try:
                 tenant_results = _run_sending_cycle_for_tenant(limit)

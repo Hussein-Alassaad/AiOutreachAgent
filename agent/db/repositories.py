@@ -463,6 +463,24 @@ def get_outreach_timezone(tenant_id: str | None = None) -> str:
     return tz or config.TIMEZONE
 
 
+def is_tenant_paused(tenant_id: str | None = None) -> bool:
+    """
+    Whole-tenant, self-service "pause my outreach" switch (2026-09-06) --
+    src/lib/actions/outreach-pause.ts's setOutreachPauseStateAction(),
+    surfaced as a Pause/Run button on the tenant's own Live Feed page.
+    Deliberately separate from OutreachAccount.status ("active"/"paused"),
+    which is per-account and reserved for account-health issues under core
+    rule R9. Every cycle function below checks this per-tenant, as early
+    as possible in its own tenant loop, so a paused tenant does zero real
+    work (no discovery, no message generation, no sending, no reply
+    polling) rather than doing the work and discarding the result.
+    Defaults to False (not paused) if the settings row is somehow missing,
+    same safety posture as get_outreach_timezone's fallback above.
+    """
+    settings = get_settings(tenant_id)
+    return bool(settings.get("paused")) if settings else False
+
+
 def update_settings(fields: Row, tenant_id: str | None = None) -> Row:
     """Patch this tenant's settings row. `fields` comes first (not
     `tenant_id`) to match messaging/style.py's untouched
