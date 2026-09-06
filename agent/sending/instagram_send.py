@@ -121,6 +121,27 @@ class SessionLoggedOut(RuntimeError):
     """
 
 
+def _raise_if_logged_out(page: Page, account: dict) -> None:
+    """
+    LIVE-CONFIRMED 2026-09-06: a genuinely logged-out Instagram session
+    redirects any real navigation to /accounts/login/ -- this is what
+    actually caught MJivity's Instagram account tonight (URL observed:
+    .../accounts/login/?next=...%2Fdirect%2Finbox%2F...). Unlike LinkedIn's
+    company-page case, no separate "no redirect, just different chrome"
+    behavior has been observed for Instagram profile/inbox URLs, but this
+    is intentionally still a small, single-purpose check (not folded into
+    a shared cross-platform helper) in case that turns out to differ by
+    URL shape the same way LinkedIn's did.
+    """
+    if "/accounts/login" not in page.url:
+        return
+    repo.update_account(account["id"], {"login_status": "failed", "login_error": "Session logged out on Instagram -- reconnect via the extension."})
+    raise SessionLoggedOut(
+        f"Account {account.get('label') or account['id']} is no longer logged in on Instagram "
+        f"(redirected to {page.url})."
+    )
+
+
 def send_cold_message(message: dict) -> dict:
     """
     Sends the AI-prepared first message to a lead's Instagram profile.
@@ -145,21 +166,7 @@ def send_cold_message(message: dict) -> dict:
             repo.update_account(account["id"], {"verified_proxy_ip": new_verified_ip})
         try:
             page.goto(lead["profile_url"], timeout=30_000, wait_until="domcontentloaded")
-            # Real gap fixed 2026-09-06: a saved session can still be
-            # genuinely logged out on Instagram's side -- live-confirmed
-            # tonight, an account the dashboard showed "Connected" the
-            # whole time actually redirected to the login page on real
-            # navigation. Same fix as linkedin_send.py's identical check:
-            # detect it here, right where every real send already
-            # navigates, and persist it immediately so the dashboard
-            # reflects reality instead of staying stuck on a stale
-            # "Connected".
-            if "/accounts/login" in page.url:
-                repo.update_account(account["id"], {"login_status": "failed", "login_error": "Session logged out on Instagram -- reconnect via the extension."})
-                raise SessionLoggedOut(
-                    f"Account {account.get('label') or account['id']} is no longer logged in on Instagram "
-                    f"(redirected to {page.url})."
-                )
+            _raise_if_logged_out(page, account)
             _send_from_profile(page, lead, body)
         finally:
             sessions.close(account["id"], context)
@@ -229,12 +236,7 @@ def send_reply(message: dict) -> dict:
                 repo.update_account(account["id"], {"verified_proxy_ip": new_verified_ip})
             try:
                 page.goto(INSTAGRAM_INBOX_URL, timeout=30_000, wait_until="domcontentloaded")
-                if "/accounts/login" in page.url:
-                    repo.update_account(account["id"], {"login_status": "failed", "login_error": "Session logged out on Instagram -- reconnect via the extension."})
-                    raise SessionLoggedOut(
-                        f"Account {account.get('label') or account['id']} is no longer logged in on Instagram "
-                        f"(redirected to {page.url})."
-                    )
+                _raise_if_logged_out(page, account)
                 item = page.locator(CONVERSATION_LIST_ITEM_SELECTOR, has_text=match_text).first
                 try:
                     item.wait_for(state="visible", timeout=15_000)

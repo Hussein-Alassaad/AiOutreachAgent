@@ -170,6 +170,47 @@ class SessionLoggedOut(RuntimeError):
     """
 
 
+def _raise_if_logged_out(page: Page, account: dict) -> None:
+    """
+    LIVE-CONFIRMED 2026-09-06, two real behaviors, both need checking:
+      1. A PERSON profile URL (linkedin.com/in/...) genuinely redirects to
+         /login, /authwall, or /uas/login when the session is invalid --
+         the original version of this check, and still correct for that
+         case.
+      2. A COMPANY page URL does NOT redirect at all with an empty/invalid
+         session -- LinkedIn renders the public logged-out view at the
+         SAME url instead (confirmed live: page.url stayed exactly
+         ".../company/partners-insurance-consultancy/" with zero cookies
+         loaded). The only real, reliable signal there is the logged-out
+         page's own "Join now"/"Sign in" chrome, which a real authenticated
+         session never shows.
+    Checking both is what actually covers every profile_url shape this
+    module sends to, not just the one that happens to redirect.
+    """
+    url_redirected = "/login" in page.url or "/authwall" in page.url or "/uas/login" in page.url
+    # LIVE-CONFIRMED 2026-09-06: checking immediately after
+    # wait_until="domcontentloaded" (no settle time) reads 0 for a real
+    # logged-out page -- the "Join now" chrome hadn't rendered yet, a false
+    # negative that let a genuinely logged-out session sail through
+    # undetected. wait_for() with a short timeout catches it once rendered
+    # without slowing down the common case (a real authenticated session
+    # never shows this element, so the wait always exhausts silently there
+    # -- unavoidable, bounded, and still far cheaper than misreporting the
+    # account as healthy).
+    try:
+        page.get_by_text("Join now", exact=True).first.wait_for(state="visible", timeout=4_000)
+        logged_out_chrome = True
+    except Exception:  # noqa: BLE001 -- Playwright's TimeoutError means the element never showed, i.e. a real session
+        logged_out_chrome = False
+    if not (url_redirected or logged_out_chrome):
+        return
+    repo.update_account(account["id"], {"login_status": "failed", "login_error": "Session logged out on LinkedIn -- reconnect via the extension."})
+    raise SessionLoggedOut(
+        f"Account {account.get('label') or account['id']} is no longer logged in on LinkedIn "
+        f"(url={page.url!r}, logged_out_chrome={logged_out_chrome})."
+    )
+
+
 class MessageLengthInvalid(RuntimeError):
     """
     Raised when the approved message body doesn't fit the company Page
@@ -344,22 +385,7 @@ def send_message(message: dict) -> dict:
             # DOM, routinely exceeded 15s. Applied the same fix here
             # pre-emptively, before this path's own first live send hits it.
             page.goto(profile_url, timeout=30_000, wait_until="domcontentloaded")
-            # Real gap fixed 2026-09-06: a saved session (cookies restored
-            # from storage_state) can still be genuinely logged out on
-            # LinkedIn's side -- live-confirmed tonight, an account the
-            # dashboard showed "Connected" the whole time actually redirected
-            # to /login or /authwall on real navigation. Nothing before this
-            # ever checked for that; the account just silently failed every
-            # send while still displaying as healthy. Detecting it here,
-            # right where every real send/reply already navigates, and
-            # persisting it immediately is the earliest and only point that
-            # doesn't need new infrastructure to catch this.
-            if "/login" in page.url or "/authwall" in page.url or "/uas/login" in page.url:
-                repo.update_account(account["id"], {"login_status": "failed", "login_error": "Session logged out on LinkedIn -- reconnect via the extension."})
-                raise SessionLoggedOut(
-                    f"Account {account.get('label') or account['id']} is no longer logged in on LinkedIn "
-                    f"(redirected to {page.url})."
-                )
+            _raise_if_logged_out(page, account)
             send_fn(page, lead, body)
         finally:
             sessions.close(account["id"], context)
@@ -441,12 +467,7 @@ def send_reply(message: dict) -> dict:
                 repo.update_account(account["id"], {"verified_proxy_ip": new_verified_ip})
             try:
                 page.goto(LINKEDIN_MESSAGING_URL, timeout=30_000, wait_until="domcontentloaded")
-                if "/login" in page.url or "/authwall" in page.url or "/uas/login" in page.url:
-                    repo.update_account(account["id"], {"login_status": "failed", "login_error": "Session logged out on LinkedIn -- reconnect via the extension."})
-                    raise SessionLoggedOut(
-                        f"Account {account.get('label') or account['id']} is no longer logged in on LinkedIn "
-                        f"(redirected to {page.url})."
-                    )
+                _raise_if_logged_out(page, account)
                 item = page.locator(_CONVERSATION_LIST_ITEM_SELECTOR, has_text=business_name).first
                 if item.count() == 0:
                     raise NoExistingThread(
