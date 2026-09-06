@@ -51,17 +51,35 @@ from agent.sending import attachments
 
 INSTAGRAM_INBOX_URL = "https://www.instagram.com/direct/inbox/"
 
-# Instagram's own profile "Message" button -- publicly documented aria-label
-# convention, NOT yet confirmed against a real live profile page.
-_PROFILE_MESSAGE_BUTTON_SELECTOR = "div[role='button']:has-text('Message')"
+# LIVE-CONFIRMED 2026-09-06: the original substring selector
+# ("div[role='button']:has-text('Message')") matched the wrong element --
+# Instagram's own top-nav Messages/DM-inbox icon renders as
+# div[role='button'] with text "1\nMessages" (unread badge + label), which
+# is a substring superset of "Message" and appears EARLIER in DOM order
+# than the real per-profile Message button, so .first grabbed the nav icon
+# every time. Real profile page dump (hussein._.alassaad, 994 followers):
+# the genuine button is div[role='button'] with EXACT text "Message",
+# scoped inside <header>, sitting alongside "Follow" as sibling buttons --
+# scoping to header AND requiring an exact text match (not substring) is
+# what actually disambiguates it from the nav icon.
+_PROFILE_MESSAGE_BUTTON_SELECTOR = "header div[role='button']:text-is('Message')"
 
-# Instagram's DM composer -- a contenteditable div, same general pattern as
-# LinkedIn's own messaging widget. Real class names are obfuscated/
-# auto-generated on Instagram (unlike LinkedIn's stable BEM-style classes),
-# so this targets the composer by its accessible role/placeholder instead,
-# which tends to survive Instagram's frequent CSS class churn better.
-_COMPOSER_SELECTOR = "textarea[placeholder='Message...'], div[contenteditable='true'][aria-label='Message']"
-_SEND_BUTTON_SELECTOR = "div[role='button']:has-text('Send')"
+# LIVE-CONFIRMED 2026-09-06: the original selector assumed the composer
+# would carry an aria-label or placeholder -- the real element has NEITHER
+# (page dump: div[contenteditable='true'] with no aria-label, no
+# placeholder, no other identifying attribute). It's the ONLY
+# contenteditable element on the page once the DM panel is open (confirmed:
+# exactly 1 match), so matching plain contenteditable=true is sufficient
+# and more robust than guessing at attributes Instagram doesn't actually
+# set.
+_COMPOSER_SELECTOR = "div[contenteditable='true']"
+# LIVE-CONFIRMED 2026-09-06: there is no text-labeled Send button at all --
+# the real control is an icon-only paper-plane button, an
+# svg[aria-label='Send'] nested inside the clickable element. Playwright
+# resolves a click on the svg to its actual pointer target automatically
+# (same as clicking any nested icon), so targeting the svg directly is
+# reliable and doesn't depend on guessing the wrapping element's tag/role.
+_SEND_BUTTON_SELECTOR = "svg[aria-label='Send']"
 # NOT yet live-verified -- Instagram's DM composer attach/media picker,
 # same inference approach as _COMPOSER_SELECTOR above.
 _ATTACHMENT_BUTTON_SELECTOR = "svg[aria-label='Attach a photo or video'], div[role='button'][aria-label*='attach' i]"
@@ -207,11 +225,21 @@ def send_reply(message: dict) -> dict:
 
 
 def _send_from_profile(page: Page, lead: dict, body: str) -> None:
+    # LIVE-CONFIRMED 2026-09-06: page.goto()'s wait_until="domcontentloaded"
+    # fires as soon as the HTML skeleton parses, well before Instagram's
+    # client-side JS has actually rendered the profile header -- an instant
+    # .count() check right after navigation reads an empty page and always
+    # raised NoMessageButtonAvailable, even though the real button appears
+    # correctly within a couple seconds. wait_for() waits for the real
+    # render instead of an arbitrary sleep, and still fails clearly (same
+    # exception) if the button genuinely never shows up.
     message_button = page.locator(_PROFILE_MESSAGE_BUTTON_SELECTOR).first
-    if message_button.count() == 0:
+    try:
+        message_button.wait_for(state="visible", timeout=15_000)
+    except Exception as exc:  # noqa: BLE001 -- Playwright's TimeoutError, re-raised as our own domain exception
         raise NoMessageButtonAvailable(
             f"{lead.get('business_name') or lead['profile_url']} has no reachable Message button on Instagram."
-        )
+        ) from exc
 
     human_delay()
     message_button.click()
