@@ -9,13 +9,19 @@ selectors below were all wrong and have been replaced; see each constant's
 own comment for exactly what real inspection found.
 ============================================================================
 
-APPROACH: pull-based, identical shape to linkedin_reply_check.py -- for
-every lead currently at "contacted" that we reached via Instagram, open the
-account's own DM inbox, find that lead's conversation thread by its
-business_name, and check whether the newest message's sender is the lead
-(not us). Reuses instagram_send.py's _CONVERSATION_LIST_ITEM_SELECTOR
-constant so the two modules can't silently drift out of sync on how a
-thread is located.
+APPROACH: pull-based -- for every "contacted" OR "replied" lead reached
+via Instagram, open the account's own DM inbox, find that lead's thread by
+its business_name, and read the ENTIRE thread (not just the newest
+message -- see _sync_thread_messages()'s own docstring for the real gap
+that fixed, 2026-09-07). Every message not already recorded is backfilled
+into the correct table by direction: a lead's message becomes a new
+OutreachReply row (and advances the pipeline via handle_reply_detected()),
+our own message (including one sent manually from the real Instagram app,
+outside this platform entirely) becomes a new OutreachMessage row -- so
+Reply Here shows the REAL, complete conversation regardless of how each
+message was actually sent. Reuses instagram_send.py's
+_CONVERSATION_LIST_ITEM_SELECTOR constant so the two modules can't
+silently drift out of sync on how a thread is located.
 """
 
 from __future__ import annotations
@@ -109,24 +115,32 @@ def _open_thread_for_lead(page: Page, account: dict, business_name: str) -> bool
     return True
 
 
-def _newest_message_if_from_lead(page: Page) -> str | None:
+def _read_thread_messages(page: Page) -> list[dict]:
     """
-    Reads the thread's most recent message and returns its body only if it
-    was NOT sent by us. LIVE-CONFIRMED 2026-09-07 against a real thread
-    with a genuine incoming reply: outgoing (our own) bubbles render
-    right-aligned with a visibly larger left offset than incoming ones --
-    confirmed via getBoundingClientRect() on both a real outgoing and a
-    real incoming bubble in the same thread (our own: left=762; the
-    lead's reply: left=523, same viewport). A fixed pixel threshold is
-    fragile across viewport widths, so this compares each bubble's left
-    offset against the THREAD's own average instead -- outgoing bubbles
-    sit further right than the thread's own center of mass, incoming ones
-    sit further left, which holds regardless of absolute viewport size.
+    Reads EVERY message bubble currently in the open thread, in
+    chronological order, each tagged "us" or "lead". Real gap fixed
+    2026-09-07: the original version of this function only ever looked at
+    the SINGLE NEWEST message -- live-confirmed the same night, a message
+    sent manually from the real Instagram app (not through this platform)
+    was correctly excluded from outreach_replies (it's genuinely ours, not
+    a reply), but that also meant it never showed up anywhere on the
+    dashboard at all -- Reply Here only ever displays OutreachMessage rows
+    (platform-originated sends) plus OutreachReply rows (detected incoming
+    replies), so a real, genuine part of the conversation was invisible.
+    Reading the WHOLE thread, not just the tail, is what lets the caller
+    backfill a manually-sent outgoing message the same way it already
+    backfills an incoming reply.
+
+    Direction is inferred from horizontal position -- see the previous
+    version's own comment for the live-measured evidence (outgoing:
+    left=762, incoming: left=523, same viewport) -- compared against the
+    THREAD's own average left offset rather than a fixed pixel threshold,
+    so it holds regardless of viewport width.
     """
     messages = page.locator(_THREAD_MESSAGE_SELECTOR)
     count = messages.count()
     if count == 0:
-        return None
+        return []
 
     boxes = []
     for i in range(count):
@@ -136,18 +150,16 @@ def _newest_message_if_from_lead(page: Page) -> str | None:
             continue
         box = el.bounding_box()
         if box:
-            boxes.append({"index": i, "left": box["x"], "text": text})
+            boxes.append({"left": box["x"], "text": text})
 
     if not boxes:
-        return None
+        return []
 
     avg_left = sum(b["left"] for b in boxes) / len(boxes)
-    newest = boxes[-1]
-    is_outgoing = newest["left"] > avg_left
-    if is_outgoing:
-        return None  # our own message
-
-    return newest["text"] or None
+    return [
+        {"from": "us" if b["left"] > avg_left else "lead", "text": b["text"]}
+        for b in boxes
+    ]
 
 
 def check_instagram_replies() -> list[dict]:
@@ -210,7 +222,7 @@ def check_instagram_replies() -> list[dict]:
                 account["verified_proxy_ip"] = new_verified_ip
             try:
                 found = _open_thread_for_lead(page, account, business_name)
-                body = _newest_message_if_from_lead(page) if found else None
+                live_messages = _read_thread_messages(page) if found else []
             except SessionLoggedOut as exc:
                 # login_status is already persisted "failed" by
                 # _raise_if_logged_out itself -- record this as a real
@@ -221,25 +233,80 @@ def check_instagram_replies() -> list[dict]:
             finally:
                 sessions.close(account["id"], context)
 
-            if body is None:
+            if not live_messages:
                 results.append({"lead_id": lead["id"], "replied": False})
                 continue
 
-            # Dedup by CONTENT, not by lead status -- see this function's
-            # own docstring for why. replies_for_lead() already orders by
-            # replied_at (see its own repo definition), so [-1] is the most
-            # recently recorded reply, if any.
-            existing = repo.replies_for_lead(lead["id"])
-            already_recorded = bool(existing) and existing[-1].get("body") == body
-            replied = not already_recorded
-            if replied:
-                handle_reply_detected(
-                    lead["id"],
-                    channel="instagram",
-                    body=body,
-                    replied_at=dt.datetime.now(dt.timezone.utc),
-                    account_id=account["id"],
-                )
-            results.append({"lead_id": lead["id"], "replied": replied})
+            new_replies, new_outgoing = _sync_thread_messages(lead, account, live_messages)
+            results.append({
+                "lead_id": lead["id"],
+                "replied": new_replies > 0,
+                "new_replies": new_replies,
+                "new_outgoing_backfilled": new_outgoing,
+            })
 
     return results
+
+
+def _sync_thread_messages(lead: dict, account: dict, live_messages: list[dict]) -> tuple[int, int]:
+    """
+    Real gap fixed 2026-09-07: Reply Here only ever displayed
+    OutreachMessage rows (platform-originated sends) and OutreachReply
+    rows (detected incoming replies) -- a message sent manually from the
+    real Instagram app, outside this platform, was correctly excluded
+    from being mistaken for a reply, but that also meant it was invisible
+    on the dashboard entirely, even though it's a genuine part of the
+    real conversation.
+
+    Dedup by CONTENT within each direction, not a stable message id --
+    Instagram's DOM exposes no per-message identifier to key off (see
+    _read_thread_messages' own docstring), so a body already known on the
+    matching side is treated as already-recorded. Known real limitation:
+    two literally-identical messages on the same side (e.g. sending "K"
+    twice) are indistinguishable this way and the second one won't be
+    backfilled -- accepted the same way the single-newest-reply version
+    of this function already accepted it for the incoming side alone.
+
+    Returns (new_replies_recorded, new_outgoing_backfilled).
+    """
+    known_incoming = {r.get("body") for r in repo.replies_for_lead(lead["id"])}
+    known_outgoing = {
+        m.get("edited_body") or m.get("body")
+        for m in repo.messages_for_lead(lead["id"])
+        if m.get("channel") == "instagram"
+    }
+
+    new_replies = 0
+    new_outgoing = 0
+    for msg in live_messages:
+        text = msg["text"]
+        if msg["from"] == "lead":
+            if text in known_incoming:
+                continue
+            handle_reply_detected(
+                lead["id"],
+                channel="instagram",
+                body=text,
+                replied_at=dt.datetime.now(dt.timezone.utc),
+                account_id=account["id"],
+            )
+            known_incoming.add(text)
+            new_replies += 1
+        else:
+            if text in known_outgoing:
+                continue
+            now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
+            repo.insert_message({
+                "lead_id": lead["id"],
+                "channel": "instagram",
+                "body": text,
+                "approval_status": "approved",
+                "approved_at": now_iso,
+                "send_status": "sent",
+                "sent_at": now_iso,
+                "sent_via_account": account["id"],
+            })
+            known_outgoing.add(text)
+            new_outgoing += 1
+
+    return new_replies, new_outgoing
