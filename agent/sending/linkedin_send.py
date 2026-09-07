@@ -554,11 +554,22 @@ def send_reply(message: dict) -> dict:
                 human_delay(1.5, 3.5)
                 page.goto(LINKEDIN_MESSAGING_URL, timeout=30_000, wait_until="domcontentloaded")
                 _raise_if_logged_out(page, account)
+                # LIVE-CONFIRMED 2026-09-07: an instant .count() here reads 0
+                # even when the thread genuinely exists -- the inbox renders
+                # its conversation list client-side, AFTER domcontentloaded
+                # fires, so the check ran before any list item existed. That
+                # made real replies fail as "No existing LinkedIn conversation
+                # found" while leaving the message stuck pending, and it was
+                # intermittent (some sends won the race, some lost it), which
+                # is exactly what made it look random rather than a real bug.
+                # Same class of race already fixed elsewhere in this module.
                 item = page.locator(_CONVERSATION_LIST_ITEM_SELECTOR, has_text=business_name).first
-                if item.count() == 0:
+                try:
+                    item.wait_for(state="visible", timeout=15_000)
+                except Exception as exc:  # noqa: BLE001 -- Playwright TimeoutError means no such thread rendered
                     raise NoExistingThread(
                         f"No existing LinkedIn conversation found for {business_name or lead['profile_url']}."
-                    )
+                    ) from exc
                 human_delay()
                 item.click()
 

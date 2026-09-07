@@ -218,8 +218,16 @@ def _open_thread_for_lead(page: Page, account: dict, business_name: str) -> bool
     # timeouts that "load" caused on LinkedIn's heavy SPA pages.
     page.goto(LINKEDIN_MESSAGING_URL, timeout=30_000, wait_until="domcontentloaded")
     _raise_if_logged_out(page, account)
+    # LIVE-CONFIRMED 2026-09-07 (same race fixed in linkedin_send.send_reply,
+    # see its comment): the inbox renders its conversation list client-side
+    # AFTER domcontentloaded, so an instant .count() reads 0 while the thread
+    # is still rendering. Here that returned False silently -- a real, waiting
+    # reply was skipped with no error surfaced anywhere, which is strictly
+    # worse than the send path's loud failure.
     item = page.locator(_CONVERSATION_LIST_ITEM_SELECTOR, has_text=business_name).first
-    if item.count() == 0:
+    try:
+        item.wait_for(state="visible", timeout=15_000)
+    except Exception:  # noqa: BLE001 -- Playwright TimeoutError means this lead genuinely has no thread yet
         return False
     human_delay()
     item.click()
