@@ -143,19 +143,28 @@ def _send_reply(tenant_id: str, lead_id: str, message_id: str) -> dict:
     from agent.db import repositories as repo
     from agent.sending import instagram_send, linkedin_send
 
+    # LIVE-CONFIRMED 2026-09-06: send_reply() (both instagram_send's and
+    # linkedin_send's) makes its OWN internal repo calls (get_lead,
+    # get_account, update_message, ...) using tenant_scope's ambient
+    # context, not an explicit tenant_id argument -- scoping only the
+    # initial messages_for_lead() fetch and closing the `with` block before
+    # calling send_reply() left those internal calls with no active scope
+    # at all, hit live as "NoTenantInScope: No tenant_id was passed and no
+    # tenant_scope(...) is active." The whole dispatch, not just the
+    # lookup, needs to run inside one tenant_scope block.
     with repo.tenant_scope(tenant_id):
         messages = repo.messages_for_lead(lead_id, tenant_id=tenant_id)
-    message = next((m for m in messages if m["id"] == message_id), None)
-    if not message:
-        raise RuntimeError(f"Message {message_id} not found for lead {lead_id}.")
+        message = next((m for m in messages if m["id"] == message_id), None)
+        if not message:
+            raise RuntimeError(f"Message {message_id} not found for lead {lead_id}.")
 
-    channel = message.get("channel")
-    if channel == "instagram":
-        instagram_send.send_reply(message)
-    elif channel == "linkedin":
-        linkedin_send.send_reply(message)
-    else:
-        raise RuntimeError(f"send_reply is only for instagram/linkedin, got channel={channel!r}.")
+        channel = message.get("channel")
+        if channel == "instagram":
+            instagram_send.send_reply(message)
+        elif channel == "linkedin":
+            linkedin_send.send_reply(message)
+        else:
+            raise RuntimeError(f"send_reply is only for instagram/linkedin, got channel={channel!r}.")
 
     return {"sent": True, "channel": channel}
 

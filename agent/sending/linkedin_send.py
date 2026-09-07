@@ -120,16 +120,56 @@ class NoExistingThread(RuntimeError):
 # topics (real values scraped from the live <select>, see module docstring).
 # "Other" is the only one that doesn't misrepresent unsolicited outreach as
 # a support ticket, a demo request, a careers inquiry, etc.
-_TOPIC_URN = "urn:li:fsd_pageMailboxConversationTopic:7"  # "Other"
+_TOPIC_URN = "urn:li:fsd_pageMailboxConversationTopic:7"  # "Other" -- legacy build
+# LIVE-CONFIRMED 2026-09-07: the rebuilt modal's <select> uses plain ordinal
+# values, not URNs -- real options read off the live element are
+# ("", "Select a topic"), ("1", "Service request"), ("2", "Request a demo"),
+# ("3", "Support"), ("6", "Careers"), ("7", "Other"). Same "Other" choice and
+# same trailing 7 as the legacy URN above, so the intent is unchanged.
+_TOPIC_VALUE = "7"  # "Other"
 
 _COMPANY_MESSAGE_MIN_LENGTH = 25
 _COMPANY_MESSAGE_MAX_LENGTH = 750
 
 _COMPANY_MESSAGE_BUTTON_SELECTOR = "div.org-top-card-primary-actions [data-test-message-page-button]"
+# LIVE-CONFIRMED 2026-09-07: the selector above no longer matches anything on
+# a real company page (tested against linkedin.com/company/mjivity/, a page
+# with the Message button genuinely visible and clickable) -- LinkedIn has
+# since shipped a company-page frontend rebuild with hash-based, ever-
+# shifting class names (e.g. "_34d25300") and no "data-test-message-page-
+# button" attribute at all anymore, not a per-page rendering fluke. A
+# role+accessible-name lookup is immune to that churn since it reads the
+# same accessibility tree LinkedIn's own screen-reader support depends on,
+# which is far less likely to be silently rewritten than a CSS class or
+# data-test hook.
+_COMPANY_MESSAGE_BUTTON_ROLE_NAME = "Message"
 _COMPANY_MODAL_SELECTOR = "div[role='dialog'][aria-labelledby='msg-shared-modals-msg-page-modal']"
 _COMPANY_TOPIC_SELECT_SELECTOR = "select#msg-shared-modals-msg-page-modal-presenter-conversation-topic"
 _COMPANY_TEXTAREA_SELECTOR = "textarea#org-message-page-modal-message"
 _COMPANY_SEND_BUTTON_SELECTOR = "div.artdeco-modal__actionbar button"
+
+# LIVE-CONFIRMED 2026-09-07 against linkedin.com/company/mjivity/: the four
+# legacy selectors above ALL miss on LinkedIn's rebuilt company-page message
+# modal, which is why a send that got as far as opening the modal then timed
+# out waiting for it. Every replacement below was read off the real, open
+# modal's DOM, not guessed:
+#   - the modal itself no longer carries role="dialog" nor the
+#     aria-labelledby hook; its heading text ("New message") is the stable
+#     thing to wait on.
+#   - the topic <select> is still a real <select>, but its id is now a
+#     React-generated, per-render value (observed: "«ri»"), so it must be
+#     found by its aria-label instead.
+#   - the message body is no longer a <textarea> at all (the modal contains
+#     zero) -- it is now a TipTap/ProseMirror rich-text editor rendered as
+#     div[role="textbox"][contenteditable="true"].
+#   - the send button lives outside any .artdeco-modal__actionbar now and
+#     carries no aria-label; its visible text "Send message" is the handle.
+#     It stays disabled until BOTH the topic and a >=25-char body are set,
+#     which is exactly the precondition the code already enforces.
+_COMPANY_MODAL_HEADING = "New message"
+_COMPANY_TOPIC_SELECT_FALLBACK = 'select[aria-label="Conversation topic*"]'
+_COMPANY_BODY_EDITOR_FALLBACK = 'div[role="textbox"][contenteditable="true"]'
+_COMPANY_SEND_BUTTON_TEXT = "Send message"
 
 # PERSON path -- see module docstring for exactly what is/isn't verified.
 # LIVE-CONFIRMED 2026-09-03: a real, live test (a genuinely 1st-degree-
@@ -221,12 +261,22 @@ def _send_to_company(page: Page, lead: dict, body: str) -> None:
             page.keyboard.press("Escape")
         page.locator(_VIEWING_SETTING_MODAL_SELECTOR).wait_for(state="hidden", timeout=5_000)
 
+    # Try the original data-test hook first (still correct on any company
+    # page LinkedIn hasn't migrated to the new build yet), then fall back to
+    # the role-based lookup -- see _COMPANY_MESSAGE_BUTTON_ROLE_NAME's
+    # comment above for why the old selector can no longer be trusted alone.
     message_button = page.locator(_COMPANY_MESSAGE_BUTTON_SELECTOR).first
-    if message_button.count() == 0:
-        raise NoMessageButtonAvailable(
-            f"{lead.get('business_name') or lead['profile_url']} has no "
-            "Message button enabled on its LinkedIn company page."
-        )
+    try:
+        message_button.wait_for(state="visible", timeout=4_000)
+    except Exception:  # noqa: BLE001 -- old selector found nothing; try the role-based fallback
+        message_button = page.get_by_role("button", name=_COMPANY_MESSAGE_BUTTON_ROLE_NAME, exact=True).first
+        try:
+            message_button.wait_for(state="visible", timeout=4_000)
+        except Exception:  # noqa: BLE001 -- neither selector found a real, visible button
+            raise NoMessageButtonAvailable(
+                f"{lead.get('business_name') or lead['profile_url']} has no "
+                "Message button enabled on its LinkedIn company page."
+            )
 
     # Human-scale pacing before every platform-visible action -- an instant
     # click/fill the moment the page loads, or a body typed in one atomic
@@ -234,13 +284,50 @@ def _send_to_company(page: Page, lead: dict, body: str) -> None:
     # agent/core/pacing.py's module docstring).
     human_delay()
     message_button.click()
-    page.locator(_COMPANY_MODAL_SELECTOR).wait_for(state="visible", timeout=10_000)
+
+    # Each step below tries the legacy selector first and falls back to the
+    # rebuilt modal's real one -- see the _COMPANY_MODAL_HEADING block above
+    # for what changed and how each replacement was confirmed. The modal
+    # fetches its contents after opening (a visible spinner for ~3-5s on a
+    # real run), so the first wait has to outlast that, not just the open.
+    legacy_modal = page.locator(_COMPANY_MODAL_SELECTOR)
+    try:
+        legacy_modal.wait_for(state="visible", timeout=10_000)
+    except Exception:  # noqa: BLE001 -- rebuilt modal: no role=dialog, wait on its heading instead
+        page.get_by_text(_COMPANY_MODAL_HEADING, exact=True).first.wait_for(
+            state="visible", timeout=15_000
+        )
+
     human_delay()
-    page.locator(_COMPANY_TOPIC_SELECT_SELECTOR).select_option(value=_TOPIC_URN)
+    topic = page.locator(_COMPANY_TOPIC_SELECT_SELECTOR).first
+    if topic.count() > 0:
+        topic.select_option(value=_TOPIC_URN)
+    else:
+        topic = page.locator(_COMPANY_TOPIC_SELECT_FALLBACK).first
+        topic.wait_for(state="visible", timeout=10_000)
+        topic.select_option(value=_TOPIC_VALUE)
+
     human_delay()
-    human_type(page.locator(_COMPANY_TEXTAREA_SELECTOR), body)
+    editor = page.locator(_COMPANY_TEXTAREA_SELECTOR).first
+    if editor.count() == 0:
+        editor = page.locator(_COMPANY_BODY_EDITOR_FALLBACK).first
+        editor.wait_for(state="visible", timeout=10_000)
+    human_type(editor, body)
+
     human_delay()
-    page.locator(_COMPANY_SEND_BUTTON_SELECTOR).click()
+    send_button = page.locator(_COMPANY_SEND_BUTTON_SELECTOR).first
+    if send_button.count() == 0:
+        send_button = page.get_by_role("button", name=_COMPANY_SEND_BUTTON_TEXT, exact=True).first
+    # LinkedIn keeps this button disabled until it has registered both the
+    # topic and a >=25-char body; the rich-text editor's own change events
+    # can land a beat after human_type() returns, so give it a moment to
+    # enable rather than clicking a dead button and silently sending nothing.
+    send_button.wait_for(state="visible", timeout=10_000)
+    for _ in range(20):
+        if send_button.is_enabled():
+            break
+        page.wait_for_timeout(250)
+    send_button.click()
 
 
 def _send_to_person(page: Page, lead: dict, body: str) -> None:
