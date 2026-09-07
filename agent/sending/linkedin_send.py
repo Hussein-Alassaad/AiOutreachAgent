@@ -249,8 +249,22 @@ def _send_to_company(page: Page, lead: dict, body: str) -> None:
     # on every visit (likely tied to account-level viewing-mode settings
     # never having been explicitly set), so this is a no-op when the modal
     # isn't there.
+    #
+    # LIVE-CONFIRMED 2026-09-07 (second finding, same session): an instant
+    # .count() check right here reads 0 even when the modal goes on to
+    # block the click moments later -- same class of race as every other
+    # "checked before the real render finished" bug found tonight
+    # (instagram_send.py's message button, its composer, its Send button).
+    # A short wait_for(state="visible") catches it once actually rendered
+    # without slowing down the common case (the wait exhausts quickly and
+    # silently when the modal genuinely never appears).
     viewing_modal = page.locator(_VIEWING_SETTING_MODAL_SELECTOR)
-    if viewing_modal.count() > 0 and viewing_modal.is_visible():
+    try:
+        viewing_modal.wait_for(state="visible", timeout=3_000)
+        modal_present = True
+    except Exception:  # noqa: BLE001 -- Playwright's TimeoutError means the modal never showed, the common case
+        modal_present = False
+    if modal_present:
         dismiss = viewing_modal.locator("button[aria-label='Dismiss'], button.artdeco-modal__dismiss").first
         if dismiss.count() > 0:
             dismiss.click()
