@@ -229,12 +229,34 @@ def _is_person_profile(profile_url: str) -> bool:
     return "linkedin.com/in/" in profile_url
 
 
+_VIEWING_SETTING_MODAL_SELECTOR = "[data-test-modal-id='org-page-viewing-setting-modal']"
+
+
 def _send_to_company(page: Page, lead: dict, body: str) -> None:
     if not (_COMPANY_MESSAGE_MIN_LENGTH <= len(body) <= _COMPANY_MESSAGE_MAX_LENGTH):
         raise MessageLengthInvalid(
             f"Message is {len(body)} characters; LinkedIn's Page inbox requires "
             f"{_COMPANY_MESSAGE_MIN_LENGTH}-{_COMPANY_MESSAGE_MAX_LENGTH}."
         )
+
+    # LIVE-CONFIRMED 2026-09-07: a genuinely unrelated LinkedIn-native
+    # popup ("Choose what others see when you've viewed their profile" --
+    # data-test-modal-id="org-page-viewing-setting-modal") can appear on a
+    # company page visit and sits on top of the Message button, blocking
+    # every click attempt with a real, reproducible "<div ...> subtree
+    # intercepts pointer events" error -- confirmed via the exact overlay
+    # id in Playwright's own actionability log, not a guess. Not present
+    # on every visit (likely tied to account-level viewing-mode settings
+    # never having been explicitly set), so this is a no-op when the modal
+    # isn't there.
+    viewing_modal = page.locator(_VIEWING_SETTING_MODAL_SELECTOR)
+    if viewing_modal.count() > 0 and viewing_modal.is_visible():
+        dismiss = viewing_modal.locator("button[aria-label='Dismiss'], button.artdeco-modal__dismiss").first
+        if dismiss.count() > 0:
+            dismiss.click()
+        else:
+            page.keyboard.press("Escape")
+        page.locator(_VIEWING_SETTING_MODAL_SELECTOR).wait_for(state="hidden", timeout=5_000)
 
     message_button = page.locator(_COMPANY_MESSAGE_BUTTON_SELECTOR).first
     if message_button.count() == 0:
