@@ -3,11 +3,10 @@ Checks Instagram for replies to leads we've messaged, via a real logged-in
 browser session -- Instagram's equivalent of linkedin_reply_check.py.
 
 ============================================================================
-NOT YET LIVE-VERIFIED -- see instagram_send.py's module docstring for the
-same caveat: built against Instagram's known DOM structure, not yet
-inspected against a real conversation. WATCH THIS CLOSELY against a real
-connected test account before trusting it unattended, same caution applied
-everywhere else in this codebase.
+LIVE-VERIFIED 2026-09-07 against a real conversation with a genuine
+incoming reply ("Thanks", from hussein._.alassaad) -- the ORIGINAL
+selectors below were all wrong and have been replaced; see each constant's
+own comment for exactly what real inspection found.
 ============================================================================
 
 APPROACH: pull-based, identical shape to linkedin_reply_check.py -- for
@@ -29,16 +28,36 @@ from agent.core.pacing import human_delay
 from agent.core.session import ProxyIpMismatch, SessionManager
 from agent.crm.reply_detection import handle_reply_detected
 from agent.db import repositories as repo
-from agent.sending.instagram_send import INSTAGRAM_INBOX_URL, CONVERSATION_LIST_ITEM_SELECTOR
+from agent.sending.instagram_send import (
+    INSTAGRAM_INBOX_URL,
+    CONVERSATION_LIST_ITEM_SELECTOR,
+    _raise_if_logged_out,
+    SessionLoggedOut,
+)
 
-# Not yet confirmed against a real thread's DOM -- see module docstring.
-_THREAD_MESSAGE_SELECTOR = "div[role='row']"
+# LIVE-CONFIRMED 2026-09-07: the original div[role='row'] selector matched
+# ZERO elements in a real open thread -- Instagram's message bubbles carry
+# no ARIA role at all, and there's no labeled/roled container wrapping the
+# message list either (walked every ancestor from a real reply's text node
+# to the document root: exactly one had any role/aria-label at all, a
+# role='button' hover target on the bubble itself, not a list container --
+# confirmed live, not assumed). Each message bubble (both incoming and
+# outgoing) IS a div[role='presentation'], confirmed by finding they line
+# up 1:1 with the visible message bubbles in chronological order.
+#
+# The one real wrinkle: the FIRST role='presentation' match on the page is
+# sometimes unrelated sidebar chrome ("What's new... Your note"), not a
+# message -- present only when that inbox-wide prompt hasn't been
+# dismissed. Since there's no clean container to scope into instead, this
+# is filtered by content instead of position: an element whose direct text
+# is exactly that sidebar prompt's own copy is excluded, everything else
+# role='presentation' on the page is treated as a message bubble. Scoped
+# to whatever the caller navigated to (a specific /direct/t/<id>/ thread
+# URL), not the inbox list page, so this never picks up unrelated
+# role='presentation' elements from a different part of the app.
+_SIDEBAR_PROMPT_TEXT = "What's new"
+_THREAD_MESSAGE_SELECTOR = "div[role='presentation']"
 _THREAD_MESSAGE_BODY_SELECTOR = "div[dir='auto']"
-# Instagram doesn't expose a stable per-message sender label the way
-# LinkedIn's msg-s-message-group__profile-link does; the outgoing/incoming
-# distinction is inferred from alignment (own messages right-aligned) via
-# this wrapper class convention -- NOT yet confirmed live, watch closely.
-_OUTGOING_MESSAGE_WRAPPER_SELECTOR = "div[style*='justify-content: flex-end']"
 
 
 def _has_instagram_sent(lead_id: str) -> bool:
@@ -48,34 +67,87 @@ def _has_instagram_sent(lead_id: str) -> bool:
     )
 
 
-def _open_thread_for_lead(page: Page, business_name: str) -> bool:
+def _open_thread_for_lead(page: Page, account: dict, business_name: str) -> bool:
+    """
+    account is required (not just page) so a genuinely logged-out session
+    is detected and persisted the same way instagram_send.py's send paths
+    already do -- LIVE-CONFIRMED 2026-09-07: before this, a logged-out
+    session made _open_thread_for_lead silently return False (the
+    conversation list item just never "found"), which reported an
+    identical "replied": False result as a lead that genuinely hasn't
+    replied yet -- a real false negative with no visible error, exactly
+    the failure mode a human scanning "not yet replied" against their own
+    real inbox (see this codebase's own Reply Here warning banner) exists
+    to catch, but silently, indefinitely, is a much worse outcome than
+    surfacing it as a real error the moment it happens.
+
+    LIVE-CONFIRMED 2026-09-07, second fix: an instant .count() check
+    right after page.goto() reads 0 even when the conversation genuinely
+    exists and renders moments later -- same timing race found and fixed
+    in every other Instagram/LinkedIn selector tonight. wait_for() catches
+    it once actually rendered.
+    """
     page.goto(INSTAGRAM_INBOX_URL, timeout=30_000, wait_until="domcontentloaded")
+    _raise_if_logged_out(page, account)
     item = page.locator(CONVERSATION_LIST_ITEM_SELECTOR, has_text=business_name).first
-    if item.count() == 0:
+    try:
+        item.wait_for(state="visible", timeout=10_000)
+    except Exception:  # noqa: BLE001 -- Playwright's TimeoutError means no matching thread exists, a real "no" not a crash
         return False
     human_delay()
     item.click()
+    # LIVE-CONFIRMED 2026-09-07, third fix in this function: clicking the
+    # conversation updates an in-page panel rather than navigating (page.url
+    # stays on /direct/inbox/ throughout -- confirmed live), so there's no
+    # navigation event to wait on, and human_delay() alone returned before
+    # the thread's own messages had rendered. Reading the messages at that
+    # point found only stale/empty content and reported "no reply" for a
+    # thread that genuinely had one -- the exact false negative this whole
+    # function exists to avoid. A real settle wait here is what actually
+    # makes the read see the conversation that just opened.
+    page.wait_for_timeout(3_000)
     return True
 
 
 def _newest_message_if_from_lead(page: Page) -> str | None:
     """
     Reads the thread's most recent message and returns its body only if it
-    was NOT sent by us (inferred from alignment -- see
-    _OUTGOING_MESSAGE_WRAPPER_SELECTOR's own caveat above). Returns None if
-    there's no thread or the newest message is ours.
+    was NOT sent by us. LIVE-CONFIRMED 2026-09-07 against a real thread
+    with a genuine incoming reply: outgoing (our own) bubbles render
+    right-aligned with a visibly larger left offset than incoming ones --
+    confirmed via getBoundingClientRect() on both a real outgoing and a
+    real incoming bubble in the same thread (our own: left=762; the
+    lead's reply: left=523, same viewport). A fixed pixel threshold is
+    fragile across viewport widths, so this compares each bubble's left
+    offset against the THREAD's own average instead -- outgoing bubbles
+    sit further right than the thread's own center of mass, incoming ones
+    sit further left, which holds regardless of absolute viewport size.
     """
     messages = page.locator(_THREAD_MESSAGE_SELECTOR)
     count = messages.count()
     if count == 0:
         return None
 
-    newest = messages.nth(count - 1)
-    if newest.locator(_OUTGOING_MESSAGE_WRAPPER_SELECTOR).count() > 0:
+    boxes = []
+    for i in range(count):
+        el = messages.nth(i)
+        text = (el.text_content(timeout=2_000) or "").strip()
+        if not text or text.startswith(_SIDEBAR_PROMPT_TEXT):
+            continue
+        box = el.bounding_box()
+        if box:
+            boxes.append({"index": i, "left": box["x"], "text": text})
+
+    if not boxes:
+        return None
+
+    avg_left = sum(b["left"] for b in boxes) / len(boxes)
+    newest = boxes[-1]
+    is_outgoing = newest["left"] > avg_left
+    if is_outgoing:
         return None  # our own message
 
-    body = newest.locator(_THREAD_MESSAGE_BODY_SELECTOR).first.text_content(timeout=2_000) or ""
-    return body.strip() or None
+    return newest["text"] or None
 
 
 def check_instagram_replies() -> list[dict]:
@@ -124,8 +196,15 @@ def check_instagram_replies() -> list[dict]:
                 repo.update_account(account["id"], {"verified_proxy_ip": new_verified_ip})
                 account["verified_proxy_ip"] = new_verified_ip
             try:
-                found = _open_thread_for_lead(page, business_name)
+                found = _open_thread_for_lead(page, account, business_name)
                 body = _newest_message_if_from_lead(page) if found else None
+            except SessionLoggedOut as exc:
+                # login_status is already persisted "failed" by
+                # _raise_if_logged_out itself -- record this as a real
+                # error, not a silent "no reply" (see _open_thread_for_lead's
+                # own docstring for why that distinction matters).
+                results.append({"lead_id": lead["id"], "replied": False, "error": str(exc)})
+                continue
             finally:
                 sessions.close(account["id"], context)
 
