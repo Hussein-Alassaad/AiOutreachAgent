@@ -152,15 +152,28 @@ def _newest_message_if_from_lead(page: Page) -> str | None:
 
 def check_instagram_replies() -> list[dict]:
     """
-    For every "contacted" lead reached via Instagram, open the owning
-    account's DM inbox and check whether the lead's own most recent message
-    is a reply. Same dedup note as check_linkedin_replies(): once
-    handle_reply_detected() fires, the lead moves off "contacted" and
-    naturally drops out of future runs' candidate list.
+    Checks both "contacted" leads (never replied yet) AND "replied" leads
+    (an ongoing back-and-forth) reached via Instagram, opens the owning
+    account's DM inbox, and records the lead's newest message if it's both
+    from the lead AND genuinely new -- not the same reply already recorded
+    from a previous run.
+
+    Real gap fixed 2026-09-07: this originally only ever checked
+    "contacted" leads, on the assumption that one reply ends the detection
+    cycle for that lead -- true for the FIRST reply (which is what moves a
+    lead onto "replied" in the first place), but wrong for any reply after
+    that: a lead who's already "replied" and sends a second message in the
+    same conversation was invisible to every future run, silently, since
+    "replied" leads were never even looked at again. Now dedup happens by
+    CONTENT (compare the newest message against the most recently recorded
+    reply for this lead, repo.replies_for_lead()'s own ordering) instead of
+    by lead STATUS, so a genuinely new message in an ongoing conversation
+    is caught, while the same already-recorded reply read again on a later
+    run is correctly skipped rather than inserted twice.
     """
     results = []
     leads = [
-        lead for lead in repo.leads_by_status("contacted")
+        lead for lead in repo.leads_by_status("contacted") + repo.leads_by_status("replied")
         if lead.get("platform") == "instagram"
     ]
     if not leads:
@@ -208,7 +221,17 @@ def check_instagram_replies() -> list[dict]:
             finally:
                 sessions.close(account["id"], context)
 
-            replied = body is not None
+            if body is None:
+                results.append({"lead_id": lead["id"], "replied": False})
+                continue
+
+            # Dedup by CONTENT, not by lead status -- see this function's
+            # own docstring for why. replies_for_lead() already orders by
+            # replied_at (see its own repo definition), so [-1] is the most
+            # recently recorded reply, if any.
+            existing = repo.replies_for_lead(lead["id"])
+            already_recorded = bool(existing) and existing[-1].get("body") == body
+            replied = not already_recorded
             if replied:
                 handle_reply_detected(
                     lead["id"],
