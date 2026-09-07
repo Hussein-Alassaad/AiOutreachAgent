@@ -1339,6 +1339,49 @@ def run_reply_send_cycle() -> list[dict]:
     return results
 
 
+def run_reply_detection_poll() -> dict:
+    """
+    Real gap fixed 2026-09-07: check_linkedin_replies()/check_instagram_
+    replies()/check_whatsapp_replies() only ever ran once daily, inside
+    run_full_pipeline_cycle() -- live-confirmed the same night, a reply
+    genuinely sent on Instagram sat completely undetected for hours with
+    nothing to notice it, since nothing re-checked until the next scheduled
+    downstream-pipeline run. This is the fast-poll counterpart, same
+    reasoning and shape as run_reply_send_cycle() above (which already
+    solved the identical problem for DELIVERING a tenant-written reply,
+    not detecting an incoming one) -- see build_daily_schedule()'s
+    IntervalTrigger job for this function's real cadence.
+
+    Deliberately its own function, not folded into run_reply_send_cycle():
+    that function's per-tenant loop already calls repo.replies_pending()
+    (SENDING direction) -- mixing SENDING and DETECTING into one loop body
+    would make one slow/failing channel's detection block another
+    channel's send on the same tick, for no real benefit since they don't
+    share any state.
+    """
+    results: dict[str, dict] = {}
+    for tenant_id in repo.list_active_tenant_ids():
+        with repo.tenant_scope(tenant_id):
+            tenant_result: dict = {}
+            try:
+                tenant_result["whatsapp"] = whatsapp_reply_check.check_whatsapp_replies()
+            except Exception as exc:  # noqa: BLE001 -- e.g. WhatsAppNotConfigured; don't lose the other channels
+                tenant_result["whatsapp"] = {"ok": False, "error": str(exc)}
+                log_error("reply_check", exc, channel="whatsapp")
+            try:
+                tenant_result["linkedin"] = linkedin_reply_check.check_linkedin_replies()
+            except Exception as exc:  # noqa: BLE001 -- e.g. unverified selector mismatch; don't lose the other channels
+                tenant_result["linkedin"] = {"ok": False, "error": str(exc)}
+                log_error("reply_check", exc, channel="linkedin")
+            try:
+                tenant_result["instagram"] = instagram_reply_check.check_instagram_replies()
+            except Exception as exc:  # noqa: BLE001 -- e.g. unverified selector mismatch; don't lose the other channels
+                tenant_result["instagram"] = {"ok": False, "error": str(exc)}
+                log_error("reply_check", exc, channel="instagram")
+            results[tenant_id] = tenant_result
+    return results
+
+
 def _run_reply_send_cycle_for_tenant() -> list[dict]:
     messages = repo.replies_pending()
 
@@ -1468,58 +1511,39 @@ def run_approval_reminder_check() -> dict:
 def run_full_pipeline_cycle() -> dict:
     """
     Runs every downstream step once, in spec order: analysis -> message
-    generation -> sending -> approval-reminder check -> WhatsApp reply
-    check -> LinkedIn reply check -> Instagram reply check -> due follow-up
+    generation -> sending -> approval-reminder check -> due follow-up
     dispatch. This is what build_daily_schedule() schedules once daily (see
     its docstring for why this isn't per-account, unlike discovery).
+
+    Reply checking (WhatsApp/LinkedIn/Instagram) moved OUT of this cycle
+    2026-09-07 onto its own fast poll -- run_reply_detection_poll(), see
+    that function's own docstring for the real gap this fixes (a reply
+    sitting undetected for up to 24h waiting on this once-daily cycle).
+    Follow-up dispatch staying here, on the daily cadence, is still safe
+    despite that split: the fast reply-detection poll runs far more often
+    than this daily dispatch, so by the time dispatch_due_followups() runs,
+    any reply from today has already had many chances to be detected and
+    cancel its own follow-up (reply_detection.handle_reply_detected ->
+    followup.cancel_pending) well before this step would otherwise
+    generate one for someone who already responded.
 
     Ported multi-tenant 2026-08-20: run_analysis_cycle/run_message_generation
     _cycle/run_sending_cycle/run_approval_reminder_check each already loop
     over every active tenant internally (see their own docstrings) -- called
-    plainly here, same as before the port. The reply-check and follow-up
-    steps below do NOT loop internally (whatsapp_reply_check.py,
-    linkedin_reply_check.py, and crm/followup.py are all out of scope for
-    this port -- they only call repo.*, never the DB directly), so this
-    function wraps each of them in its own per-tenant tenant_scope(...) loop
-    instead, with the SAME try/except defensive posture as before (each
-    reply-check step still raises outright rather than returning a per-item
-    result list, so a per-tenant AND overall try/except both stay) plus one
-    more level of isolation so one tenant's reply-check/follow-up failure
-    can't wipe out another tenant's results within the same step.
-
-    Follow-up dispatch runs LAST, after both reply checks -- a lead that
-    replied today must have its follow-up already cancelled (see
-    reply_detection.handle_reply_detected -> followup.cancel_pending)
-    before dispatch_due_followups() would otherwise generate a follow-up
-    for someone who just responded.
+    plainly here, same as before the port. The follow-up dispatch step
+    below does NOT loop internally (crm/followup.py is out of scope for
+    this port -- it only calls repo.*, never the DB directly), so this
+    function wraps it in its own per-tenant tenant_scope(...) loop instead.
     """
     analysis = run_analysis_cycle()
     messages = run_message_generation_cycle()
     sending = run_sending_cycle()
     reminder = run_approval_reminder_check()
 
-    whatsapp_replies: dict[str, dict] = {}
-    linkedin_replies: dict[str, dict] = {}
-    instagram_replies: dict[str, dict] = {}
     followups_dispatched: dict[str, list] = {}
 
     for tenant_id in repo.list_active_tenant_ids():
         with repo.tenant_scope(tenant_id):
-            try:
-                whatsapp_replies[tenant_id] = whatsapp_reply_check.check_whatsapp_replies()
-            except Exception as exc:  # noqa: BLE001 -- e.g. WhatsAppNotConfigured; don't lose the steps above
-                whatsapp_replies[tenant_id] = {"ok": False, "error": str(exc)}
-                log_error("reply_check", exc, channel="whatsapp")
-            try:
-                linkedin_replies[tenant_id] = linkedin_reply_check.check_linkedin_replies()
-            except Exception as exc:  # noqa: BLE001 -- e.g. unverified selector mismatch; don't lose the steps above
-                linkedin_replies[tenant_id] = {"ok": False, "error": str(exc)}
-                log_error("reply_check", exc, channel="linkedin")
-            try:
-                instagram_replies[tenant_id] = instagram_reply_check.check_instagram_replies()
-            except Exception as exc:  # noqa: BLE001 -- e.g. unverified selector mismatch; don't lose the steps above
-                instagram_replies[tenant_id] = {"ok": False, "error": str(exc)}
-                log_error("reply_check", exc, channel="instagram")
             try:
                 followups_dispatched[tenant_id] = followup.dispatch_due_followups()
             except Exception as exc:  # noqa: BLE001 -- don't lose the steps above over one bad batch
@@ -1531,10 +1555,7 @@ def run_full_pipeline_cycle() -> dict:
         "messages": messages,
         "sending": sending,
         "approval_reminder": reminder,
-        "whatsapp_replies": whatsapp_replies,
         "followups_dispatched": followups_dispatched,
-        "linkedin_replies": linkedin_replies,
-        "instagram_replies": instagram_replies,
     }
 
 
@@ -1551,6 +1572,16 @@ _DOWNSTREAM_MINUTE = 0
 # LinkedIn/Instagram with constant inbox-open requests across every tenant
 # with a reply-less-empty queue.
 _REPLY_POLL_INTERVAL_MINUTES = 3
+
+# How often run_reply_detection_poll() re-checks every "contacted"/"replied"
+# lead's real inbox for a new incoming reply -- same real-time-feel
+# reasoning as _REPLY_POLL_INTERVAL_MINUTES above (this is the DETECTING
+# counterpart to that SENDING poll), same interval so a reply and its
+# eventual delivery both surface on a similarly fast cadence, live-fixed
+# 2026-09-07 (see run_reply_detection_poll()'s own docstring for the real
+# gap this closes -- a reply sitting undetected for up to 24h waiting on
+# the old once-daily check).
+_REPLY_DETECTION_POLL_INTERVAL_MINUTES = 3
 
 # How often run_account_health_check_cycle() re-visits each connected
 # LinkedIn/Instagram account -- hours, not minutes, deliberately: this is
@@ -1628,7 +1659,7 @@ def build_daily_schedule() -> BackgroundScheduler:
         run_full_pipeline_cycle,
         trigger=CronTrigger(hour=_DOWNSTREAM_HOUR, minute=_DOWNSTREAM_MINUTE),
         id="downstream-pipeline",
-        name="Daily analysis -> messages -> sending -> reminders -> replies",
+        name="Daily analysis -> messages -> sending -> reminders -> follow-up dispatch",
         replace_existing=True,
     )
 
@@ -1642,6 +1673,18 @@ def build_daily_schedule() -> BackgroundScheduler:
         trigger=IntervalTrigger(minutes=_REPLY_POLL_INTERVAL_MINUTES),
         id="reply-send-poll",
         name="Fast poll: deliver tenant-written replies",
+        replace_existing=True,
+    )
+
+    # Fast poll for DETECTING an incoming reply (the counterpart to the
+    # send-poll above) -- moved off the once-daily downstream-pipeline
+    # cadence 2026-09-07, see run_reply_detection_poll()'s own docstring
+    # for the real gap this closes.
+    scheduler.add_job(
+        run_reply_detection_poll,
+        trigger=IntervalTrigger(minutes=_REPLY_DETECTION_POLL_INTERVAL_MINUTES),
+        id="reply-detection-poll",
+        name="Fast poll: detect incoming WhatsApp/LinkedIn/Instagram replies",
         replace_existing=True,
     )
 
