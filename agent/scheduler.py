@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import datetime as dt
 import random
+import time
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -1257,7 +1258,20 @@ def _run_sending_cycle_for_tenant(limit: int | None) -> list[dict]:
         messages = messages[:limit]
 
     results = []
-    for message in messages:
+    for index, message in enumerate(messages):
+        # Space COLD sends out instead of firing an account's whole daily
+        # allowance in one burst -- see _sleep_between_sends(). Applied here
+        # and deliberately NOT in run_reply_send_cycle(): a reply to someone
+        # who just messaged you is expected to arrive promptly, and delaying
+        # it by up to 25 minutes would make the product feel broken while
+        # protecting nothing (replying inside an existing conversation isn't
+        # the pattern platforms flag -- unsolicited first contact is).
+        #
+        # Placed BEFORE each send except the first, so the cycle starts work
+        # immediately at its scheduled run_time and no gap is wasted after
+        # the final message.
+        if index > 0:
+            _sleep_between_sends()
         channel = message.get("channel")
         try:
             if channel == "instagram":
@@ -1591,6 +1605,39 @@ _REPLY_DETECTION_POLL_INTERVAL_MINUTES = 3
 # worth keeping infrequent for accounts that are, in the overwhelming
 # majority of checks, going to come back genuinely fine.
 _ACCOUNT_HEALTH_CHECK_INTERVAL_HOURS = 4
+
+# Randomized gap between two consecutive COLD sends in one sending cycle.
+#
+# Without this, _run_sending_cycle_for_tenant() sent an account's entire
+# daily allowance back to back -- 10 cold LinkedIn messages inside a few
+# minutes at 08:00, then nothing for 24h. That burst shape is one of the
+# clearest automation signals both platforms watch for; a real person
+# messaging 10 strangers spreads it across the morning. pacing.human_delay()
+# already covers the seconds-scale rhythm WITHIN one send (typing, clicking)
+# -- this is the minutes-scale rhythm BETWEEN sends, which nothing covered.
+#
+# Randomized rather than a fixed gap on purpose: a message every exactly-15
+# minutes is its own detectable fingerprint. With warm-up caps currently at
+# 5-10 messages/day this spreads a real run across roughly 1-3 hours, which
+# is why a long-running job is acceptable here -- see _sleep_between_sends().
+_SEND_GAP_MIN_SECONDS = 8 * 60
+_SEND_GAP_MAX_SECONDS = 25 * 60
+
+
+def _sleep_between_sends() -> float:
+    """
+    Block for a random inter-send gap, returning the seconds actually
+    waited (so callers/tests can assert on real pacing rather than guess).
+
+    Deliberately a plain time.sleep on the scheduler's own worker thread:
+    APScheduler runs each job in its own thread, so a cycle sitting idle
+    here blocks only itself, not the fast reply-send/reply-detection polls
+    that must stay responsive. Making this async or job-splitting instead
+    would buy nothing while adding real complexity.
+    """
+    gap = random.uniform(_SEND_GAP_MIN_SECONDS, _SEND_GAP_MAX_SECONDS)
+    time.sleep(gap)
+    return gap
 
 
 def build_daily_schedule() -> BackgroundScheduler:
