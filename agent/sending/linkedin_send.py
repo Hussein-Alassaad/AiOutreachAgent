@@ -91,6 +91,9 @@ from agent.sending import attachments
 from agent.sending.linkedin_reply_check import (
     _CONVERSATION_LIST_ITEM_SELECTOR,
     LINKEDIN_MESSAGING_URL,
+    LINKEDIN_FEED_URL,
+    SessionLoggedOut,
+    _raise_if_logged_out,
 )
 
 _THREAD_CONTENTEDITABLE_SELECTOR = "div.msg-form__contenteditable[contenteditable=true]"
@@ -155,60 +158,6 @@ class NoMessageButtonAvailable(RuntimeError):
     treat it like whatsapp_send.py's WhatsAppNotConfigured: a normal
     "can't send this way" result, not a crash.
     """
-
-
-class SessionLoggedOut(RuntimeError):
-    """
-    Raised when a saved session (cookies restored from storage_state) is no
-    longer actually authenticated on LinkedIn's side -- live-confirmed
-    2026-09-06: an account the dashboard displayed as "Connected" the whole
-    time silently failed every real send because navigating any real page
-    redirected to LinkedIn's own login/authwall. The account's
-    login_status is already corrected to "failed" by the caller before
-    this is raised, so the dashboard reflects reality on its next read
-    instead of staying stuck on a stale "Connected".
-    """
-
-
-def _raise_if_logged_out(page: Page, account: dict) -> None:
-    """
-    LIVE-CONFIRMED 2026-09-06, two real behaviors, both need checking:
-      1. A PERSON profile URL (linkedin.com/in/...) genuinely redirects to
-         /login, /authwall, or /uas/login when the session is invalid --
-         the original version of this check, and still correct for that
-         case.
-      2. A COMPANY page URL does NOT redirect at all with an empty/invalid
-         session -- LinkedIn renders the public logged-out view at the
-         SAME url instead (confirmed live: page.url stayed exactly
-         ".../company/partners-insurance-consultancy/" with zero cookies
-         loaded). The only real, reliable signal there is the logged-out
-         page's own "Join now"/"Sign in" chrome, which a real authenticated
-         session never shows.
-    Checking both is what actually covers every profile_url shape this
-    module sends to, not just the one that happens to redirect.
-    """
-    url_redirected = "/login" in page.url or "/authwall" in page.url or "/uas/login" in page.url
-    # LIVE-CONFIRMED 2026-09-06: checking immediately after
-    # wait_until="domcontentloaded" (no settle time) reads 0 for a real
-    # logged-out page -- the "Join now" chrome hadn't rendered yet, a false
-    # negative that let a genuinely logged-out session sail through
-    # undetected. wait_for() with a short timeout catches it once rendered
-    # without slowing down the common case (a real authenticated session
-    # never shows this element, so the wait always exhausts silently there
-    # -- unavoidable, bounded, and still far cheaper than misreporting the
-    # account as healthy).
-    try:
-        page.get_by_text("Join now", exact=True).first.wait_for(state="visible", timeout=4_000)
-        logged_out_chrome = True
-    except Exception:  # noqa: BLE001 -- Playwright's TimeoutError means the element never showed, i.e. a real session
-        logged_out_chrome = False
-    if not (url_redirected or logged_out_chrome):
-        return
-    repo.update_account(account["id"], {"login_status": "failed", "login_error": "Session logged out on LinkedIn -- reconnect via the extension."})
-    raise SessionLoggedOut(
-        f"Account {account.get('label') or account['id']} is no longer logged in on LinkedIn "
-        f"(url={page.url!r}, logged_out_chrome={logged_out_chrome})."
-    )
 
 
 class MessageLengthInvalid(RuntimeError):
@@ -502,6 +451,20 @@ def send_reply(message: dict) -> dict:
             if new_verified_ip and not account.get("verified_proxy_ip"):
                 repo.update_account(account["id"], {"verified_proxy_ip": new_verified_ip})
             try:
+                # Real, likely-contributing factor found 2026-09-07: every
+                # send_reply() attempt (both LinkedIn and Instagram) lost
+                # its session specifically at the messaging/inbox
+                # navigation tonight -- send_message()'s very similar code
+                # above never did, and its navigation target is a public
+                # profile/company page, not straight into messaging. See
+                # instagram_send.py's send_reply() for the fuller
+                # reasoning; applied identically here since both platforms
+                # showed the same pattern the same night. NOT yet
+                # live-verified as an actual fix -- every account available
+                # was already degraded by the time this was written.
+                page.goto(LINKEDIN_FEED_URL, timeout=30_000, wait_until="domcontentloaded")
+                _raise_if_logged_out(page, account)
+                human_delay(1.5, 3.5)
                 page.goto(LINKEDIN_MESSAGING_URL, timeout=30_000, wait_until="domcontentloaded")
                 _raise_if_logged_out(page, account)
                 item = page.locator(_CONVERSATION_LIST_ITEM_SELECTOR, has_text=business_name).first

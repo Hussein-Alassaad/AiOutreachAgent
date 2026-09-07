@@ -50,6 +50,7 @@ from agent.messaging import approval
 from agent.sending import attachments
 
 INSTAGRAM_INBOX_URL = "https://www.instagram.com/direct/inbox/"
+_HOME_URL = "https://www.instagram.com/"
 
 # LIVE-CONFIRMED 2026-09-06: the original substring selector
 # ("div[role='button']:has-text('Message')") matched the wrong element --
@@ -235,6 +236,26 @@ def send_reply(message: dict) -> dict:
             if new_verified_ip and not account.get("verified_proxy_ip"):
                 repo.update_account(account["id"], {"verified_proxy_ip": new_verified_ip})
             try:
+                # Real, likely-contributing factor found 2026-09-07: every
+                # send_reply() attempt tonight lost its session specifically
+                # here, at the inbox -- send_cold_message()'s very similar
+                # code (same SessionManager pattern, same account, same
+                # night) never did, and its first navigation is to a public
+                # PROFILE page, not straight into the messaging inbox. A
+                # brand-new browser context whose very first request is
+                # /direct/inbox/ has no browsing history at all before
+                # hitting the platform's highest-risk-for-abuse surface --
+                # not how a real person actually arrives at their DMs (home
+                # feed first, at least a glance, then messages). Landing on
+                # the home feed first and pausing before continuing to the
+                # inbox is a real, structural difference from every attempt
+                # that failed tonight, not a guaranteed fix -- flagged
+                # honestly as NOT yet live-verified, since every account
+                # available was already degraded by the time this was
+                # written.
+                page.goto(_HOME_URL, timeout=30_000, wait_until="domcontentloaded")
+                _raise_if_logged_out(page, account)
+                human_delay(1.5, 3.5)
                 page.goto(INSTAGRAM_INBOX_URL, timeout=30_000, wait_until="domcontentloaded")
                 _raise_if_logged_out(page, account)
                 item = page.locator(CONVERSATION_LIST_ITEM_SELECTOR, has_text=match_text).first

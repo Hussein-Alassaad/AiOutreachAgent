@@ -42,26 +42,40 @@ confidence level.
    sender-name text against the LEAD's business_name specifically, instead
    of inferring identity from whether a link element exists at all.
 
-STILL NOT FULLY VERIFIED: neither test lead has actually replied yet, so
-the true positive path (a real reply detected and correctly attributed) has
-not been exercised end to end -- only the true-negative path (0 messages
-from the lead, correctly reports no reply) has been confirmed live. Watch
-this closely against the first real incoming reply and adjust if the
-sender-name match needs refining (e.g. LinkedIn abbreviating/truncating a
-long business name in the message-group header).
+STILL NOT FULLY VERIFIED as of 2026-08-08: neither test lead had actually
+replied yet at that point, so the true positive path (a real reply
+detected and correctly attributed) had not been exercised end to end.
 
-APPROACH: pull-based, same shape as whatsapp_reply_check.py. For every lead
-currently at "contacted" that we reached via LinkedIn (not WhatsApp -- that
-channel's own checker already covers WhatsApp-contacted leads), open the
-account's own messaging inbox, find that lead's conversation thread by its
-business_name, and check whether the newest message's sender name matches
-the lead (not us) -- if so, that's a reply.
+2026-09-07: ported the same real-conversation-sync rework already
+live-verified on instagram_reply_check.py's identical function (see that
+module's own docstring for the specifics that were confirmed live there,
+against a genuine multi-message conversation with real incoming replies
+and manually-sent outgoing messages both present). The underlying
+mechanics -- content-based dedup, checking "replied" leads too, not just
+"contacted", backfilling manually-sent outgoing messages so Reply Here
+shows the real full conversation -- are IDENTICAL logic between the two
+platforms (see _sync_thread_messages() below, byte-for-byte the same
+approach as Instagram's). What's genuinely different, and still NOT
+live-verified on LinkedIn specifically, is the sender-identification
+mechanism this relies on (_read_thread_messages()'s reliance on LinkedIn's
+own message-group sender labels, carried forward across consecutive
+same-sender messages) -- every account available the night this was
+written was already degraded from unrelated testing, so this hasn't had
+its own real multi-message LinkedIn conversation to confirm against yet.
+Watch this closely against the first real one.
+
+APPROACH: pull-based, same shape as whatsapp_reply_check.py. For every
+lead at "contacted" OR "replied" that we reached via LinkedIn (not
+WhatsApp -- that channel's own checker already covers WhatsApp-contacted
+leads), open the account's own messaging inbox, find that lead's
+conversation thread by its business_name, and read every message in it,
+tagged by sender name.
 
 This is real browser automation, not a public API -- the same
 automation-detection exposure linkedin_send.py itself already carries.
-Nothing here is fired more often than once per shared daily cycle (see
-scheduler.py's run_full_pipeline_cycle), matching every other LinkedIn
-browser action in this codebase.
+Runs on its own fast poll now (scheduler.py's run_reply_detection_poll(),
+~every 3 min), not the old once-daily full-pipeline cadence -- see that
+function's own docstring for why that changed 2026-09-07.
 ============================================================================
 """
 
@@ -77,6 +91,71 @@ from agent.crm.reply_detection import handle_reply_detected
 from agent.db import repositories as repo
 
 LINKEDIN_MESSAGING_URL = "https://www.linkedin.com/messaging/"
+LINKEDIN_FEED_URL = "https://www.linkedin.com/feed/"
+
+
+class SessionLoggedOut(RuntimeError):
+    """
+    Raised when a saved session (cookies restored from storage_state) is no
+    longer actually authenticated on LinkedIn's side -- live-confirmed
+    2026-09-06: an account the dashboard displayed as "Connected" the whole
+    time silently failed every real send because navigating any real page
+    redirected to LinkedIn's own login/authwall. The account's
+    login_status is already corrected to "failed" by the caller before
+    this is raised, so the dashboard reflects reality on its next read
+    instead of staying stuck on a stale "Connected".
+
+    Defined HERE, not in linkedin_send.py, even though the send paths are
+    what originally needed it 2026-09-06 -- linkedin_send.py already
+    imports selectors/URLs from this module (see its own import block), so
+    the reverse import this module would otherwise need to reuse a
+    definition living in linkedin_send.py would be circular. This module
+    has no outgoing dependency on linkedin_send.py, so defining it here and
+    having linkedin_send.py import it instead is the one direction that
+    actually works.
+    """
+
+
+def _raise_if_logged_out(page: Page, account: dict) -> None:
+    """
+    LIVE-CONFIRMED 2026-09-06, two real behaviors, both need checking:
+      1. A PERSON profile URL (linkedin.com/in/...) genuinely redirects to
+         /login, /authwall, or /uas/login when the session is invalid --
+         the original version of this check, and still correct for that
+         case.
+      2. A COMPANY page URL does NOT redirect at all with an empty/invalid
+         session -- LinkedIn renders the public logged-out view at the
+         SAME url instead (confirmed live: page.url stayed exactly
+         ".../company/partners-insurance-consultancy/" with zero cookies
+         loaded). The only real, reliable signal there is the logged-out
+         page's own "Join now"/"Sign in" chrome, which a real authenticated
+         session never shows.
+    Checking both is what actually covers every profile_url shape this
+    module sends to, not just the one that happens to redirect.
+    """
+    url_redirected = "/login" in page.url or "/authwall" in page.url or "/uas/login" in page.url
+    # LIVE-CONFIRMED 2026-09-06: checking immediately after
+    # wait_until="domcontentloaded" (no settle time) reads 0 for a real
+    # logged-out page -- the "Join now" chrome hadn't rendered yet, a false
+    # negative that let a genuinely logged-out session sail through
+    # undetected. wait_for() with a short timeout catches it once rendered
+    # without slowing down the common case (a real authenticated session
+    # never shows this element, so the wait always exhausts silently there
+    # -- unavoidable, bounded, and still far cheaper than misreporting the
+    # account as healthy).
+    try:
+        page.get_by_text("Join now", exact=True).first.wait_for(state="visible", timeout=4_000)
+        logged_out_chrome = True
+    except Exception:  # noqa: BLE001 -- Playwright's TimeoutError means the element never showed, i.e. a real session
+        logged_out_chrome = False
+    if not (url_redirected or logged_out_chrome):
+        return
+    repo.update_account(account["id"], {"login_status": "failed", "login_error": "Session logged out on LinkedIn -- reconnect via the extension."})
+    raise SessionLoggedOut(
+        f"Account {account.get('label') or account['id']} is no longer logged in on LinkedIn "
+        f"(url={page.url!r}, logged_out_chrome={logged_out_chrome})."
+    )
+
 
 # RE-VERIFIED live 2026-08-08 against Hussein's real inbox -- see module
 # docstring for exactly what changed and why.
@@ -101,7 +180,7 @@ def _has_linkedin_sent(lead_id: str) -> bool:
     )
 
 
-def _open_thread_for_lead(page: Page, business_name: str) -> bool:
+def _open_thread_for_lead(page: Page, account: dict, business_name: str) -> bool:
     """
     Finds this lead's conversation in the messaging inbox by matching the
     thread's visible participant-name text against business_name, and opens
@@ -117,12 +196,28 @@ def _open_thread_for_lead(page: Page, business_name: str) -> bool:
     both real leads messaged so far ("Paul Bakery Beirut", "George Gemayel |
     Bakery Consultancy - Aliments Est." both appeared verbatim) -- matching
     on that instead.
+
+    2026-09-07: `account` added (was page-only) so a genuinely logged-out
+    session is detected and persisted -- see linkedin_send.py's
+    _raise_if_logged_out() for the same fix already applied to every
+    LinkedIn send path, same reasoning: silently returning False for a
+    logged-out session reports an identical "no reply" result as a lead
+    that genuinely hasn't replied, a false negative with no visible error.
+    Also lands on the feed first (not straight into messaging) before
+    checking replies -- see instagram_send.py's send_reply() for the fuller
+    reasoning on why a cold session's first-ever request landing directly
+    on a messaging surface is worth avoiding, applied here for the same
+    defense-in-depth reason instagram_reply_check.py's equivalent got it.
     """
+    page.goto(LINKEDIN_FEED_URL, timeout=30_000, wait_until="domcontentloaded")
+    _raise_if_logged_out(page, account)
+    human_delay(1.0, 2.5)
     # Same wait_until="domcontentloaded" fix applied across every other
     # LinkedIn navigation in this codebase 2026-08-03 -- see
     # discovery/linkedin.py's module docstring for the real, reproducible
     # timeouts that "load" caused on LinkedIn's heavy SPA pages.
     page.goto(LINKEDIN_MESSAGING_URL, timeout=30_000, wait_until="domcontentloaded")
+    _raise_if_logged_out(page, account)
     item = page.locator(_CONVERSATION_LIST_ITEM_SELECTOR, has_text=business_name).first
     if item.count() == 0:
         return False
@@ -131,65 +226,76 @@ def _open_thread_for_lead(page: Page, business_name: str) -> bool:
     return True
 
 
-def _newest_message_if_from_lead(page: Page, business_name: str) -> str | None:
+def _read_thread_messages(page: Page, business_name: str) -> list[dict]:
     """
-    Reads the thread's most recent message and returns its body only if its
-    sender name matches the lead's business_name (a reply), not our own
-    account. Returns None if there's no thread or the newest message is
-    ours.
+    Reads EVERY message currently in the open thread, in chronological
+    order, each tagged "lead" or "us" by matching its sender name against
+    business_name. Real gap fixed 2026-09-07, mirroring the identical fix
+    already made to instagram_reply_check.py's equivalent: the original
+    version of this function only ever looked at the SINGLE NEWEST
+    message, so a message sent manually (not through this platform) was
+    invisible on the dashboard, and only the first reply in an ongoing
+    conversation was ever recorded (see check_linkedin_replies()'s own
+    docstring history for that half of the fix).
 
-    RE-VERIFIED 2026-08-08: the module docstring's original assumption --
-    "absence of a sender-link element means this is our own message" -- was
-    backwards. The one real message captured live so far (our own outbound
-    send to Paul Bakery Beirut) DOES carry a
-    span.msg-s-message-group__profile-link with the sender's name
-    ("Hussein Alassaad") -- LinkedIn labels every message group's sender,
-    not just the other party's. Fixed to match the sender name against the
-    lead's business_name specifically, rather than inferring identity from
-    element presence alone. The absolute-timestamp comparison this function
-    used to also require is gone -- see _has_linkedin_sent()'s docstring for
-    why that's no longer available in the real DOM; this now only answers
-    "is the newest message from the lead", which check_linkedin_replies()
-    combines with the replies table to avoid re-flagging the same reply
-    twice (see there).
+    RE-VERIFIED 2026-08-08 (still true): LinkedIn labels every message
+    group's sender, not just the other party's -- confirmed live, our own
+    outbound send DOES carry a real sender name
+    (span.msg-s-message-group__profile-link). NOT yet live-verified,
+    though realistic given LinkedIn's own messaging UI convention:
+    consecutive messages from the SAME sender may share one label instead
+    of repeating it per-message -- handled by carrying forward the last
+    seen sender name to any message with no label of its own, rather than
+    assuming a missing label means something else.
     """
     messages = page.locator(_THREAD_MESSAGE_SELECTOR)
     count = messages.count()
     if count == 0:
-        return None
+        return []
 
-    newest = messages.nth(count - 1)
-    sender = newest.locator(_THREAD_MESSAGE_SENDER_SELECTOR).first
-    if sender.count() == 0:
-        return None
-    sender_name = (sender.text_content(timeout=2_000) or "").strip()
-    if sender_name != business_name:
-        return None
+    results = []
+    last_sender_name: str | None = None
+    for i in range(count):
+        el = messages.nth(i)
+        sender = el.locator(_THREAD_MESSAGE_SENDER_SELECTOR).first
+        if sender.count() > 0:
+            sender_text = (sender.text_content(timeout=2_000) or "").strip()
+            if sender_text:
+                last_sender_name = sender_text
+        if last_sender_name is None:
+            continue  # no sender identified yet for this or any prior message -- skip rather than guess
+        body = (el.locator(_THREAD_MESSAGE_BODY_SELECTOR).first.text_content(timeout=2_000) or "").strip()
+        if not body:
+            continue
+        results.append({"from": "lead" if last_sender_name == business_name else "us", "text": body})
 
-    body = newest.locator(_THREAD_MESSAGE_BODY_SELECTOR).first.text_content(timeout=2_000) or ""
-    return body.strip()
+    return results
 
 
 def check_linkedin_replies() -> list[dict]:
     """
-    For every "contacted" lead reached via LinkedIn, open the owning
-    account's messaging inbox and check whether the lead's own most recent
-    message is a reply (sender name matches the lead, not us). Meant to run
-    on the same cadence as whatsapp_reply_check.check_whatsapp_replies()
-    (see scheduler.run_full_pipeline_cycle).
+    Checks both "contacted" leads (never replied yet) AND "replied" leads
+    (an ongoing back-and-forth) reached via LinkedIn, opens the owning
+    account's messaging inbox, and records whatever's genuinely new on
+    either side of the conversation. Meant to run on the same cadence as
+    whatsapp_reply_check.check_whatsapp_replies() (see
+    scheduler.run_reply_detection_poll()).
 
-    Dedup note: once handle_reply_detected() fires, pipeline.move_stage()
-    moves the lead from "contacted" to "replied" -- this function only ever
-    looks at "contacted" leads, so a lead that already had its reply
-    recorded naturally drops out of future runs' candidate list on its own.
-    No separate "have we already recorded this reply" check is needed here.
+    Real gap fixed 2026-09-07, mirroring the identical fix already made to
+    instagram_reply_check.check_instagram_replies(): this originally only
+    checked "contacted" leads and only the single newest message, so (1) a
+    second reply in an ongoing conversation was invisible once the lead
+    moved to "replied", and (2) a message sent manually from LinkedIn's
+    real site (not through this platform) never appeared anywhere on the
+    dashboard. See _sync_thread_messages()'s own docstring for the
+    content-based dedup/backfill logic shared with Instagram's version.
 
     Returns one result dict per lead actually checked -- leads never
     LinkedIn-messaged, or with no matching thread found, are skipped.
     """
     results = []
     leads = [
-        lead for lead in repo.leads_by_status("contacted")
+        lead for lead in repo.leads_by_status("contacted") + repo.leads_by_status("replied")
         if lead.get("platform") == "linkedin"
     ]
     if not leads:
@@ -239,20 +345,82 @@ def check_linkedin_replies() -> list[dict]:
                 repo.update_account(account["id"], {"verified_proxy_ip": new_verified_ip})
                 account["verified_proxy_ip"] = new_verified_ip
             try:
-                found = _open_thread_for_lead(page, business_name)
-                body = _newest_message_if_from_lead(page, business_name) if found else None
+                found = _open_thread_for_lead(page, account, business_name)
+                live_messages = _read_thread_messages(page, business_name) if found else []
+            except SessionLoggedOut as exc:
+                # login_status is already persisted "failed" by
+                # _raise_if_logged_out itself -- record this as a real
+                # error, not a silent "no reply" (see _open_thread_for_lead's
+                # own docstring for why that distinction matters).
+                results.append({"lead_id": lead["id"], "replied": False, "error": str(exc)})
+                continue
             finally:
                 sessions.close(account["id"], context)
 
-            replied = body is not None
-            if replied:
-                handle_reply_detected(
-                    lead["id"],
-                    channel="linkedin",
-                    body=body,
-                    replied_at=dt.datetime.now(dt.timezone.utc),
-                    account_id=account["id"],
-                )
-            results.append({"lead_id": lead["id"], "replied": replied})
+            if not live_messages:
+                results.append({"lead_id": lead["id"], "replied": False})
+                continue
+
+            new_replies, new_outgoing = _sync_thread_messages(lead, account, live_messages)
+            results.append({
+                "lead_id": lead["id"],
+                "replied": new_replies > 0,
+                "new_replies": new_replies,
+                "new_outgoing_backfilled": new_outgoing,
+            })
 
     return results
+
+
+def _sync_thread_messages(lead: dict, account: dict, live_messages: list[dict]) -> tuple[int, int]:
+    """
+    Identical logic to instagram_reply_check.py's _sync_thread_messages()
+    -- see that function's own docstring for the full reasoning. Dedup by
+    CONTENT within each direction (no stable per-message id available from
+    either platform's DOM), so a body already known on the matching side is
+    treated as already-recorded; a genuinely new message on either side
+    gets backfilled into the correct table.
+
+    Returns (new_replies_recorded, new_outgoing_backfilled).
+    """
+    known_incoming = {r.get("body") for r in repo.replies_for_lead(lead["id"])}
+    known_outgoing = {
+        m.get("edited_body") or m.get("body")
+        for m in repo.messages_for_lead(lead["id"])
+        if m.get("channel") == "linkedin"
+    }
+
+    new_replies = 0
+    new_outgoing = 0
+    for msg in live_messages:
+        text = msg["text"]
+        if msg["from"] == "lead":
+            if text in known_incoming:
+                continue
+            handle_reply_detected(
+                lead["id"],
+                channel="linkedin",
+                body=text,
+                replied_at=dt.datetime.now(dt.timezone.utc),
+                account_id=account["id"],
+            )
+            known_incoming.add(text)
+            new_replies += 1
+        else:
+            if text in known_outgoing:
+                continue
+            now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
+            repo.insert_message({
+                "lead_id": lead["id"],
+                "channel": "linkedin",
+                "body": text,
+                "approval_status": "approved",
+                "approved_at": now_iso,
+                "send_status": "sent",
+                "sent_at": now_iso,
+                "sent_via_account": account["id"],
+            })
+            known_outgoing.add(text)
+            new_outgoing += 1
+
+    return new_replies, new_outgoing

@@ -39,6 +39,7 @@ from agent.sending.instagram_send import (
     CONVERSATION_LIST_ITEM_SELECTOR,
     _raise_if_logged_out,
     SessionLoggedOut,
+    _HOME_URL,
 )
 
 # LIVE-CONFIRMED 2026-09-07: the original div[role='row'] selector matched
@@ -92,7 +93,18 @@ def _open_thread_for_lead(page: Page, account: dict, business_name: str) -> bool
     exists and renders moments later -- same timing race found and fixed
     in every other Instagram/LinkedIn selector tonight. wait_for() catches
     it once actually rendered.
+
+    Third fix, same night: landing on the home feed first (not straight
+    into the inbox) before checking replies, matching the same warm-up
+    added to instagram_send.py's send_reply() -- see that function's own
+    comment for the reasoning. This read-only check itself never actually
+    lost a session tonight (only the SEND path did), but applying the same
+    more-human navigation pattern here too is cheap defense-in-depth, not
+    a reaction to a failure specific to this function.
     """
+    page.goto(_HOME_URL, timeout=30_000, wait_until="domcontentloaded")
+    _raise_if_logged_out(page, account)
+    human_delay(1.0, 2.5)
     page.goto(INSTAGRAM_INBOX_URL, timeout=30_000, wait_until="domcontentloaded")
     _raise_if_logged_out(page, account)
     item = page.locator(CONVERSATION_LIST_ITEM_SELECTOR, has_text=business_name).first
