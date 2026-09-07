@@ -97,6 +97,23 @@ HEADLESS = _get("HEADLESS", "true").lower() == "true"
 # setting. Leave empty in production so the dashboard limits apply.
 DEV_MAX_LEADS_PER_ACCOUNT = _get("DEV_MAX_LEADS_PER_ACCOUNT")
 
+# Where each account's saved login session lives (see core/session.py).
+# Defaults to the in-repo agent/browser_profiles/ directory.
+#
+# MUST be set explicitly wherever more than one process drives these sessions.
+# Root cause of a real, long-running production bug (diagnosed 2026-09-07):
+# the scheduler runs in Docker with agent/browser_profiles/ backed by the
+# nexaris-browser-profiles volume, while the control service (which is what
+# "send from the platform" actually calls) runs on the HOST from a checkout
+# of the same repo -- so the identical hardcoded relative path resolved to
+# two completely different directories. The extension's reconnects landed in
+# the volume; the control service kept reading its own stale host copy, whose
+# files had no auth cookie at all. Every platform-triggered send therefore
+# failed with "SessionLoggedOut ... logged_out_chrome=False" (the page was
+# just bounced to /login) no matter how many times the account was
+# reconnected, on every tenant and both channels.
+BROWSER_PROFILES_DIR = _get("BROWSER_PROFILES_DIR")
+
 
 def missing_required(keys: list[str]) -> list[str]:
     """

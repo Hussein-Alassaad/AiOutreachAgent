@@ -15,7 +15,10 @@ for 3 separate browser processes.
 
 from __future__ import annotations
 
+import contextlib
+import json
 import pathlib
+import time
 from typing import Any
 
 from playwright.sync_api import Browser, BrowserContext, Playwright, sync_playwright
@@ -26,7 +29,11 @@ from agent.db.crypto import decrypt_secret
 # Where each account's persistent login state (cookies, local storage) is saved
 # between runs. Gitignored since Phase 0 -- this is real session data, equivalent
 # to being logged into the account.
-STORAGE_DIR = pathlib.Path(__file__).parent.parent / "browser_profiles"
+STORAGE_DIR = (
+    pathlib.Path(config.BROWSER_PROFILES_DIR)
+    if config.BROWSER_PROFILES_DIR
+    else pathlib.Path(__file__).parent.parent / "browser_profiles"
+)
 
 # Shared by every code path that needs to drive a real LinkedIn/Instagram login
 # page directly (scripts/manual_login.py's local CLI flow, live_login/session.py's
@@ -116,6 +123,103 @@ def _storage_path(account_id: str) -> pathlib.Path:
     return STORAGE_DIR / f"{account_id}.json"
 
 
+def _lock_path(account_id: str) -> pathlib.Path:
+    return STORAGE_DIR / f"{account_id}.lock"
+
+
+# How long to wait for another process to finish with an account before giving
+# up. A real send (navigate, open composer, human-paced typing, send) runs
+# 30-60s; a reply-detection sweep over several threads can run longer still.
+_SESSION_LOCK_TIMEOUT_SECONDS = 240
+
+
+class SessionBusy(RuntimeError):
+    """
+    Raised when another process still holds this account's session lock after
+    _SESSION_LOCK_TIMEOUT_SECONDS. Callers should treat it the same way they
+    treat any other "couldn't send right now" error: leave the message pending
+    and let the next cycle retry it, NOT mark it failed.
+    """
+
+
+@contextlib.contextmanager
+def _account_session_lock(account_id: str):
+    """
+    Serialize every browser context for one account across ALL processes.
+
+    ROOT CAUSE this fixes, live-diagnosed 2026-09-07: open() restores cookies
+    from browser_profiles/<account>.json and close() overwrites that same file
+    with whatever the finishing context happens to hold -- with no lock and no
+    validity check. The scheduler's reply-detection poll (~every 3 min) and a
+    dashboard-triggered send run in SEPARATE processes (the APScheduler
+    container and the control server), so they routinely opened the same
+    account concurrently. Both restored the same good session; whichever
+    closed LAST overwrote the file. When that last context had been bounced to
+    a login/redirect page, it wrote back a cookie-less state over the good one
+    -- and the NEXT open() restored that, landed on /login, and reported
+    "SessionLoggedOut ... logged_out_chrome=False". Nothing was ever actually
+    logged out on LinkedIn's side; the local session file had been clobbered.
+    That's exactly why manual one-off tests always passed (nothing else
+    running) while "send from the platform" failed repeatedly.
+
+    Uses fcntl.flock, which is advisory but genuinely cross-process, and is
+    released automatically by the OS if a holder crashes -- important here,
+    since a stale lock file left behind by a killed container must not block
+    the account forever. Degrades to a no-op on Windows (no fcntl), which only
+    affects local dev; the droplet, where the concurrency actually happens,
+    runs Linux.
+    """
+    try:
+        import fcntl
+    except ImportError:  # pragma: no cover -- Windows dev machines only
+        yield
+        return
+
+    STORAGE_DIR.mkdir(exist_ok=True)
+    lock_file = open(_lock_path(account_id), "a+")
+    try:
+        deadline = time.monotonic() + _SESSION_LOCK_TIMEOUT_SECONDS
+        while True:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise SessionBusy(
+                        f"Account {account_id}'s browser session is still in use by another "
+                        f"run after {_SESSION_LOCK_TIMEOUT_SECONDS}s; try again on the next cycle."
+                    )
+                time.sleep(0.5)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    finally:
+        lock_file.close()
+
+
+def _has_auth_cookies(state: dict, platform: str | None) -> bool:
+    """
+    True if this storage state carries the cookie that actually represents a
+    logged-in session -- li_at for LinkedIn, sessionid for Instagram. Both are
+    the real session cookies those sites set at login and clear at logout.
+
+    Used to refuse to persist a logged-out context over a good saved session
+    (see close()). Deliberately checks for the specific auth cookie rather
+    than "are there any cookies at all": a logged-out LinkedIn page still sets
+    plenty of anonymous tracking cookies, so a non-empty cookie jar is not by
+    itself evidence of a live session.
+    """
+    names = {c.get("name") for c in state.get("cookies", [])}
+    if platform == "instagram":
+        return "sessionid" in names
+    if platform == "linkedin":
+        return "li_at" in names
+    # Unknown/unspecified platform: accept either, so this never silently
+    # discards a good session for a channel added later.
+    return bool(names & {"li_at", "sessionid"})
+
+
 # Resource types Playwright's own classification never needs to actually
 # download for this agent's purposes -- every DOM element, selector, and
 # text field it reads still loads normally; only the visual asset bytes
@@ -149,6 +253,8 @@ class SessionManager:
     def __init__(self) -> None:
         self._playwright: Playwright | None = None
         self._browser: Browser | None = None
+        # account_id -> the held session lock, released by close().
+        self._locks: dict[str, Any] = {}
 
     def __enter__(self) -> "SessionManager":
         self._playwright = sync_playwright().start()
@@ -173,6 +279,10 @@ class SessionManager:
         return self
 
     def __exit__(self, *exc_info: Any) -> None:
+        # Safety net for any context that raised before its close() -- a lock
+        # left held would block every later run on that account.
+        for account_id in list(self._locks):
+            self._release_lock(account_id)
         if self._browser:
             self._browser.close()
         if self._playwright:
@@ -212,6 +322,13 @@ class SessionManager:
         STORAGE_DIR.mkdir(exist_ok=True)
         storage_path = _storage_path(account["id"])
 
+        # Held until close() releases it, so no other process can restore or
+        # overwrite this account's session file while this context is alive.
+        # See _account_session_lock's docstring for the real bug this fixes.
+        lock = _account_session_lock(account["id"])
+        lock.__enter__()
+        self._locks[account["id"]] = lock
+
         context = self._browser.new_context(
             proxy=build_proxy_config(account),
             storage_state=str(storage_path) if storage_path.exists() else None,
@@ -249,10 +366,19 @@ class SessionManager:
             try:
                 verified_ip = verify_proxy_ip(account, page)
             except ProxyIpMismatch:
+                # This path never reaches close(), so release the lock here or
+                # it would stay held until the process exits and block every
+                # later run on this account.
                 context.close()
+                self._release_lock(account["id"])
                 raise
 
         return context, page, verified_ip
+
+    def _release_lock(self, account_id: str) -> None:
+        lock = self._locks.pop(account_id, None)
+        if lock is not None:
+            lock.__exit__(None, None, None)
 
     def open_or_login(self, account: dict) -> tuple[BrowserContext, "Page", str | None, str | None]:  # noqa: F821
         """
@@ -303,7 +429,7 @@ class SessionManager:
         except LoginFailed as exc:
             return context, page, str(exc), new_baseline_ip
 
-    def close(self, account_id: str, context: BrowserContext) -> None:
+    def close(self, account_id: str, context: BrowserContext, platform: str | None = None) -> None:
         """
         Save this account's cookies/storage back to its own file before closing,
         so the next run picks up an already-logged-in session rather than
@@ -311,8 +437,24 @@ class SessionManager:
         signal platforms watch for.
         """
         STORAGE_DIR.mkdir(exist_ok=True)
-        context.storage_state(path=str(_storage_path(account_id)))
-        context.close()
+        storage_path = _storage_path(account_id)
+        try:
+            state = context.storage_state()
+            # Second half of the 2026-09-07 clobbering fix (see
+            # _account_session_lock's docstring for the full root cause): only
+            # persist a state that still carries a real auth cookie. A context
+            # that got bounced to a login page, hit an interstitial, or was
+            # closed mid-navigation ends with the auth cookie gone -- writing
+            # that over a known-good file is what turned one bad navigation
+            # into a permanently "logged out" account needing a manual
+            # extension reconnect. Keeping the previous file instead is always
+            # the safer choice: at worst it is stale and the next run
+            # legitimately re-detects a real logout.
+            if _has_auth_cookies(state, platform) or not storage_path.exists():
+                storage_path.write_text(json.dumps(state), encoding="utf-8")
+        finally:
+            context.close()
+            self._release_lock(account_id)
 
 
 class LoginFailed(RuntimeError):
