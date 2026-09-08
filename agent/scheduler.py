@@ -648,10 +648,16 @@ def _discover_linkedin(account: dict, page, niche: str, location: str, industry:
     results = results[:limit]
     counts["linkedin_found"] = len(results)
 
-    for result in results:
+    for profile_index, result in enumerate(results):
         profile_url = result.get("profile_url")
         if not profile_url:
             continue
+        # Pace profile visits apart -- see _sleep_between_profile_visits().
+        # Before the FIRST visit is skipped deliberately: the search-widening
+        # loop above has already paused 15-30s of its own, so the run doesn't
+        # need a third wait before any real work starts.
+        if profile_index > 0:
+            _sleep_between_profile_visits()
         try:
             # extract_company_profile() reads the /about subpage specifically
             # (not the bare company page) -- see that function's docstring
@@ -777,7 +783,12 @@ def _discover_instagram(account: dict, page, niche: str, counts: dict) -> None:
     posts = posts[:limit]
     counts["instagram_found"] = len(posts)
 
-    for post in posts:
+    for post_index, post in enumerate(posts):
+        # Same profile-visit pacing as the LinkedIn loop above -- each
+        # iteration here navigates to a post AND then to that poster's
+        # profile, so an unpaced loop is two rapid page loads per lead.
+        if post_index > 0:
+            _sleep_between_profile_visits()
         try:
             profile_url = instagram.resolve_post_to_profile_url(page, post["post_url"])
             if not profile_url:
@@ -1707,6 +1718,46 @@ _SEND_GAP_MAX_SECONDS = 25 * 60
 # for the SAME account shouldn't fire at the identical instant.
 _SENDING_OFFSET_MINUTES = 20
 
+# Randomized jitter applied to every per-account discovery and sending job's
+# scheduled time, re-drawn each time build_daily_schedule() runs.
+#
+# Without it every account fires at a fixed wall-clock minute (Zimmar 08:00
+# discovery / 08:20 sending) every single day, indefinitely -- a real person
+# does not start prospecting at exactly 08:00:00 daily for months. The
+# per-account staggering added earlier removed the "every tenant at once"
+# fingerprint; this removes the "same minute forever" one that remained.
+#
+# Applied at SCHEDULE-BUILD time, not per-run: APScheduler's CronTrigger
+# fires on a fixed expression, so the jitter is baked into each job's cron
+# minute when the schedule is constructed. The scheduler process restarting
+# (deploy, reboot, crash-restart) re-draws it, which is the intended
+# behaviour -- it re-randomizes without needing a moving trigger.
+_RUN_TIME_JITTER_MINUTES = 15
+
+
+# Randomized pause between two consecutive PROFILE visits during discovery.
+#
+# Real gap found 2026-09-08: the widening-search loop above already paused
+# 15-30s between search queries (added after LinkedIn force-logged-out a
+# real account over back-to-back searches -- see its own comment), but the
+# per-profile loops that follow it visited every result's /about/ and
+# /posts/ pages (LinkedIn) or post -> profile (Instagram) with no delay at
+# all. Rapidly viewing many profiles in sequence is the classic scraping
+# fingerprint on both platforms -- arguably watched more closely than
+# messaging, since that IS what scrapers do. Same reasoning and shape as
+# _sleep_between_sends() below, shorter because browsing several profiles
+# in a few minutes is normal human behaviour, whereas sending several cold
+# messages that fast is not.
+_PROFILE_VISIT_GAP_MIN_SECONDS = 20
+_PROFILE_VISIT_GAP_MAX_SECONDS = 75
+
+
+def _sleep_between_profile_visits() -> float:
+    """Block for a random gap between discovery profile visits; returns seconds waited."""
+    gap = random.uniform(_PROFILE_VISIT_GAP_MIN_SECONDS, _PROFILE_VISIT_GAP_MAX_SECONDS)
+    time.sleep(gap)
+    return gap
+
 
 def _sleep_between_sends() -> float:
     """
@@ -1766,7 +1817,13 @@ def build_daily_schedule() -> BackgroundScheduler:
         for account in pool.load_accounts(tenant_id):
             if account.get("status") != "active":
                 continue
-            hour, minute = (int(p) for p in account["run_time"].split(":")[:2])
+            configured_hour, configured_minute = (int(p) for p in account["run_time"].split(":")[:2])
+            # Jitter the configured run_time so this account doesn't fire at
+            # the identical wall-clock minute every day -- see
+            # _RUN_TIME_JITTER_MINUTES. Drawn per account, so two accounts
+            # sharing a run_time still land on different minutes.
+            jitter = random.randint(-_RUN_TIME_JITTER_MINUTES, _RUN_TIME_JITTER_MINUTES)
+            hour, minute = divmod((configured_hour * 60 + configured_minute + jitter) % (24 * 60), 60)
 
             def _run_discovery_for_this_account(tenant_id: str = tenant_id, account_id: str = account["id"]) -> None:
                 # Runs the FULL tenant-wide discovery cycle (run_discovery_cycle
