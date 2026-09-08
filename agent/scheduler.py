@@ -1247,13 +1247,30 @@ def run_sending_cycle(limit: int | None = None) -> list[dict]:
     return results
 
 
-def _run_sending_cycle_for_tenant(limit: int | None) -> list[dict]:
+def _run_sending_cycle_for_tenant(limit: int | None, account_id: str | None = None) -> list[dict]:
     # Reply-tagged messages (is_reply=True, from "Reply Here") are
     # deliberately excluded here -- run_reply_send_cycle() below picks them
     # up on its own fast ~2-3 min poll instead of waiting for this cycle's
     # normal once-daily cadence, so a reply feels close to real-time. This
     # cycle only ever sees fresh cold-outreach messages.
     messages = [m for m in repo.messages_approved_pending() if not m.get("is_reply")]
+
+    # LIVE-REASONED 2026-09-08: account_id narrows this to ONE account's own
+    # messages, so build_daily_schedule() can run each account's cold sends
+    # at that account's own configured run_time instead of every tenant's
+    # entire message queue firing at one shared clock time (see this
+    # function's call sites for the real incident this fixes -- every
+    # client's LinkedIn/Instagram sends going out at the exact same minute,
+    # every day, forever, which is a stronger automation fingerprint than
+    # any single account's own send pattern). messages_approved_pending()
+    # doesn't expose account_id directly (it joins leads only for the
+    # do_not_contact check, see that function's own docstring), so this
+    # resolves it per-message via the lead -- one extra repo.get_lead() per
+    # candidate message, on an already-small per-account queue (today's
+    # daily limits are 5-15), not a real cost.
+    if account_id is not None:
+        messages = [m for m in messages if (repo.get_lead(m["lead_id"]) or {}).get("account_id") == account_id]
+
     if limit is not None:
         messages = messages[:limit]
 
@@ -1522,12 +1539,76 @@ def run_approval_reminder_check() -> dict:
     return results
 
 
+def run_account_sending_cycle(tenant_id: str, account_id: str, limit: int | None = None) -> list[dict]:
+    """
+    Cold-outreach sending for ONE account, scoped to messages whose lead
+    belongs to it -- the per-account counterpart to run_sending_cycle()
+    below, meant to be scheduled at THIS account's own run_time rather than
+    one shared clock time for every tenant.
+
+    Real incident this fixes, live-reasoned 2026-09-08: build_daily_schedule
+    originally called run_sending_cycle() (no account scoping) from ONE
+    fixed daily job (_DOWNSTREAM_HOUR/_DOWNSTREAM_MINUTE, 20:00 for every
+    tenant) -- so every client's entire day of LinkedIn/Instagram cold
+    sends went out at the exact same clock minute, every single day,
+    indefinitely. That's a stronger, more mechanical automation fingerprint
+    than any single account's own send pattern: the whole point of staggering
+    each account's run_time earlier in this session (see AccountHealthClient
+    settings) was undone downstream by sending still happening on one shared
+    schedule. This function is what build_daily_schedule() now schedules
+    once per account instead, right after that account's own discovery run,
+    so a given account's cold sends happen in its own morning window and
+    never at the same minute another tenant's account sends.
+
+    Still respects the tenant-level pause: a paused tenant's per-account
+    sending jobs are no-ops, same as run_sending_cycle()'s own check.
+    """
+    with repo.tenant_scope(tenant_id):
+        if repo.is_tenant_paused():
+            return []
+        run = repo.start_stage_run(tenant_id, "sending")
+        try:
+            results = _run_sending_cycle_for_tenant(limit, account_id=account_id)
+            sent_count = sum(1 for r in results if r.get("ok"))
+            repo.finish_run(
+                tenant_id, run["id"], leads_found=0, messages_sent=sent_count,
+                status="completed", finished_at_iso=dt.datetime.now(dt.timezone.utc).isoformat(),
+                notes=f"{sent_count}/{len(results)} messages sent." if results else "No approved messages pending.",
+            )
+            return results
+        except Exception as exc:  # noqa: BLE001 -- one bad account must not stop this tenant's other accounts
+            repo.finish_run(
+                tenant_id, run["id"], leads_found=0, messages_sent=0,
+                status="error", finished_at_iso=dt.datetime.now(dt.timezone.utc).isoformat(),
+                notes=str(exc),
+            )
+            try:
+                repo.insert_error({
+                    "stage": "sending", "error_message": str(exc), "is_expected": False, "account_id": account_id,
+                }, tenant_id=tenant_id)
+            except Exception:  # noqa: BLE001 -- logging itself must never crash the pipeline
+                pass
+            return []
+
+
 def run_full_pipeline_cycle() -> dict:
     """
-    Runs every downstream step once, in spec order: analysis -> message
-    generation -> sending -> approval-reminder check -> due follow-up
-    dispatch. This is what build_daily_schedule() schedules once daily (see
-    its docstring for why this isn't per-account, unlike discovery).
+    Runs the shared (not per-account) downstream steps once daily, in spec
+    order: analysis -> message generation -> approval-reminder check -> due
+    follow-up dispatch. This is what build_daily_schedule() schedules once
+    daily (see its docstring for why this isn't per-account, unlike
+    discovery and, as of 2026-09-08, sending).
+
+    Cold-outreach SENDING moved OUT of this cycle 2026-09-08 onto
+    run_account_sending_cycle(), scheduled per-account at that account's
+    own run_time -- see that function's docstring for the real incident
+    this fixes (every tenant's sends firing at one shared clock time).
+    Analysis and message-generation stay here: neither ever touches
+    LinkedIn/Instagram/Instagram directly (they read/score leads and call
+    Claude to draft text), so they carry none of the automation-fingerprint
+    risk that motivated splitting sending out -- there's no safety reason to
+    scatter them across every account's own schedule too, only added
+    complexity.
 
     Reply checking (WhatsApp/LinkedIn/Instagram) moved OUT of this cycle
     2026-09-07 onto its own fast poll -- run_reply_detection_poll(), see
@@ -1542,16 +1623,15 @@ def run_full_pipeline_cycle() -> dict:
     generate one for someone who already responded.
 
     Ported multi-tenant 2026-08-20: run_analysis_cycle/run_message_generation
-    _cycle/run_sending_cycle/run_approval_reminder_check each already loop
-    over every active tenant internally (see their own docstrings) -- called
-    plainly here, same as before the port. The follow-up dispatch step
-    below does NOT loop internally (crm/followup.py is out of scope for
-    this port -- it only calls repo.*, never the DB directly), so this
-    function wraps it in its own per-tenant tenant_scope(...) loop instead.
+    _cycle/run_approval_reminder_check each already loop over every active
+    tenant internally (see their own docstrings) -- called plainly here,
+    same as before the port. The follow-up dispatch step below does NOT loop
+    internally (crm/followup.py is out of scope for this port -- it only
+    calls repo.*, never the DB directly), so this function wraps it in its
+    own per-tenant tenant_scope(...) loop instead.
     """
     analysis = run_analysis_cycle()
     messages = run_message_generation_cycle()
-    sending = run_sending_cycle()
     reminder = run_approval_reminder_check()
 
     followups_dispatched: dict[str, list] = {}
@@ -1567,7 +1647,6 @@ def run_full_pipeline_cycle() -> dict:
     return {
         "analysis": analysis,
         "messages": messages,
-        "sending": sending,
         "approval_reminder": reminder,
         "followups_dispatched": followups_dispatched,
     }
@@ -1622,6 +1701,11 @@ _ACCOUNT_HEALTH_CHECK_INTERVAL_HOURS = 4
 # is why a long-running job is acceptable here -- see _sleep_between_sends().
 _SEND_GAP_MIN_SECONDS = 8 * 60
 _SEND_GAP_MAX_SECONDS = 25 * 60
+
+# How long after an account's own discovery run_time its cold-sending job
+# fires -- see build_daily_schedule()'s own comment for why these two jobs
+# for the SAME account shouldn't fire at the identical instant.
+_SENDING_OFFSET_MINUTES = 20
 
 
 def _sleep_between_sends() -> float:
@@ -1702,11 +1786,49 @@ def build_daily_schedule() -> BackgroundScheduler:
                 replace_existing=True,
             )
 
+            # LinkedIn/Instagram cold sending, moved here 2026-09-08 from a
+            # single shared job so each account sends during its OWN
+            # configured window instead of every tenant's account firing at
+            # one identical clock time -- see run_account_sending_cycle()'s
+            # own docstring for the real incident this fixes. Email is
+            # unaffected: it's sent entirely by the Next.js/Resend pipeline
+            # (see sendIfEmailChannel), never by this Python agent, so
+            # scoping this job to platform in (linkedin, instagram) below
+            # only prevents wasted work, not a real bug -- non-email
+            # accounts are simply the only ones with anything for this
+            # cycle to find.
+            #
+            # Offset _SENDING_OFFSET_MINUTES after discovery's own hour:minute,
+            # not the identical instant -- both jobs open a real browser
+            # session for the SAME account, and firing them at literally the
+            # same trigger time would make them race for
+            # core/session.py's per-account lock (added earlier this session)
+            # for no benefit, since sending has nothing to do until discovery
+            # for that account has already run at least once on a prior day
+            # anyway (message generation only happens on the shared 8pm
+            # cycle, not same-morning). Letting discovery go first and
+            # finish cleanly is simpler than relying on the lock to sort out
+            # a race that doesn't need to happen.
+            if account.get("platform") in ("linkedin", "instagram"):
+                send_minute_total = hour * 60 + minute + _SENDING_OFFSET_MINUTES
+                send_hour, send_minute = divmod(send_minute_total % (24 * 60), 60)
+
+                def _run_sending_for_this_account(tenant_id: str = tenant_id, account_id: str = account["id"]) -> None:
+                    run_account_sending_cycle(tenant_id, account_id)
+
+                scheduler.add_job(
+                    _run_sending_for_this_account,
+                    trigger=CronTrigger(hour=send_hour, minute=send_minute, timezone=tenant_tz),
+                    id=f"sending-{tenant_id}-{account['id']}",
+                    name=f"Daily cold-outreach sending: tenant {tenant_id} / {account['label']}",
+                    replace_existing=True,
+                )
+
     scheduler.add_job(
         run_full_pipeline_cycle,
         trigger=CronTrigger(hour=_DOWNSTREAM_HOUR, minute=_DOWNSTREAM_MINUTE),
         id="downstream-pipeline",
-        name="Daily analysis -> messages -> sending -> reminders -> follow-up dispatch",
+        name="Daily analysis -> messages -> reminders -> follow-up dispatch",
         replace_existing=True,
     )
 
