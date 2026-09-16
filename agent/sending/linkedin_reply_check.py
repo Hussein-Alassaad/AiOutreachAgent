@@ -380,6 +380,33 @@ def check_linkedin_replies() -> list[dict]:
     return results
 
 
+def _normalized_for_dedup(text: str) -> str:
+    """
+    Collapses all whitespace runs (spaces, tabs, and critically newlines)
+    into nothing, so two renderings of the SAME message compare equal
+    regardless of how paragraph breaks happen to survive.
+
+    REAL BUG FOUND AND FIXED 2026-09-15: this dedup previously compared
+    raw strings directly. Our own DB stores a message's body WITH its real
+    paragraph breaks ("Hi TEAMWORK ENERGY,\\n\\nQuick reality check...");
+    LinkedIn's own DOM, read fresh by _read_thread_messages() on every
+    3-minute reply-detection poll, rendered the identical real message
+    back as one flat run with no line breaks at all ("Hi TEAMWORK
+    ENERGY,Quick reality check..."). Those two strings never matched, so
+    EVERY poll treated the one real, already-sent message as brand new and
+    inserted a fresh duplicate row -- LIVE-CONFIRMED against 5 real leads
+    (TEAMWORK ENERGY, Retail Inc., AMB Retail Group, FRC, FOOD RETAIL SAL),
+    each showing a second "sent" message with approved_by=None and
+    created_at==approved_at==sent_at to the millisecond, timed to a real
+    reply-detection-poll run. No second message was ever actually
+    delivered to the lead -- LinkedIn's own thread only ever held the one
+    real send; this was purely a phantom duplicate DATABASE row describing
+    it a second time, which the dashboard then rendered as if two
+    real sends had happened.
+    """
+    return "".join(text.split())
+
+
 def _sync_thread_messages(lead: dict, account: dict, live_messages: list[dict]) -> tuple[int, int]:
     """
     Identical logic to instagram_reply_check.py's _sync_thread_messages()
@@ -389,11 +416,18 @@ def _sync_thread_messages(lead: dict, account: dict, live_messages: list[dict]) 
     treated as already-recorded; a genuinely new message on either side
     gets backfilled into the correct table.
 
+    Compares NORMALIZED text (see _normalized_for_dedup's own comment for
+    the real duplicate-row bug this closes) -- whitespace/newline
+    differences between our stored body and LinkedIn's own DOM rendering
+    of the same message must never be read as "this is a new message".
+
     Returns (new_replies_recorded, new_outgoing_backfilled).
     """
-    known_incoming = {r.get("body") for r in repo.replies_for_lead(lead["id"])}
+    known_incoming = {
+        _normalized_for_dedup(r.get("body") or "") for r in repo.replies_for_lead(lead["id"])
+    }
     known_outgoing = {
-        m.get("edited_body") or m.get("body")
+        _normalized_for_dedup(m.get("edited_body") or m.get("body") or "")
         for m in repo.messages_for_lead(lead["id"])
         if m.get("channel") == "linkedin"
     }
@@ -402,8 +436,9 @@ def _sync_thread_messages(lead: dict, account: dict, live_messages: list[dict]) 
     new_outgoing = 0
     for msg in live_messages:
         text = msg["text"]
+        normalized = _normalized_for_dedup(text)
         if msg["from"] == "lead":
-            if text in known_incoming:
+            if normalized in known_incoming:
                 continue
             handle_reply_detected(
                 lead["id"],
@@ -412,10 +447,10 @@ def _sync_thread_messages(lead: dict, account: dict, live_messages: list[dict]) 
                 replied_at=dt.datetime.now(dt.timezone.utc),
                 account_id=account["id"],
             )
-            known_incoming.add(text)
+            known_incoming.add(normalized)
             new_replies += 1
         else:
-            if text in known_outgoing:
+            if normalized in known_outgoing:
                 continue
             now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
             repo.insert_message({
@@ -428,7 +463,7 @@ def _sync_thread_messages(lead: dict, account: dict, live_messages: list[dict]) 
                 "sent_at": now_iso,
                 "sent_via_account": account["id"],
             })
-            known_outgoing.add(text)
+            known_outgoing.add(normalized)
             new_outgoing += 1
 
     return new_replies, new_outgoing

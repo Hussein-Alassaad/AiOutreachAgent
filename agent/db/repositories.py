@@ -726,6 +726,44 @@ def insert_message(message: Row, tenant_id: str | None = None) -> Row:
     return _message_out(row)
 
 
+def claim_message_for_sending(message_id: str, tenant_id: str | None = None) -> Row | None:
+    """
+    Atomically flips a message from send_status='pending' to 'sending'
+    BEFORE the real LinkedIn/Instagram/WhatsApp send is attempted, and
+    returns the updated row -- or None if it was no longer 'pending' (either
+    already claimed/sent, or not in a sendable state at all).
+
+    Fixes a real duplicate-send bug found in the 2026-09-09 platform
+    review: linkedin_send.send_message()/whatsapp_send.send_message() both
+    performed the real send call FIRST and only wrote send_status='sent'
+    AFTER it returned. If the process crashed or lost DB connectivity in
+    that window -- after a real message had already gone out -- the row
+    was left at 'pending' (whatever it was before), indistinguishable from
+    never having been attempted. The next sending cycle would pick the same
+    message back up and send it again for real, to the same lead.
+
+    The WHERE clause (not just a plain UPDATE after an earlier SELECT) is
+    what makes this a real claim rather than a second read-then-write race:
+    the conditional UPDATE only succeeds once per row, so even if this were
+    ever called concurrently for the same message, only one caller's UPDATE
+    actually matches a row and gets it back.
+
+    Callers must send the real message ONLY after this returns a row, and
+    must still write the final 'sent'/'failed' status afterward the same as
+    before -- this claim step doesn't replace that, it closes the gap
+    before it.
+    """
+    tenant_id = _resolve_tenant(tenant_id)
+    with get_cursor() as cur:
+        cur.execute(
+            "UPDATE outreach_messages SET send_status = 'sending' "
+            "WHERE id = %s AND tenant_id = %s AND send_status = 'pending' RETURNING *",
+            (message_id, tenant_id),
+        )
+        row = cur.fetchone()
+    return _message_out(row) if row else None
+
+
 def update_message(message_id: str, fields: Row, tenant_id: str | None = None) -> Row:
     """`message_id` before `fields` (not `tenant_id` first) to match the
     many untouched callers' existing `repo.update_message(message_id, {...})`
@@ -765,6 +803,39 @@ def messages_awaiting_approval(tenant_id: str | None = None) -> list[Row]:
     return [_message_out(r) for r in rows]
 
 
+def cold_sends_today_for_account(account_id: str, day_start_iso: str, tenant_id: str | None = None) -> int:
+    """
+    How many real, cold-outreach LinkedIn/Instagram messages this account
+    has ALREADY sent since `day_start_iso` (midnight of "today" in the
+    tenant's own timezone -- same value account_pool.today_start_iso()
+    already computes for has_run_today()'s identical day-boundary need).
+
+    Added 2026-09-15, real bug found live: _run_sending_cycle_for_tenant()
+    sent every single approved+pending message for an account with NO cap
+    at all -- confirmed live, one account sent 8 real LinkedIn messages in
+    one day against a configured linkedin_daily_limit of 5 (4 leads, 2
+    messages each -- a separate duplicate-message bug, but this gap is why
+    BOTH copies went out instead of the second one being held back by the
+    account's own daily limit). Excludes replies (is_reply=true) --
+    replying inside an existing conversation is not the same automation
+    risk pattern a fresh cold outreach cap exists to guard against, and
+    run_reply_send_cycle() already has its own separate, unlimited-by-design
+    fast-poll delivery path for exactly that reason.
+    """
+    tenant_id = _resolve_tenant(tenant_id)
+    with get_cursor(commit=False) as cur:
+        cur.execute(
+            """
+            SELECT COUNT(*) AS n FROM outreach_messages
+            WHERE tenant_id = %s AND sent_via_account_id = %s AND send_status = 'sent'
+              AND is_reply = false AND sent_at >= %s
+            """,
+            (tenant_id, account_id, day_start_iso),
+        )
+        row = cur.fetchone()
+    return int(row["n"]) if row else 0
+
+
 def messages_approved_pending(tenant_id: str | None = None) -> list[Row]:
     """
     Approved messages not yet sent -- what the sending dispatcher reads each
@@ -780,6 +851,16 @@ def messages_approved_pending(tenant_id: str | None = None) -> list[Row]:
     -- a hard stop checked here (before the message ever reaches the sending
     dispatcher) rather than only inside the per-channel send functions, so a
     do-not-contact lead's messages never even get attempted, on any channel.
+
+    ORDER BY approved_at ASC (oldest-approved first) is load-bearing, not
+    cosmetic -- Hussein flagged 2026-09-15 that with a daily send cap, a
+    backlog of older approved messages must never be starved out by newer
+    approvals landing on top of it. Without an explicit order, Postgres
+    makes no guarantee about row order (it can shift with autovacuum, HOT
+    updates, or a planner change), and _run_sending_cycle_for_tenant()'s
+    daily-cap slicing (messages[:remaining]) would then truncate an
+    effectively arbitrary subset instead of always keeping the oldest
+    backlog first in line.
     """
     tenant_id = _resolve_tenant(tenant_id)
     with get_cursor(commit=False) as cur:
@@ -789,6 +870,7 @@ def messages_approved_pending(tenant_id: str | None = None) -> list[Row]:
             JOIN outreach_leads l ON l.id = m.lead_id AND l.tenant_id = m.tenant_id
             WHERE m.tenant_id = %s AND m.approval_status = 'approved' AND m.send_status = 'pending'
               AND m.channel = ANY(%s) AND l.do_not_contact = false
+            ORDER BY m.approved_at ASC NULLS FIRST, m.created_at ASC
             """,
             (tenant_id, list(_AGENT_CHANNELS)),
         )

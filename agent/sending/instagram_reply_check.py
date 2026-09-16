@@ -130,24 +130,45 @@ def _open_thread_for_lead(page: Page, account: dict, business_name: str) -> bool
 def _read_thread_messages(page: Page) -> list[dict]:
     """
     Reads EVERY message bubble currently in the open thread, in
-    chronological order, each tagged "us" or "lead". Real gap fixed
-    2026-09-07: the original version of this function only ever looked at
-    the SINGLE NEWEST message -- live-confirmed the same night, a message
-    sent manually from the real Instagram app (not through this platform)
-    was correctly excluded from outreach_replies (it's genuinely ours, not
-    a reply), but that also meant it never showed up anywhere on the
-    dashboard at all -- Reply Here only ever displays OutreachMessage rows
-    (platform-originated sends) plus OutreachReply rows (detected incoming
-    replies), so a real, genuine part of the conversation was invisible.
-    Reading the WHOLE thread, not just the tail, is what lets the caller
-    backfill a manually-sent outgoing message the same way it already
-    backfills an incoming reply.
+    chronological order, as {"text", "left"} -- NOT yet tagged with a
+    direction. Real gap fixed 2026-09-07: the original version of this
+    function only ever looked at the SINGLE NEWEST message -- live-confirmed
+    the same night, a message sent manually from the real Instagram app
+    (not through this platform) was correctly excluded from
+    outreach_replies (it's genuinely ours, not a reply), but that also
+    meant it never showed up anywhere on the dashboard at all -- Reply Here
+    only ever displays OutreachMessage rows (platform-originated sends)
+    plus OutreachReply rows (detected incoming replies), so a real, genuine
+    part of the conversation was invisible. Reading the WHOLE thread, not
+    just the tail, is what lets the caller backfill a manually-sent
+    outgoing message the same way it already backfills an incoming reply.
 
-    Direction is inferred from horizontal position -- see the previous
-    version's own comment for the live-measured evidence (outgoing:
-    left=762, incoming: left=523, same viewport) -- compared against the
-    THREAD's own average left offset rather than a fixed pixel threshold,
-    so it holds regardless of viewport width.
+    REAL BUG FOUND AND FIXED 2026-09-16 -- direction used to be decided
+    RIGHT HERE, by comparing each bubble's horizontal position against the
+    THREAD's OWN AVERAGE left offset ("us" if right of average, "lead" if
+    left). That silently assumes both sides are actually represented in
+    the thread. Instagram's DOM carries no reliable absolute per-bubble
+    signal for "sent by me" (confirmed 2026-09-07 -- no distinguishing
+    ARIA role/class on either side, see this module's own docstring), so a
+    thread holding ONLY our own messages (the common case: a fresh lead
+    that hasn't replied yet) has no real "left" cluster at all -- the
+    average sits in the middle of OUR OWN bubbles, and roughly half of our
+    own outgoing messages end up left of it and get misclassified as if
+    they came from the lead. LIVE-CONFIRMED against 5 real leads
+    (meteorintheyks, hnmoverseas, al_mosbah_, lafe.leb,
+    lets_travel_and_discover): each had a thread with ONLY our own
+    template's opening/closing lines in it, no real reply ever received,
+    yet this logic fabricated 3 "lead" messages per thread out of our own
+    pitch text, flipping the lead to "replied" on fake evidence.
+
+    Fix: this function no longer guesses a direction at all -- it just
+    returns each bubble's text and left offset. _sync_thread_messages()
+    below does the actual classification, anchored to CONTENT already
+    known to be ours or the lead's (not position), and only falls back to
+    position when the thread has at least one bubble already confirmed on
+    EACH side to calibrate against. See that function's own docstring for
+    the full reasoning and the safe-skip fallback when no such anchor
+    exists yet.
     """
     messages = page.locator(_THREAD_MESSAGE_SELECTOR)
     count = messages.count()
@@ -164,14 +185,7 @@ def _read_thread_messages(page: Page) -> list[dict]:
         if box:
             boxes.append({"left": box["x"], "text": text})
 
-    if not boxes:
-        return []
-
-    avg_left = sum(b["left"] for b in boxes) / len(boxes)
-    return [
-        {"from": "us" if b["left"] > avg_left else "lead", "text": b["text"]}
-        for b in boxes
-    ]
+    return boxes
 
 
 def check_instagram_replies() -> list[dict]:
@@ -279,21 +293,87 @@ def _sync_thread_messages(lead: dict, account: dict, live_messages: list[dict]) 
     backfilled -- accepted the same way the single-newest-reply version
     of this function already accepted it for the incoming side alone.
 
+    Compares NORMALIZED text (collapsed whitespace, see
+    linkedin_reply_check._normalized_for_dedup's own comment for the real
+    bug this closes -- "identical logic" per this function's own docstring
+    above means this file inherited the exact same one): our stored body
+    keeps real paragraph breaks, but the live DOM can render the identical
+    message as one flat run with no line breaks at all, which read as "a
+    new message" on every poll and silently inserted a duplicate DB row
+    for a message that was only ever really sent once.
+
+    REAL BUG FOUND AND FIXED 2026-09-16 -- direction used to arrive
+    pre-decided on each `live_messages` entry (`msg["from"]`), computed by
+    _read_thread_messages() from bubble position alone. See that
+    function's own docstring for the live-confirmed false-positive this
+    caused on 5 real leads. Direction is now decided HERE, per bubble,
+    anchored to CONTENT already known to be ours or the lead's:
+
+      1. A bubble whose normalized text is already in `known_outgoing` (a
+         body we already have on file for this lead) or `known_incoming`
+         (a reply we already recorded) is that side, full stop -- no
+         position involved, and this is also what makes the existing
+         dedup-by-content below a no-op for anything already on file.
+      2. A genuinely NEW bubble (matches neither known set) only gets a
+         position-based guess when the thread has at least one bubble
+         ALREADY CONFIRMED on EACH side (i.e. `known_incoming` is
+         non-empty -- a real reply has genuinely arrived before, so the
+         thread is known to actually have two-sided content, not just our
+         own template). The guess then compares the new bubble's `left`
+         against the average `left` of the bubbles already confirmed "us"
+         in THIS read, not a blind thread-wide average.
+      3. Otherwise (no confirmed reply exists for this lead yet) a new
+         bubble's direction is UNKNOWN and it is skipped entirely --
+         neither recorded as a reply nor backfilled as outgoing. This is
+         the safe fallback the owner asked for: guessing wrong here
+         fabricates a reply record and flips the lead's status on no real
+         evidence, which is strictly worse than not backfilling a
+         manually-sent outgoing message for one extra poll cycle (it will
+         still be caught once a real reply exists, or once it's later
+         re-sent/approved through the platform itself).
+
     Returns (new_replies_recorded, new_outgoing_backfilled).
     """
-    known_incoming = {r.get("body") for r in repo.replies_for_lead(lead["id"])}
+    def _normalized(text: str) -> str:
+        return "".join((text or "").split())
+
+    known_incoming = {_normalized(r.get("body")) for r in repo.replies_for_lead(lead["id"])}
     known_outgoing = {
-        m.get("edited_body") or m.get("body")
+        _normalized(m.get("edited_body") or m.get("body"))
         for m in repo.messages_for_lead(lead["id"])
         if m.get("channel") == "instagram"
     }
+    # A real reply already exists for this lead -- the thread is confirmed
+    # two-sided, so a position-based guess on a genuinely new bubble is
+    # calibrated against real evidence rather than an assumption.
+    has_confirmed_reply = bool(known_incoming)
+    # "us" lefts among bubbles this read can already attribute by content --
+    # the calibration anchor for step 2 above, computed fresh each call
+    # since it only ever needs bubbles from the current live read.
+    confirmed_us_lefts = [
+        b["left"] for b in live_messages if _normalized(b["text"]) in known_outgoing and "left" in b
+    ]
 
     new_replies = 0
     new_outgoing = 0
     for msg in live_messages:
         text = msg["text"]
-        if msg["from"] == "lead":
-            if text in known_incoming:
+        normalized = _normalized(text)
+
+        if normalized in known_outgoing:
+            direction = "us"
+        elif normalized in known_incoming:
+            direction = "lead"
+        elif has_confirmed_reply and confirmed_us_lefts and "left" in msg:
+            avg_us_left = sum(confirmed_us_lefts) / len(confirmed_us_lefts)
+            direction = "lead" if msg["left"] < avg_us_left else "us"
+        else:
+            # No content match and no safe anchor to guess from -- skip
+            # rather than risk fabricating a reply from our own text.
+            continue
+
+        if direction == "lead":
+            if normalized in known_incoming:
                 continue
             handle_reply_detected(
                 lead["id"],
@@ -302,10 +382,10 @@ def _sync_thread_messages(lead: dict, account: dict, live_messages: list[dict]) 
                 replied_at=dt.datetime.now(dt.timezone.utc),
                 account_id=account["id"],
             )
-            known_incoming.add(text)
+            known_incoming.add(normalized)
             new_replies += 1
         else:
-            if text in known_outgoing:
+            if normalized in known_outgoing:
                 continue
             now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
             repo.insert_message({
@@ -318,7 +398,7 @@ def _sync_thread_messages(lead: dict, account: dict, live_messages: list[dict]) 
                 "sent_at": now_iso,
                 "sent_via_account": account["id"],
             })
-            known_outgoing.add(text)
+            known_outgoing.add(normalized)
             new_outgoing += 1
 
     return new_replies, new_outgoing

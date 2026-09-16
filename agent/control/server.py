@@ -204,13 +204,6 @@ class ControlHandler(BaseHTTPRequestHandler):
             return
         token = auth_header[len("Bearer "):]
 
-        try:
-            verify_control_token(token)
-        except TokenInvalid as exc:
-            logger.warning("Rejected agent-control request: %s", exc)
-            self._send_json(401, {"error": str(exc)})
-            return
-
         content_length = int(self.headers.get("Content-Length", 0))
         try:
             body = json.loads(self.rfile.read(content_length) or b"{}")
@@ -223,8 +216,21 @@ class ControlHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": f"action must be one of {sorted(_ALLOWED_ACTIONS)}."})
             return
 
+        # send_reply's token is minted WITH a tenantId claim (see
+        # sendReplyViaAgent in outreach-replies.ts) -- verified against the
+        # body's own tenantId here so a valid token can't be replayed with a
+        # different tenantId to dispatch another tenant's send. start/stop/
+        # status tokens carry no tenantId claim at all (see auth.py's
+        # module docstring), so expected_tenant_id stays None for those.
+        tenant_id = body.get("tenantId") if action == "send_reply" else None
+        try:
+            verify_control_token(token, expected_tenant_id=tenant_id)
+        except TokenInvalid as exc:
+            logger.warning("Rejected agent-control request: %s", exc)
+            self._send_json(401, {"error": str(exc)})
+            return
+
         if action == "send_reply":
-            tenant_id = body.get("tenantId")
             lead_id = body.get("leadId")
             message_id = body.get("messageId")
             if not tenant_id or not lead_id or not message_id:

@@ -272,9 +272,51 @@ class SessionManager:
         # browser level. This is discovery's account_pool sessions too, not
         # just the new login flow -- every context from this browser instance
         # benefits, and discovery was never confirmed clean of the same signal.
+        # Added 2026-09-13, real infra problem found live: the droplet this
+        # runs on has only 1.9GB RAM total, and a single Chromium renderer
+        # process alone was measured at 22.7% of that (docker top,
+        # mid-run) -- with the GPU/audio/network helper processes on top,
+        # one browser instance was eating ~40-45% of the whole machine's
+        # memory, at 88% CPU and load average 4.5. That resource pressure
+        # is the real, confirmed cause of a run of consecutive Page.goto
+        # timeouts on /about and /posts (each candidate visit doing real
+        # navigation while the machine was this starved), not a selector
+        # or logic bug -- upgrading the droplet was explicitly ruled out
+        # ("this is the 3rd time we upgrade"), so this trims Chromium
+        # itself instead. Every flag below is safe for a scraper that
+        # never renders visuals a human needs to see or plays audio:
+        #   --disable-gpu / --disable-software-rasterizer: this is a
+        #     headless scraper, GPU compositing (a full extra process,
+        #     confirmed above) buys nothing.
+        #   --mute-audio: no page here is ever meant to be heard;
+        #     kills the separate audio-service utility process.
+        #   --disable-extensions / --disable-default-apps /
+        #     --disable-background-networking / --disable-sync /
+        #     --disable-translate: each is one more idle background
+        #     subsystem a real user's browser needs and this one never
+        #     will.
+        #   --disable-dev-shm-usage: avoids Chromium sizing its shared
+        #     memory to /dev/shm, which defaults small in constrained
+        #     containers and is a documented common cause of renderer
+        #     crashes/hangs under exactly this kind of memory pressure.
+        # None of these touch navigator.webdriver or any other real
+        # automation fingerprint -- --disable-blink-features=
+        # AutomationControlled (the one flag already here) is the only one
+        # that does, and stays unchanged.
         self._browser = self._playwright.chromium.launch(
             headless=config.HEADLESS,
-            args=["--disable-blink-features=AutomationControlled"],
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--disable-gpu",
+                "--disable-software-rasterizer",
+                "--mute-audio",
+                "--disable-extensions",
+                "--disable-default-apps",
+                "--disable-background-networking",
+                "--disable-sync",
+                "--disable-translate",
+                "--disable-dev-shm-usage",
+            ],
         )
         return self
 

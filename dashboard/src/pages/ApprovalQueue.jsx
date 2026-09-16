@@ -73,8 +73,8 @@ export default function ApprovalQueue() {
     setLoading(true)
     const { data, error: err } = await supabase
       .from('messages')
-      .select('id, lead_id, channel, body, edited_body, approval_status, leads(id, business_name, platform, score, temperature)')
-      .eq('approval_status', 'awaiting')
+      .select('id, lead_id, channel, body, edited_body, approval_status, hold_reason, send_status, send_failure_reason, leads(id, business_name, platform, score, temperature)')
+      .in('approval_status', ['awaiting', 'held'])
       .order('created_at', { ascending: true })
 
     if (err) setError(err.message)

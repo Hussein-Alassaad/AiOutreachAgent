@@ -66,6 +66,27 @@ INDUSTRY_FACETS = {
     "food and beverage services": "34",
 }
 
+# Documented LinkedIn company-size facet buckets (Microsoft's Marketing API
+# reference -- companySize/facetCompanySize), NOT yet independently
+# live-verified against a real browser session the way LOCATION_FACETS'
+# Lebanon entry was (apply the filter by hand, read the resulting URL).
+# Added 2026-09-12 on the owner's explicit go-ahead to ship from
+# documentation rather than wait for manual verification, since it follows
+# the identical URL pattern (`facet=["value"]`) as the already-confirmed
+# companyHqGeo facet. If real search results ever look wrong for a
+# size-filtered tenant, verify these letter codes against a real manual
+# search before assuming the rest of the query is at fault.
+COMPANY_SIZE_FACETS = {
+    "1-10": "B",
+    "11-50": "C",
+    "51-200": "D",
+    "201-500": "E",
+    "501-1000": "F",
+    "1001-5000": "G",
+    "5001-10000": "H",
+    "10000+": "I",
+}
+
 _COMPANY_HREF_RE = re.compile(r"^https://www\.linkedin\.com/company/[^/?]+/?")
 _REDIRECT_URL_RE = re.compile(r"[?&]url=([^&]*)")
 _ACTIVITY_URN_RE = re.compile(r'data-urn="(urn:li:activity:[^"]*)"')
@@ -78,7 +99,15 @@ _POST_TIME_RE = re.compile(r'update-components-actor__sub-description[^>]*>\s*<s
 _RELATIVE_TIME_RE = re.compile(r"^(\d+)(h|d|w|mo|yr)$")
 
 
-def build_search_url(niche: str, location: str, industry: str = "") -> str:
+# A configured location longer than this (or containing commas) is a
+# multi-region targeting policy, not something to paste into a search box.
+# See the fallback branch in build_search_url for the real case behind it.
+_MAX_LOCATION_KEYWORD_LENGTH = 30
+
+
+def build_search_url(
+    niche: str, location: str, industry: str = "", size_buckets: list[str] | None = None,
+) -> str:
     """
     Build a LinkedIn company-search URL from the dashboard's niche/location/
     industry settings.
@@ -88,6 +117,13 @@ def build_search_url(niche: str, location: str, industry: str = "") -> str:
     LinkedIn's own UI produces when you apply that filter by hand. Anything
     not in those two small lookups still works, just folded into the
     free-text `keywords` parameter instead, same as before this was verified.
+
+    `size_buckets` is a list of COMPANY_SIZE_FACETS keys (e.g.
+    ["51-200", "201-500"]) to OR together as one companySize facet --
+    LinkedIn's own multi-select size filter works this way (bracket array
+    of letter codes), not as several separate exact-match filters. Pass
+    None/empty to search every size (no facet added at all), which is
+    exactly what an unfiltered "any size" tenant like Zimmar needs.
     """
     keyword_parts = [niche]
     facet_params: dict[str, str] = {}
@@ -96,13 +132,49 @@ def build_search_url(niche: str, location: str, industry: str = "") -> str:
     if geo_id:
         facet_params["companyHqGeo"] = f'["{geo_id}"]'
     elif location:
-        keyword_parts.append(location)
+        # Only fold a SHORT location into the free-text keywords. A tenant
+        # can legitimately configure a long multi-region target -- MJivity's
+        # is "GCC (UAE, Saudi Arabia, Qatar, Kuwait, Bahrain, Oman), Egypt,
+        # Lebanon, MENA region, United States, United Kingdom, Canada,
+        # Europe" -- and appending all 129 characters to the query made
+        # LinkedIn search for that literal phrase, which matches nothing.
+        # LIVE-CONFIRMED 2026-09-13. A long list like that is a targeting
+        # policy, not a search term: the per-profile location check
+        # (scheduler._mentions_foreign_location) is what actually enforces
+        # it, so dropping it from the query here loses no filtering.
+        if len(location) <= _MAX_LOCATION_KEYWORD_LENGTH and "," not in location:
+            keyword_parts.append(location)
 
     industry_id = INDUSTRY_FACETS.get(industry.strip().lower()) if industry else None
     if industry_id:
         facet_params["industryCompanyVertical"] = f'["{industry_id}"]'
     elif industry:
-        keyword_parts.append(industry)
+        # Added 2026-09-13, real bug caught live: Zimmar's target_industry
+        # is deliberately verbose prose ("Offices, warehouses, retail,
+        # schools, factories, residential complexes, hospitality;
+        # individuals or families setting up a new house; real estate
+        # developers...") -- a targeting POLICY, not a search term (same
+        # exact situation the location guard above already documents and
+        # fixes for a long/comma-separated location). Before this guard,
+        # that entire sentence was appended straight into the `keywords`
+        # query param, which LIVE-CONFIRMED produced 0 results across
+        # EVERY SINGLE niche term tried (logistics, trading, engineering,
+        # transportation, distribution, manufacturing, real estate, general
+        # commercial, agriculture, IT services -- all 10/10 search rounds
+        # in one real run) even though the exact same niche+location
+        # combination, tested moments later with industry dropped, returned
+        # 10 real results and a page showing "643 results" for 'trading'
+        # alone. A long or comma-containing industry string is a policy for
+        # the per-profile checks to enforce, not a keyword LinkedIn's search
+        # can match against.
+        if len(industry) <= _MAX_LOCATION_KEYWORD_LENGTH and "," not in industry and ";" not in industry:
+            keyword_parts.append(industry)
+
+    if size_buckets:
+        size_codes = [COMPANY_SIZE_FACETS[b] for b in size_buckets if b in COMPANY_SIZE_FACETS]
+        if size_codes:
+            codes_json = ",".join(f'"{c}"' for c in size_codes)
+            facet_params["companySize"] = f"[{codes_json}]"
 
     query = " ".join(part for part in keyword_parts if part).strip()
     origin = "FACETED_SEARCH" if facet_params else "GLOBAL_SEARCH_HEADER"
@@ -424,3 +496,19 @@ def _safe_attr(locator, attr: str) -> str | None:
         return locator.get_attribute(attr, timeout=2_000)
     except Exception:  # noqa: BLE001
         return None
+
+
+# REMOVED 2026-09-13: has_message_button() used to run at discovery time
+# to pre-reject a lead with no working Message button (added after
+# TEAMWORK ENERGY failed at send time), but proved to have a ~25%
+# false-reject rate on real, reachable companies (LebEx, Bilani
+# Transportation, OPES Software, Arab Software Company) even after two
+# rounds of tuning its render-wait timing -- the droplet's real CPU
+# contention (see session.py's own comment on its 1.9GB RAM/1 vCPU
+# constraint) makes a fixed client-side-render wait an unreliable signal.
+# Owner's call: losing real leads to false rejects here is worse than a
+# genuine no-button lead reaching send time, where
+# linkedin_send.py's own NoMessageButtonAvailable is already caught
+# cleanly (marks the send failed, doesn't crash) and the owner can now see
+# the SPECIFIC reason in the Approval queue rather than a generic
+# "Failed" -- see outreach-approvals.ts's own comment on sendStatusReason.

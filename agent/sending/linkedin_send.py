@@ -82,6 +82,10 @@ from agent.crm import pipeline
 from agent.db import repositories as repo
 from agent.messaging import approval
 from agent.sending import attachments
+# The one shared invariant -- "once it's delivered, never send it again" --
+# and the two real double-send vectors it closes: see sending/delivery.py's
+# module docstring. Deliberately one definition across all three channels.
+from agent.sending.delivery import Delivery, settle_after_failure
 
 # Reuses linkedin_reply_check.py's already-live-verified thread-opening
 # selectors (see that module's own docstring for the real DOM these were
@@ -221,7 +225,7 @@ def _is_person_profile(profile_url: str) -> bool:
 _VIEWING_SETTING_MODAL_SELECTOR = "[data-test-modal-id='org-page-viewing-setting-modal']"
 
 
-def _send_to_company(page: Page, lead: dict, body: str) -> None:
+def _send_to_company(page: Page, lead: dict, body: str, delivery: Delivery) -> None:
     if not (_COMPANY_MESSAGE_MIN_LENGTH <= len(body) <= _COMPANY_MESSAGE_MAX_LENGTH):
         raise MessageLengthInvalid(
             f"Message is {len(body)} characters; LinkedIn's Page inbox requires "
@@ -328,9 +332,11 @@ def _send_to_company(page: Page, lead: dict, body: str) -> None:
             break
         page.wait_for_timeout(250)
     send_button.click()
+    # The message is now out. Nothing below this line may ever cause a retry.
+    delivery.mark()
 
 
-def _send_to_person(page: Page, lead: dict, body: str) -> None:
+def _send_to_person(page: Page, lead: dict, body: str, delivery: Delivery) -> None:
     message_button = page.locator(_PERSON_MESSAGE_BUTTON_SELECTOR).first
     if message_button.count() == 0:
         raise NoMessageButtonAvailable(
@@ -404,6 +410,8 @@ def _send_to_person(page: Page, lead: dict, body: str) -> None:
     human_type(box, body)
     human_delay()
     page.locator(_PERSON_SEND_BUTTON_SELECTOR).first.click()
+    # The message is now out. Nothing below this line may ever cause a retry.
+    delivery.mark()
 
 
 def send_message(message: dict) -> dict:
@@ -438,29 +446,77 @@ def send_message(message: dict) -> dict:
     if not account:
         raise ValueError(f"Lead {lead['id']} has no owning account to send from.")
 
-    with SessionManager() as sessions:
-        # ProxyIpMismatch propagates straight out of open() here, uncaught --
-        # exactly the right behavior: the caller (scheduler.run_sending_cycle())
-        # already turns any exception from this function into a normal
-        # "ok": False result (see this function's own docstring), the same
-        # treatment NoMessageButtonAvailable already gets, so a real send
-        # attempt never proceeds on an account whose proxy resolved to an
-        # unexpected IP.
-        context, page, new_verified_ip = sessions.open(account)
-        if new_verified_ip and not account.get("verified_proxy_ip"):
-            repo.update_account(account["id"], {"verified_proxy_ip": new_verified_ip})
-        try:
-            # RE-VERIFIED 2026-08-03: default wait_until="load" caused real,
-            # reproducible timeouts elsewhere in this codebase that day
-            # (discovery/linkedin.py's search/profile navigation) -- LinkedIn
-            # is heavy enough that waiting for every resource, not just the
-            # DOM, routinely exceeded 15s. Applied the same fix here
-            # pre-emptively, before this path's own first live send hits it.
-            page.goto(profile_url, timeout=30_000, wait_until="domcontentloaded")
-            _raise_if_logged_out(page, account)
-            send_fn(page, lead, body)
-        finally:
-            sessions.close(account["id"], context)
+    # Claimed BEFORE the real send attempt, not after -- see
+    # claim_message_for_sending's own docstring for the duplicate-send bug
+    # this closes (a crash between a successful real send and the old
+    # after-the-fact "sent" write would leave the row looking untouched,
+    # and the next cycle would send it again for real). None back means
+    # another process already claimed or sent this message.
+    if repo.claim_message_for_sending(message["id"]) is None:
+        raise ValueError(f"Message {message['id']} is no longer pending -- already claimed or sent.")
+
+    delivery = Delivery()
+    try:
+        with SessionManager() as sessions:
+            # ProxyIpMismatch propagates straight out of open() here, uncaught --
+            # exactly the right behavior: the caller (scheduler.run_sending_cycle())
+            # already turns any exception from this function into a normal
+            # "ok": False result (see this function's own docstring), the same
+            # treatment NoMessageButtonAvailable already gets, so a real send
+            # attempt never proceeds on an account whose proxy resolved to an
+            # unexpected IP.
+            context, page, new_verified_ip = sessions.open(account)
+            if new_verified_ip and not account.get("verified_proxy_ip"):
+                repo.update_account(account["id"], {"verified_proxy_ip": new_verified_ip})
+            try:
+                # RE-VERIFIED 2026-08-03: default wait_until="load" caused real,
+                # reproducible timeouts elsewhere in this codebase that day
+                # (discovery/linkedin.py's search/profile navigation) -- LinkedIn
+                # is heavy enough that waiting for every resource, not just the
+                # DOM, routinely exceeded 15s. Applied the same fix here
+                # pre-emptively, before this path's own first live send hits it.
+                page.goto(profile_url, timeout=30_000, wait_until="domcontentloaded")
+                _raise_if_logged_out(page, account)
+                send_fn(page, lead, body, delivery)
+            finally:
+                sessions.close(account["id"], context)
+    except NoMessageButtonAvailable as exc:
+        # PERMANENT failure, added 2026-09-13: unlike every other exception
+        # here (network blip, timeout, proxy mismatch -- all genuinely
+        # worth retrying), a company whose LinkedIn page has no Message
+        # button will NEVER have one appear on a later retry just because
+        # time passed. Resetting this back to "pending" (the behavior every
+        # other exception still gets, below) would silently retry forever,
+        # burning a real send attempt every cycle for a lead that can never
+        # be reached -- and the real reason was never visible anywhere
+        # except a log line, which is why the owner asked to see "no
+        # message button" specifically instead of a generic "Failed" in
+        # the Approval queue. Marks send_status "failed" (a real terminal
+        # state, not silently reset) and persists the human-readable
+        # reason so the dashboard (getApprovalQueueAction) can show it.
+        #
+        # Both raise sites are strictly BEFORE any send click, so this can
+        # never overwrite a delivered message -- asserted rather than
+        # assumed, since "failed" would also make it re-sendable by hand.
+        if delivery.delivered:
+            settle_after_failure(message, delivery, exc, channel="linkedin")
+        else:
+            repo.update_message(message["id"], {
+                "send_status": "failed",
+                "send_failure_reason": str(exc),
+            })
+        raise
+    except Exception as exc:
+        # The real send attempt failed -- but ONLY release the claim back to
+        # 'pending' (making it eligible for a genuine retry next cycle) when
+        # the send click provably never happened. This try block also
+        # encloses sessions.close() and the teardown after the click, and a
+        # failure there used to reset an already-DELIVERED message to
+        # 'pending' and re-send it for real. See Delivery/_settle_after_failure
+        # above. Left at 'sending' forever otherwise, since scheduler.py's
+        # caller only logs this exception, it never writes a status itself.
+        settle_after_failure(message, delivery, exc, channel="linkedin")
+        raise
 
     now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
     updated_message = repo.update_message(message["id"], {
@@ -529,6 +585,21 @@ def send_reply(message: dict) -> dict:
     if not account:
         raise ValueError(f"Lead {lead['id']} has no owning account to send from.")
 
+    # REAL DOUBLE-SEND VECTOR, found and fixed 2026-09-16: this function had
+    # NO claim at all -- unlike send_message() above and every other send
+    # path, it wrote 'sent' only at the very end, AFTER the send click. Any
+    # failure after delivery (browser crash, a session-close error, a DB
+    # blip) left the row at 'pending', indistinguishable from never having
+    # been attempted, and repo.replies_pending() re-selected it on
+    # scheduler.py's ~3-minute reply IntervalTrigger -- re-delivering
+    # unboundedly, since replies are deliberately exempt from the daily send
+    # cap. Same single-statement atomic claim the cold-send path uses, taken
+    # BEFORE any browser work: None back means another process already has
+    # it, so this one bails out without sending anything.
+    if repo.claim_message_for_sending(message["id"]) is None:
+        raise ValueError(f"Message {message['id']} is no longer pending -- already claimed or sent.")
+
+    delivery = Delivery()
     try:
         if attachment_url:
             attachment_path = attachments.download_attachment(attachment_url, message.get("attachment_name"))
@@ -588,11 +659,31 @@ def send_reply(message: dict) -> dict:
                     human_type(box, body)
                 human_delay()
                 page.locator(_THREAD_SEND_BUTTON_SELECTOR).first.click()
+                # The reply is now out. Nothing below may ever cause a retry.
+                delivery.mark()
             finally:
                 sessions.close(account["id"], context)
-    finally:
+    except Exception as exc:
+        # Identical reasoning to send_message()'s handler above: release the
+        # claim back to 'pending' ONLY if the send click provably never
+        # happened. sessions.close() and the attachment cleanup both run
+        # after the click and both can raise.
         if attachment_path:
+            try:
+                attachments.cleanup_attachment(attachment_path)
+            except Exception:  # noqa: BLE001 -- a temp file left behind must never block the status write below
+                pass
+        settle_after_failure(message, delivery, exc, channel="linkedin")
+        raise
+    # Cleanup is deliberately NOT in a `finally` any more: a cleanup error on
+    # the success path used to escape before the 'sent' write below, leaving a
+    # genuinely delivered message stuck at 'sending'. Swallowed here (a
+    # leftover temp file is harmless; a mis-stated send status is not).
+    if attachment_path:
+        try:
             attachments.cleanup_attachment(attachment_path)
+        except Exception:  # noqa: BLE001
+            pass
 
     now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
     return repo.update_message(message["id"], {

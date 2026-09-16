@@ -40,15 +40,6 @@ def _today_start_iso(now: dt.datetime) -> str:
     return midnight.isoformat()
 
 
-def _parse_run_time(run_time: str) -> dt.time:
-    """Accounts.run_time comes back from Supabase as 'HH:MM:SS' (or 'HH:MM').
-    Parsed once per account per check -- these lists are tiny (3 rows), so
-    there's no need to cache this."""
-    parts = run_time.split(":")
-    hour, minute = int(parts[0]), int(parts[1])
-    return dt.time(hour=hour, minute=minute)
-
-
 def today_start_iso(tenant_id: str) -> str:
     """Public wrapper on _today_start_iso(_local_now(tenant_id)) --
     scheduler.py needs this same "midnight in THIS TENANT's timezone, as of
@@ -71,17 +62,41 @@ def get_due_accounts(tenant_id: str, force: bool = False) -> list[dict]:
     """
     Which of this tenant's accounts should run right now.
 
-    An account is due when all three are true:
+    An account is due when both are true:
       1. status == 'active' (a 'paused' account never runs itself back in --
          core rule R9: redistribution/un-pausing is Hussein's manual call, the
          agent never decides to resume a paused account on its own).
-      2. Its configured run_time has already passed today.
-      3. It has not already produced a run today (has_run_today).
+      2. It has not already produced a run today (has_run_today).
 
-    `force=True` skips checks 2 and 3 entirely -- this is what a manual test
-    trigger uses, so Hussein can test the pipeline without waiting for an
-    account's actual scheduled hour or worrying about a stale run row blocking
-    a second manual attempt on the same day.
+    `force=True` skips check 2 entirely -- this is what a manual test
+    trigger uses, so Hussein can test the pipeline without a stale run row
+    blocking a second manual attempt on the same day.
+
+    REMOVED 2026-09-16 (real incident): this used to also require
+    `now.time() >= account["run_time"]` -- a second, independent "is this
+    account due" check on top of whatever triggered the call. That was
+    correct back when run_cycle()/run_discovery_cycle() were themselves
+    invoked on a single shared periodic tick (e.g. "every N minutes, ask
+    which accounts are due") and run_time was the ONLY thing that decided
+    which of those ticks was an account's turn. It stopped being correct the
+    moment build_daily_schedule() was redesigned to give every account its
+    own per-account CronTrigger, computed via _spread_within_window() into
+    the shared 20:00-24:00 discovery / 08:00-12:00 sending windows --
+    completely decoupled from that account's stored run_time column, which
+    is now stale leftover data, not a live schedule.
+    With both a per-account cron already gating exactly when this fires AND
+    this second run_time check still active, an account whose stored
+    run_time didn't happen to be <= the new jittered firing time (e.g. still
+    holding an old morning value while the account's discovery cron now
+    fires at night) was silently treated as "not due" and skipped -- with
+    no error, no outreach_runs row, and no log line, because the skip
+    happens here, before claim_account_for_run() ever creates that row.
+    Insurance's LinkedIn discovery cron fired exactly on schedule at 21:03
+    EEST on 2026-09-16 (confirmed via APScheduler's own success log) and
+    still produced zero rows and zero leads for precisely this reason. The
+    per-account cron trigger is now the sole authority on timing; a second,
+    independently-stale timing check here is redundant at best and actively
+    wrong at worst.
     """
     now = _local_now(tenant_id)
     today_start = _today_start_iso(now)
@@ -94,10 +109,6 @@ def get_due_accounts(tenant_id: str, force: bool = False) -> list[dict]:
         if force:
             due.append(account)
             continue
-
-        run_time = _parse_run_time(account["run_time"])
-        if now.time() < run_time:
-            continue  # scheduled time hasn't arrived yet today
 
         if repo.has_run_today(tenant_id, account["id"], today_start):
             continue  # already ran today, don't double-dispatch

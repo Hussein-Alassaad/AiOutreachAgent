@@ -66,8 +66,19 @@ def effective_limit(account: dict, platform: str) -> int:
     so the dashboard's Account Health page reflects it, since that column
     exists for display, not just internal use.
     """
-    key = "ig_daily_limit" if platform == "instagram" else "linkedin_daily_limit"
-    default = 20 if platform == "instagram" else 30
+    # Mapped explicitly per platform. The original two-way conditional sent
+    # EVERY non-Instagram platform down the LinkedIn branch, so an email
+    # account resolved to linkedin_daily_limit (30) and silently ignored its
+    # own email_daily_limit (5) -- caught 2026-09-13 while auditing the real
+    # configured limits. Harmless today only because this agent's two call
+    # sites pass "linkedin"/"instagram" literally and the Next.js app owns
+    # email sending entirely; fixed so it stays correct if that changes.
+    _LIMIT_KEYS = {
+        "instagram": ("ig_daily_limit", 20),
+        "linkedin": ("linkedin_daily_limit", 30),
+        "email": ("email_daily_limit", 5),
+    }
+    key, default = _LIMIT_KEYS.get(platform, ("linkedin_daily_limit", 30))
     platform_limit = account.get(key) or default
 
     cap = compute_warmup_cap(account)

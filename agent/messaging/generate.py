@@ -23,7 +23,9 @@ _PLATFORM_TONE = {
 }
 
 _MESSAGE_RULES = """Rules:
-- Open with a greeting using the exact name given -- never "Hi there" or "Hello business owner".
+- Open with a greeting using the exact name given -- never "Hi there" or "Hello business owner". Put a line break (a real newline, not just a space) after the greeting line before the message body starts -- never run the greeting straight into the first sentence on the same line ("Hello Acme,here's why" is wrong; "Hello Acme,
+
+Here's why" is right).
 - If a SPECIFIC weak point or AI opportunity is given, reference at least one -- never vague \
 ("I noticed some areas to improve") -- always concrete ("your booking takes 12h" not "your \
 booking could be faster"). If none is given ("none identified"), don't wait for one or invent a \
@@ -38,6 +40,7 @@ Respond with ONLY the message text, nothing else -- no preamble, no quotes aroun
 a message:"."""
 
 _FOLLOWUP_RULES = """Rules:
+- Same greeting formatting as a first message: a real line break after the greeting line, never running it straight into the first sentence on the same line.
 - This is a FOLLOW-UP to a message already sent that got no reply -- it must NOT repeat the \
 original pitch or re-explain the same weak point in the same words. A lead who ignored the first \
 message won't read a near-duplicate any differently.
@@ -65,6 +68,25 @@ def _greeting_name(lead: dict) -> str:
     with neither shouldn't reach message generation in the first place.
     """
     return lead.get("founder_name") or lead.get("business_name") or "there"
+
+
+# Fallback for templates that use the company name MID-SENTENCE rather than
+# as a greeting. "there" is fine after "Hello" but produces broken English
+# anywhere else -- LIVE-CONFIRMED 2026-09-13, a nameless lead generated
+# "Worth a quick check on there's setup?" and "brands like there?", both of
+# which would have been sent to a real prospect verbatim. Discovery does
+# normally populate business_name (scheduler.py saves display_name into it),
+# so this only fires when a scrape genuinely failed to read the name.
+_GENERIC_COMPANY_FALLBACK = "your company"
+
+
+def _company_name_in_sentence(lead: dict) -> str:
+    """
+    The company name for use inside a sentence, with a fallback that still
+    reads as English when the name is missing. See
+    _GENERIC_COMPANY_FALLBACK's comment for the real bug behind this.
+    """
+    return lead.get("business_name") or _GENERIC_COMPANY_FALLBACK
 
 
 def build_system_prompt(
@@ -108,7 +130,9 @@ AI-sounding phrasing, no generic templates, no corporate buzzwords.
 {rules}"""
 
 
-def format_personalization_context(lead: dict, original_body: str | None = None) -> str:
+def format_personalization_context(
+    lead: dict, original_body: str | None = None, follow_up_guidance: str | None = None,
+) -> str:
     lines = [
         f"Greeting name: {_greeting_name(lead)}",
         f"Business: {lead.get('business_name') or 'unknown'}",
@@ -118,6 +142,13 @@ def format_personalization_context(lead: dict, original_body: str | None = None)
     ]
     if original_body:
         lines.append(f"Original message already sent (no reply yet): {original_body}")
+    # Owner-editable free text (Follow-ups page, OutreachSettings.followUpGuidance),
+    # applies to every follow-up for this tenant. Guidance only, NOT a
+    # template -- _FOLLOWUP_RULES still requires a genuinely fresh message
+    # that doesn't repeat the original pitch; this just tells Claude what
+    # that fresh message should be about, e.g. "mention our new pricing".
+    if follow_up_guidance:
+        lines.append(f"What this follow-up should be about (from the account owner): {follow_up_guidance}")
     return "\n".join(lines)
 
 
@@ -143,13 +174,22 @@ def _business_identity() -> tuple[str, str]:
 # normal AI-generation path below, completely untouched.
 _INSURANCE_BUSINESS_NAME = "Partners Insurance Consultancy"
 
+# SHORTENED 2026-09-16: the previous wording came out at 767 chars with a
+# short company name and 833 with a long one -- over LinkedIn Page inbox's
+# hard 25-750 limit in BOTH cases, which is why all 12 queued Insurance
+# LinkedIn messages failed with MessageLengthInvalid rather than sending.
+# Fixed the same durable way _ZIMMAR_TEMPLATE_LINKEDIN was: the closing
+# and gap lines no longer interpolate the company name anywhere except the
+# greeting, so a long real name ("Mediterranean Pharmaceutical Company")
+# can no longer push an otherwise-valid message over the limit. Only the
+# greeting varies now, so worst-case length is greeting + a fixed body.
 _INSURANCE_TEMPLATE_GAP = """Hello {company_name},
 
-We're introducing Lebanon's first Dental Card — the first dental benefit of its kind offered in the market. Employees get annual coverage for cleanings, extractions, fillings, and one free consultation, plus 50-70% off implants, crowns, orthodontics, and oral surgery. No medical exams, no pre-existing condition screening, available to employees of all ages from day one — just USD 50 per person/year.
+We're introducing Lebanon's first Dental Card — a dental benefit new to the market. Employees get annual coverage for cleanings, extractions, fillings, and one free consultation, plus 50-70% off implants, crowns, orthodontics, and oral surgery. No medical exams, no pre-existing condition screening, open to all ages from day one — just USD 50 per person/year.
 
-I noticed {company_name} doesn't currently show a group employee insurance benefit, which is something we help companies like yours put in place. Partners Insurance Consultancy also provides Motor (All Risk), Medical/Health, and General/Commercial insurance for companies and individuals.
+I noticed your team doesn't currently show a group employee insurance benefit, which is something we help companies put in place. We also provide Motor (All Risk), Medical/Health, and General/Commercial insurance.
 
-Would it be worth a quick call to see if this fits your team's benefits?"""
+Would it be worth a quick call to see if this fits your team?"""
 
 _INSURANCE_TEMPLATE_NO_GAP = """Hello {company_name},
 
@@ -167,10 +207,150 @@ def _insurance_fixed_template(lead: dict) -> str:
     never invents a gap that isn't there, per the same "nothing from your
     own" instruction the templates themselves follow.
     """
+    # Two different fallbacks on purpose: "Hello there," is correct English
+    # as a greeting, but "I noticed there doesn't currently show..." is not.
     company_name = lead.get("business_name") or "there"
     weak_points = lead.get("weak_points") or []
-    template = _INSURANCE_TEMPLATE_GAP if weak_points else _INSURANCE_TEMPLATE_NO_GAP
-    return template.format(company_name=company_name)
+    if weak_points:
+        return _INSURANCE_TEMPLATE_GAP.format(
+            company_name=company_name,
+            company_in_sentence=_company_name_in_sentence(lead),
+        )
+    return _INSURANCE_TEMPLATE_NO_GAP.format(company_name=company_name)
+
+
+# FIXED templates for Zimmar (CCTV/network security review outreach),
+# agreed with the owner 2026-09-10 -- same "literal text the owner
+# approved, not an AI-written prompt" posture as Insurance's own fixed
+# templates above, but keyed by CHANNEL rather than gap/no-gap, since the
+# owner approved three separate channel-specific drafts (email reads
+# noticeably more formal/longer than the Instagram DM) rather than one
+# shared body. Matched on business_name, same mechanism as Insurance --
+# only this one tenant's generate_message() calls ever reach this path.
+#
+# Sender identity is hardcoded as "Zimmar Tech" / "100+ companies" (owner's
+# real, approved values, confirmed 2026-09-10) -- no signature line at all,
+# by the owner's own choice, unlike Insurance's templates above which don't
+# use one either. If the owner's own name/title/contact details are ever
+# wanted back in, add them the same literal-text way Insurance's templates
+# do (a fixed string, not a lead-data substitution).
+_ZIMMAR_BUSINESS_NAME = "Zimmar"
+
+# SHORTENED 2026-09-13: the original (with bullet list) was 784-785 chars
+# filled -- LinkedIn's Page inbox HARD-REJECTS anything outside 25-750,
+# confirmed live when TEAMWORK ENERGY's send failed with exactly that error.
+# Two changes made the fix durable, not just a one-time trim:
+#   1. Bullets folded into one flowing sentence -- bullet markers/line
+#      breaks cost characters with no content benefit here.
+#   2. Closing line no longer inserts {company_name} at all (was "on
+#      {company_name}'s setup?") -- a long real company name
+#      ("Advanced Construction Technology Services International") could
+#      push a future edit back over 750 even after this trim. "your setup"
+#      reads identically and makes the template's length FIXED regardless
+#      of lead name length, so this specific failure mode cannot recur.
+# Fixed length: 710 chars, always -- verified via len() before shipping.
+_ZIMMAR_TEMPLATE_LINKEDIN = """Hi {greeting_name},
+
+Quick reality check: your CCTV system isn't just cameras — it's real data. Footage, access logs, sometimes client info. Most systems still run on the default login, on the same network as the rest of the business.
+
+One weak point can mean stolen footage, a way into your systems, downtime if it's breached, or legal exposure. There's also a quieter risk — employees watching footage they shouldn't, or deleting it when something goes wrong, with nobody checking access.
+
+Most companies don't find out until it's already happened.
+
+We're Zimmar Tech — we run full security reviews for facilities and security companies. Done it for 100+ companies so far.
+
+Worth a quick check on your setup?"""
+
+_ZIMMAR_TEMPLATE_INSTAGRAM = """Hi {greeting_name} \U0001F44B
+
+Here's something worth knowing: your CCTV system isn't just cameras watching your building — it holds real data. Footage, access logs, sometimes client information too. Most of these are still running on the default login, sitting on the same network as everything else.
+
+That one weak point can cause real damage — stolen or leaked footage, a way into your main systems, unexpected downtime, or legal exposure. There's also a quieter risk: employees watching footage they shouldn't, or deleting it when something goes wrong, with no one checking who has access. Most companies don't find out there was a problem until after it's already happened.
+
+We're Zimmar Tech. We run full security reviews for facilities and security companies — cameras, network, access, backups, all of it. We've done this for 100+ companies so far.
+
+Want us to take a quick look at {company_name}'s setup?"""
+
+
+def _zimmar_fixed_template(lead: dict, channel: str) -> str:
+    """
+    LinkedIn and Instagram only -- email is handled entirely by the
+    Next.js/SES pipeline (src/lib/outreach/ses.ts), never by this Python
+    agent (see this module's own docstring / messages_approved_pending's
+    channel scoping), so there is no email branch here; the email version
+    of the Zimmar template lives only in Zimmar-Templates.pdf for whoever
+    sends those manually or wires them into the SES path separately.
+    """
+    greeting_name = _greeting_name(lead)
+    template = _ZIMMAR_TEMPLATE_INSTAGRAM if channel == "instagram" else _ZIMMAR_TEMPLATE_LINKEDIN
+    return template.format(
+        greeting_name=greeting_name,
+        company_name=_company_name_in_sentence(lead),
+    )
+
+
+# FIXED template for MJivity (3D/CGI creative studio outreach), agreed with
+# the owner 2026-09-12 -- same "literal text the owner approved" posture as
+# Zimmar/Insurance above. Instagram-only for now: MJivity's LinkedIn
+# account is paused (owner's explicit instruction 2026-09-12 -- run only on
+# Instagram right now), so no LinkedIn template exists yet. If LinkedIn is
+# ever reactivated for this tenant, add a _MJIVITY_TEMPLATE_LINKEDIN the
+# same way Zimmar has two channel variants, rather than reusing this one --
+# the owner's Instagram draft was written for that channel's casual tone
+# specifically, not vetted for LinkedIn's more formal one.
+_MJIVITY_BUSINESS_NAME = "MJivity"
+
+_MJIVITY_TEMPLATE_INSTAGRAM = """Hi {greeting_name} \U0001F44B
+
+Your product deserves visuals that actually stop the scroll — not another flat product photo everyone's seen a hundred times. We build CGI product visuals, 3D anamorphic billboards, and viral-style visual campaigns for brands who want to look like a completely different league without the cost or hassle of a real physical shoot.
+
+We're MJivity — a 3D creative studio working with brands across Lebanon, the GCC, and the MENA region. If your current visuals feel outdated or you're just running the same static ad creative on repeat, this might be worth a look.
+
+Want us to send over a few examples of what we've done for brands like yours?"""
+
+
+def _mjivity_fixed_template(lead: dict, channel: str) -> str:
+    """
+    Instagram only today -- see this constant block's own comment on why
+    there's no LinkedIn variant yet (account paused, not just unused).
+    Falls through to the normal AI-generation path for any other channel
+    (e.g. if a future email account gets added for this tenant) rather
+    than silently reusing an Instagram-toned draft somewhere it wasn't
+    written for.
+    """
+    greeting_name = _greeting_name(lead)
+    return _MJIVITY_TEMPLATE_INSTAGRAM.format(greeting_name=greeting_name)
+
+
+# LinkedIn's Page inbox hard-rejects anything outside 25-750 characters
+# (sending/linkedin_send.py raises MessageLengthInvalid on it). Enforced
+# here at GENERATION time as well, added 2026-09-16: until now the only
+# check was at send time, so an over-length message was generated,
+# approved by a human, queued, and only then failed -- which is exactly
+# how 12 Insurance messages sat unsendable in the queue. Applied to EVERY
+# generate_message() return path (2026-09-16), fixed templates included --
+# they are each verified under the limit by construction today, but a
+# future wording edit is exactly how the over-length failure recurs.
+_CHANNEL_MAX_CHARS = {"linkedin": 750}
+
+
+def _enforce_channel_length(body: str, channel: str) -> str:
+    """
+    Trim an over-length generated message at a sentence or paragraph
+    boundary rather than mid-word, so a message that would be rejected at
+    send time is shortened here instead of failing later.
+    """
+    limit = _CHANNEL_MAX_CHARS.get(channel)
+    if limit is None or len(body) <= limit:
+        return body
+    truncated = body[:limit]
+    # Prefer the last paragraph break, then the last sentence end, so the
+    # result still reads as a finished message rather than a cut-off one.
+    for boundary in ("\n\n", ". ", "? ", "! "):
+        cut = truncated.rfind(boundary)
+        if cut > limit // 2:
+            return truncated[:cut + len(boundary)].strip()
+    return truncated.strip()
 
 
 def generate_message(lead: dict, channel: str, message_style: str, model: str | None = None) -> str:
@@ -184,18 +364,33 @@ def generate_message(lead: dict, channel: str, message_style: str, model: str | 
     """
     business_name, business_description = _business_identity()
     if business_name == _INSURANCE_BUSINESS_NAME:
-        return _insurance_fixed_template(lead)
+        body = _insurance_fixed_template(lead)
+    elif business_name == _ZIMMAR_BUSINESS_NAME:
+        body = _zimmar_fixed_template(lead, channel)
+    elif business_name == _MJIVITY_BUSINESS_NAME and channel == "instagram":
+        body = _mjivity_fixed_template(lead, channel)
+    else:
+        model = model or config.MODEL_MESSAGES
+        system = prompts.cacheable_system(
+            build_system_prompt(channel, message_style, business_name, business_description)
+        )
+        user_content = format_personalization_context(lead)
+        body = claude_client.call_text(system, user_content, model)
 
-    model = model or config.MODEL_MESSAGES
-    system = prompts.cacheable_system(
-        build_system_prompt(channel, message_style, business_name, business_description)
-    )
-    user_content = format_personalization_context(lead)
-    return claude_client.call_text(system, user_content, model)
+    # The guard covers the FIXED-TEMPLATE paths too, not just the AI one.
+    # Today's templates are each verified under the limit by construction,
+    # but a future owner-approved wording edit is exactly how this recurs:
+    # both the Zimmar (2026-09-13) and Insurance (2026-09-16) templates
+    # silently grew past LinkedIn's 750-char limit and only surfaced as
+    # MessageLengthInvalid at send time, after a human had already approved
+    # and queued them. Applying it once, at the single exit point, means no
+    # template can ever bypass it again.
+    return _enforce_channel_length(body, channel)
 
 
 def generate_followup_message(
-    lead: dict, channel: str, message_style: str, original_body: str, model: str | None = None,
+    lead: dict, channel: str, message_style: str, original_body: str,
+    model: str | None = None, follow_up_guidance: str | None = None,
 ) -> str:
     """
     Generate a follow-up message -- distinct from generate_message(): the
@@ -203,11 +398,18 @@ def generate_followup_message(
     second note, forbids repeating the original pitch) and the original
     sent message is included in the personalization context so Claude can
     actually avoid restating it rather than just being told not to.
+
+    `follow_up_guidance` is the owner's own free text from the Follow-ups
+    page (OutreachSettings.followUpGuidance) -- optional, added 2026-09-15.
+    Passed through as extra context only; _FOLLOWUP_RULES still applies in
+    full, so the result is never a fixed template, always a fresh message.
     """
     model = model or config.MODEL_MESSAGES
     business_name, business_description = _business_identity()
     system = prompts.cacheable_system(
         build_system_prompt(channel, message_style, business_name, business_description, is_followup=True)
     )
-    user_content = format_personalization_context(lead, original_body=original_body)
-    return claude_client.call_text(system, user_content, model)
+    user_content = format_personalization_context(
+        lead, original_body=original_body, follow_up_guidance=follow_up_guidance,
+    )
+    return _enforce_channel_length(claude_client.call_text(system, user_content, model), channel)

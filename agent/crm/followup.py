@@ -113,6 +113,11 @@ def dispatch_due_followups() -> list[dict]:
     same pattern as run_analysis_cycle/run_message_generation_cycle.
     """
     active_style = message_style.get_active_style()
+    # Owner-editable free text (Follow-ups page, OutreachSettings.followUpGuidance),
+    # applies to every follow-up for this tenant -- read once per dispatch
+    # batch, same reasoning as active_style above (settings don't change
+    # mid-batch). Added 2026-09-15.
+    follow_up_guidance = (repo.get_settings() or {}).get("follow_up_guidance") or None
     results = []
 
     for follow_up in due_followups():
@@ -128,7 +133,9 @@ def dispatch_due_followups() -> list[dict]:
             if not original_body:
                 raise ValueError(f"No sent {channel} message found for lead {lead_id} to follow up on.")
 
-            body = message_generate.generate_followup_message(lead, channel, active_style, original_body)
+            body = message_generate.generate_followup_message(
+                lead, channel, active_style, original_body, follow_up_guidance=follow_up_guidance,
+            )
             repo.insert_message({
                 "lead_id": lead_id,
                 "channel": channel,

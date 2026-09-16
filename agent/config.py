@@ -97,6 +97,19 @@ HEADLESS = _get("HEADLESS", "true").lower() == "true"
 # setting. Leave empty in production so the dashboard limits apply.
 DEV_MAX_LEADS_PER_ACCOUNT = _get("DEV_MAX_LEADS_PER_ACCOUNT")
 
+# Hard per-tenant, per-Claude-call-type ceiling for run_full_pipeline_cycle's
+# analysis/message-generation steps -- found uncapped in the 2026-09-09
+# platform review (scheduler.run_analysis_cycle/run_message_generation_cycle
+# both already accept a `limit`, but the once-daily scheduled call passed
+# none). Unlike DEV_MAX_LEADS_PER_ACCOUNT above, this is NOT dev-only: it's a
+# real production safety valve so a backlog spike (e.g. leads piling up
+# after an outage, or a burst of new discovery results) can't fire an
+# unbounded number of Claude API calls -- and rack up an unbounded bill -- in
+# a single run. Deliberately generous relative to any single tenant's normal
+# daily volume today; raise it if a real tenant's honest daily backlog ever
+# approaches it.
+MAX_LEADS_PER_CYCLE = int(_get("MAX_LEADS_PER_CYCLE", "300"))
+
 # Where each account's saved login session lives (see core/session.py).
 # Defaults to the in-repo agent/browser_profiles/ directory.
 #

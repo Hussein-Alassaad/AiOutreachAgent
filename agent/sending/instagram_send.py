@@ -48,6 +48,12 @@ from agent.crm import pipeline
 from agent.db import repositories as repo
 from agent.messaging import approval
 from agent.sending import attachments
+# Shared, single definition of "has the send click already happened, and what
+# is safe to write to the DB afterwards" -- see sending/delivery.py's own
+# module docstring for the real double-send vectors these close. Imported
+# rather than duplicated so no channel can drift away from the one invariant
+# the owner is emphatic about: a delivered message is never sent twice.
+from agent.sending.delivery import Delivery, settle_after_failure
 
 INSTAGRAM_INBOX_URL = "https://www.instagram.com/direct/inbox/"
 _HOME_URL = "https://www.instagram.com/"
@@ -161,16 +167,49 @@ def send_cold_message(message: dict) -> dict:
     if not account:
         raise ValueError(f"Lead {lead['id']} has no owning account to send from.")
 
-    with SessionManager() as sessions:
-        context, page, new_verified_ip = sessions.open(account)
-        if new_verified_ip and not account.get("verified_proxy_ip"):
-            repo.update_account(account["id"], {"verified_proxy_ip": new_verified_ip})
-        try:
-            page.goto(lead["profile_url"], timeout=30_000, wait_until="domcontentloaded")
-            _raise_if_logged_out(page, account)
-            _send_from_profile(page, lead, body)
-        finally:
-            sessions.close(account["id"], context)
+    # Claimed BEFORE the real send attempt, not after -- see
+    # repo.claim_message_for_sending's own docstring for the duplicate-send
+    # bug this closes (a crash between a successful real send and the old
+    # after-the-fact "sent" write would leave the row looking untouched, and
+    # the next cycle would send it again for real).
+    if repo.claim_message_for_sending(message["id"]) is None:
+        raise ValueError(f"Message {message['id']} is no longer pending -- already claimed or sent.")
+
+    delivery = Delivery()
+    try:
+        with SessionManager() as sessions:
+            context, page, new_verified_ip = sessions.open(account)
+            if new_verified_ip and not account.get("verified_proxy_ip"):
+                repo.update_account(account["id"], {"verified_proxy_ip": new_verified_ip})
+            try:
+                page.goto(lead["profile_url"], timeout=30_000, wait_until="domcontentloaded")
+                _raise_if_logged_out(page, account)
+                _send_from_profile(page, lead, body, delivery)
+            finally:
+                sessions.close(account["id"], context)
+    except NoMessageButtonAvailable as exc:
+        # PERMANENT failure -- see linkedin_send.py's identical handler for
+        # the full reasoning. A lead with no reachable Message button will
+        # never grow one on a later retry, so this is marked "failed" with
+        # a persisted reason instead of silently reset to "pending" forever.
+        # Raised strictly before any send click, so the delivered guard below
+        # is belt-and-braces, not expected to fire.
+        if delivery.delivered:
+            settle_after_failure(message, delivery, exc, channel="instagram")
+        else:
+            repo.update_message(message["id"], {
+                "send_status": "failed",
+                "send_failure_reason": str(exc),
+            })
+        raise
+    except Exception as exc:
+        # The real send attempt failed -- release the claim back to 'pending'
+        # ONLY if the send click provably never happened. This try block also
+        # encloses sessions.close(), which runs AFTER the click and can raise;
+        # resetting a delivered message here re-sent it for real next cycle.
+        # See linkedin_send.Delivery for the full write-up.
+        settle_after_failure(message, delivery, exc, channel="instagram")
+        raise
 
     now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
     updated_message = repo.update_message(message["id"], {
@@ -214,6 +253,16 @@ def send_reply(message: dict) -> dict:
     if not account:
         raise ValueError(f"Lead {lead['id']} has no owning account to send from.")
 
+    # REAL DOUBLE-SEND VECTOR, found and fixed 2026-09-16 -- see
+    # linkedin_send.send_reply()'s identical claim for the full write-up
+    # (same bug, both reply paths, same fix): this function had NO claim at
+    # all and wrote 'sent' only after the send click, so any failure after
+    # delivery left the row at 'pending' for repo.replies_pending() to
+    # re-select on the ~3-minute reply poll, unbounded by the daily cap.
+    if repo.claim_message_for_sending(message["id"]) is None:
+        raise ValueError(f"Message {message['id']} is no longer pending -- already claimed or sent.")
+
+    delivery = Delivery()
     try:
         if attachment_url:
             attachment_path = attachments.download_attachment(attachment_url, message.get("attachment_name"))
@@ -283,11 +332,29 @@ def send_reply(message: dict) -> dict:
                     human_type(box, body)
                 human_delay()
                 page.locator(_SEND_BUTTON_SELECTOR).first.click()
+                # The reply is now out. Nothing below may ever cause a retry.
+                delivery.mark()
             finally:
                 sessions.close(account["id"], context)
-    finally:
+    except Exception as exc:
+        # Release the claim back to 'pending' ONLY if the send click provably
+        # never happened -- sessions.close() and the attachment cleanup both
+        # run after the click and both can raise. See linkedin_send.Delivery.
         if attachment_path:
+            try:
+                attachments.cleanup_attachment(attachment_path)
+            except Exception:  # noqa: BLE001 -- a leftover temp file must never block the status write below
+                pass
+        settle_after_failure(message, delivery, exc, channel="instagram")
+        raise
+    # Deliberately not a `finally` any more -- a cleanup error on the success
+    # path used to escape before the 'sent' write below, leaving a genuinely
+    # delivered reply stuck at 'sending'.
+    if attachment_path:
+        try:
             attachments.cleanup_attachment(attachment_path)
+        except Exception:  # noqa: BLE001
+            pass
 
     now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
     return repo.update_message(message["id"], {
@@ -297,7 +364,7 @@ def send_reply(message: dict) -> dict:
     })
 
 
-def _send_from_profile(page: Page, lead: dict, body: str) -> None:
+def _send_from_profile(page: Page, lead: dict, body: str, delivery: Delivery) -> None:
     # LIVE-CONFIRMED 2026-09-06: page.goto()'s wait_until="domcontentloaded"
     # fires as soon as the HTML skeleton parses, well before Instagram's
     # client-side JS has actually rendered the profile header -- an instant
@@ -322,3 +389,5 @@ def _send_from_profile(page: Page, lead: dict, body: str) -> None:
     human_type(box, body)
     human_delay()
     page.locator(_SEND_BUTTON_SELECTOR).first.click()
+    # The message is now out. Nothing below this line may ever cause a retry.
+    delivery.mark()

@@ -19,6 +19,18 @@ from agent import config
 
 _client: Anthropic | None = None
 
+# Found un-set in the 2026-09-09 platform review: the SDK's own default
+# timeout is 10 minutes, which is fine for an interactive one-off call but
+# means a single hung request inside a batch cycle (run_analysis_cycle /
+# run_message_generation_cycle, each looping over every eligible lead) could
+# stall that entire cycle for up to 10 minutes before the SDK's own retry
+# logic even gets a chance to move on. Tightened to something a single
+# lead's analysis/message call has no legitimate reason to exceed.
+# max_retries is the SDK's existing default (2) -- set explicitly so it's a
+# documented choice here rather than an unstated library default.
+_REQUEST_TIMEOUT_SECONDS = 60.0
+_MAX_RETRIES = 2
+
 
 class ClaudeNotConfigured(RuntimeError):
     """Raised when analysis code needs Claude but no API key is set."""
@@ -35,7 +47,11 @@ def get_client() -> Anthropic:
                 "Missing ANTHROPIC_API_KEY in agent/.env — "
                 "get one from console.anthropic.com."
             )
-        _client = Anthropic(api_key=config.ANTHROPIC_API_KEY)
+        _client = Anthropic(
+            api_key=config.ANTHROPIC_API_KEY,
+            timeout=_REQUEST_TIMEOUT_SECONDS,
+            max_retries=_MAX_RETRIES,
+        )
 
     return _client
 
