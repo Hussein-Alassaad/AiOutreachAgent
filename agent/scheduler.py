@@ -1817,16 +1817,43 @@ def _discover_instagram(
                 # is now a HARD REJECT only on a POSITIVE foreign signal
                 # (foreign_marker, checked above -- this is what actually
                 # caught the real Dubai/Australia leads the owner flagged).
-                # A bio that just doesn't mention a city is no longer an
-                # instant reject -- qualify_profile's own
-                # _mentions_a_location() already scores this as a soft +1
-                # signal, exactly the "not very very strict" posture the
-                # owner asked for on location earlier tonight. Combined
-                # with 6 OTHER checks a candidate must already pass, this
-                # was one compounding rejection point too many for very
-                # little actual precision gain (LinkedIn's much stronger
-                # Headquarters-field version of this same rule already
-                # remains in place as a genuine safety net there).
+                #
+                # RE-TIGHTENED 2026-09-19, real owner audit of live results:
+                # Instagram hashtags (#construction, #security, etc.) have NO
+                # geography built in at all -- unlike LinkedIn's search, which
+                # applies a real companyHqGeo=Lebanon facet before this code
+                # ever sees a result. A hashtag search returns businesses from
+                # anywhere in the world, and most small-business Instagram
+                # bios simply never name a city/country either way (no
+                # "foreign_marker" to catch) -- so the relaxation above,
+                # meant to stop over-rejecting silent-bio LEBANESE companies,
+                # in practice let silent-bio FOREIGN companies through just
+                # as easily. Owner-confirmed live: under 10% of Zimmar's
+                # saved Instagram leads were actually Lebanese (India/Turkey/
+                # UAE accounts like jagmag.jaipur, bestwestern_amritsar,
+                # gurbuzplusinsaatt, horecastore.ae). Restored the same
+                # POSITIVE-signal requirement _discover_linkedin already
+                # enforces (see its own "has_lebanon_signal" block above),
+                # scoped the same way -- only for a tenant actually
+                # configured for "lebanon" specifically (Zimmar/Insurance),
+                # so this does not reintroduce the original over-rejection
+                # for a broader-market tenant like MJivity, whose bio
+                # legitimately may never mention Lebanon by name.
+                configured_location = (location or "").strip().lower()
+                if configured_location == "lebanon":
+                    has_lebanon_signal = any(place in bio_text.lower() for place in _LEBANON_PLACE_MARKERS)
+                    if not has_lebanon_signal:
+                        counts["skipped_leads"].append({
+                            "platform": "instagram",
+                            "identifier": profile.get("display_name") or profile_url,
+                            "reason": "configured for 'lebanon', but the bio names no Lebanese location -- no positive signal this is a Lebanese company.",
+                        })
+                        _progress_log.info(
+                            "[%s] Instagram round %d/%d: rejected (no Lebanon signal in bio) %s",
+                            account.get("label"), attempt + 1, _MAX_SEARCH_ATTEMPTS,
+                            profile.get("display_name") or profile_url,
+                        )
+                        continue
                 # BUGFIX 2026-09-17 -- see the identical, fully-explained fix
                 # in _discover_linkedin above: qualify-time niche must be
                 # THIS round's actual search_niche, not the single fixed
