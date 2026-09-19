@@ -869,6 +869,45 @@ _LEBANON_PLACE_MARKERS = [
     "keserwan", "chouf", "aley", "batroun", "koura",
 ]
 
+# ADDED 2026-09-19, real owner request ("can we have another way to check
+# if lebanese or not not from the bio"): a live-watched Instagram discovery
+# run showed a real cost of the strict place-name-only check above -- many
+# genuinely small Lebanese business bios never spell out a city name at
+# all (no "Beirut", no district), so a real Lebanese business could get
+# wrongly rejected right alongside the actual foreign ones this check
+# exists to catch. Two additional, independent positive signals, either of
+# which is enough on its own:
+#
+# 1. A Lebanese phone number. Lebanon's country code is +961, and a
+#    domestic number written without the country code still has a
+#    distinctive local pattern (a 2-digit area/mobile prefix, no 0 leading
+#    a +961-prefixed number). Matched loosely on "+961" or "961" followed
+#    by 7-8 digits, and separately on a bare local-format number (e.g.
+#    "03 123456", "70 123456", "01 123456") -- these area-code-style
+#    prefixes are genuinely Lebanon-specific, not a generic phone-number
+#    shape any country could produce.
+# 2. Arabic script anywhere in the bio. Most small Lebanese businesses
+#    write at least part of their bio in Arabic (or Franco-Arabic mixed
+#    with Latin script) even when they never name a city -- a foreign
+#    account (India, Turkey, US, etc.) essentially never does. This is a
+#    STRONG but not perfect signal (Arabic is also written across the rest
+#    of the Arabic-speaking world) -- kept as an additional OR, not a
+#    replacement for the place-name check, so it only ever WIDENS what
+#    counts as "confirmed Lebanese," never narrows it.
+_LEBANON_PHONE_RE = re.compile(r"(?:\+?961[\s.\-]?)(\d[\d\s.\-]{6,9}\d)|(?:\b0?(3|70|71|76|78|79|81)[\s.\-]?\d{3}[\s.\-]?\d{3}\b)")
+_ARABIC_SCRIPT_RE = re.compile(r"[؀-ۿ]")
+
+
+def _has_lebanon_phone_or_arabic(text: str) -> bool:
+    """True if `text` contains a Lebanese-looking phone number or any
+    Arabic-script character -- see the block comment above this function
+    for why each is a real, independent positive signal. Used as an
+    ADDITIONAL way to confirm a business is Lebanese, alongside (never
+    instead of) the place-name check in _LEBANON_PLACE_MARKERS."""
+    if not text:
+        return False
+    return bool(_LEBANON_PHONE_RE.search(text) or _ARABIC_SCRIPT_RE.search(text))
+
 
 # Maps each city/abbreviation in _FOREIGN_LOCATION_MARKERS to the wider
 # regions that contain it, so a tenant targeting a COUNTRY (or a bloc like
@@ -1424,15 +1463,16 @@ def _discover_linkedin(
                 # flagged Aramex/Dar before) -- only the weaker "is there ANY
                 # positive signal at all" bar applies here.
                 if not mismatch_reason and configured_location == "lebanon":
-                    has_lebanon_signal = any(
-                        place in headquarters or place in (profile.get("bio") or "").lower()
-                        for place in _LEBANON_PLACE_MARKERS
+                    bio_lower = (profile.get("bio") or "").lower()
+                    has_lebanon_signal = (
+                        any(place in headquarters or place in bio_lower for place in _LEBANON_PLACE_MARKERS)
+                        or _has_lebanon_phone_or_arabic(profile.get("bio") or "")
                     )
                     if not has_lebanon_signal:
                         mismatch_reason = (
                             "configured for 'lebanon', but neither the company's Headquarters "
-                            "field nor its bio names any Lebanese location -- no positive signal "
-                            "this is a Lebanese company."
+                            "field, bio location, phone number, nor Arabic text confirms this "
+                            "is a Lebanese company."
                         )
 
                 if mismatch_reason:
@@ -1869,12 +1909,24 @@ def _discover_instagram(
                 # legitimately may never mention Lebanon by name.
                 configured_location = (location or "").strip().lower()
                 if configured_location == "lebanon":
-                    has_lebanon_signal = any(place in bio_text.lower() for place in _LEBANON_PLACE_MARKERS)
+                    # WIDENED 2026-09-19, real owner request while watching
+                    # this exact check reject candidates live: a place name
+                    # is not the only way a bio confirms Lebanon -- a
+                    # Lebanese phone number (+961 or a local area-code
+                    # pattern) or any Arabic script in the bio are both
+                    # real, independent positive signals too (see
+                    # _has_lebanon_phone_or_arabic's own comment). This only
+                    # ADDS ways to pass, never removes the existing
+                    # place-name check.
+                    has_lebanon_signal = (
+                        any(place in bio_text.lower() for place in _LEBANON_PLACE_MARKERS)
+                        or _has_lebanon_phone_or_arabic(bio_text)
+                    )
                     if not has_lebanon_signal:
                         counts["skipped_leads"].append({
                             "platform": "instagram",
                             "identifier": profile.get("display_name") or profile_url,
-                            "reason": "configured for 'lebanon', but the bio names no Lebanese location -- no positive signal this is a Lebanese company.",
+                            "reason": "configured for 'lebanon', but the bio names no Lebanese location, phone number, or Arabic text.",
                         })
                         _progress_log.info(
                             "[%s] Instagram round %d/%d: rejected (no Lebanon signal in bio) %s",
