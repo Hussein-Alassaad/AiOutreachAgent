@@ -174,49 +174,44 @@ def _business_identity() -> tuple[str, str]:
 # normal AI-generation path below, completely untouched.
 _INSURANCE_BUSINESS_NAME = "Partners Insurance Consultancy"
 
-# SHORTENED 2026-09-16: the previous wording came out at 767 chars with a
-# short company name and 833 with a long one -- over LinkedIn Page inbox's
-# hard 25-750 limit in BOTH cases, which is why all 12 queued Insurance
-# LinkedIn messages failed with MessageLengthInvalid rather than sending.
-# Fixed the same durable way _ZIMMAR_TEMPLATE_LINKEDIN was: the closing
-# and gap lines no longer interpolate the company name anywhere except the
-# greeting, so a long real name ("Mediterranean Pharmaceutical Company")
-# can no longer push an otherwise-valid message over the limit. Only the
-# greeting varies now, so worst-case length is greeting + a fixed body.
-_INSURANCE_TEMPLATE_GAP = """Hello {company_name},
+# REPLACED 2026-09-19, real owner instruction: the old Template A implied
+# the company lacks insurance ("I noticed your team doesn't currently show
+# a group employee insurance benefit") -- owner does not want that
+# suggested AT ALL, since most companies already have some form of
+# insurance and the message shouldn't presume otherwise. New single angle,
+# used for every lead regardless of detected gap: lead with the fact that
+# NO insurer in Lebanon offers dental coverage, and that a company can add
+# it ALONGSIDE whatever commercial insurance they already have, not instead
+# of it. This replaces both former templates (gap/no-gap) with one -- the
+# "no assumption about existing coverage" framing makes the gap/no-gap
+# split itself unnecessary, and the owner's instruction was to remove the
+# assumption everywhere, not just in the no-gap case.
+#
+# Length checked against LinkedIn Page inbox's 25-750 char limit (see the
+# dated history above this comment for why that limit is load-bearing):
+# 620 chars with a long real company name ("Mediterranean Pharmaceutical
+# Company"), 589 with the "there" fallback -- both comfortably under 750,
+# same "only the greeting varies" structure that keeps a long name from
+# ever pushing this over the limit.
+_INSURANCE_TEMPLATE = """Hello {company_name},
 
-We're introducing Lebanon's first Dental Card — a dental benefit new to the market. Employees get annual coverage for cleanings, extractions, fillings, and one free consultation, plus 50-70% off implants, crowns, orthodontics, and oral surgery. No medical exams, no pre-existing condition screening, open to all ages from day one — just USD 50 per person/year.
+We're introducing Lebanon's first Dental Card — a dental benefit no insurance company in Lebanon currently offers. Even if you already have commercial insurance, you can add this while keeping your existing coverage as is.
 
-I noticed your team doesn't currently show a group employee insurance benefit, which is something we help companies put in place. We also provide Motor (All Risk), Medical/Health, and General/Commercial insurance.
+The dental card includes: annual coverage for cleanings, extractions, fillings, and one free consultation, plus 50-70% off implants, crowns, orthodontics, and oral surgery. No medical exams, no pre-existing condition screening, open to all ages from day one — just USD 50 per person/year.
 
 Would it be worth a quick call to see if this fits your team?"""
-
-_INSURANCE_TEMPLATE_NO_GAP = """Hello {company_name},
-
-We're introducing Lebanon's first Dental Card — the first dental benefit of its kind offered in the market. Employees get annual coverage for cleanings, extractions, fillings, and one free consultation, plus 50-70% off implants, crowns, orthodontics, and oral surgery. No medical exams, no pre-existing condition screening, available to employees of all ages from day one — just USD 50 per person/year.
-
-Partners Insurance Consultancy also provides Motor (All Risk), Medical/Health, and General/Commercial insurance for companies and individuals.
-
-Would it be worth a quick call to see how this could fit alongside what you already offer?"""
 
 
 def _insurance_fixed_template(lead: dict) -> str:
     """
-    Picks Template A (a real, detected gap exists) or Template B (none
-    detected) purely off whether analysis actually found something --
-    never invents a gap that isn't there, per the same "nothing from your
-    own" instruction the templates themselves follow.
+    Single fixed template for every Insurance lead, regardless of whether
+    analysis detected a "gap" -- see _INSURANCE_TEMPLATE's own comment for
+    why the owner had the former gap/no-gap split removed: it never assumes
+    (or implies) the company lacks insurance either way, only that dental
+    coverage is a genuinely new addition to whatever they already have.
     """
-    # Two different fallbacks on purpose: "Hello there," is correct English
-    # as a greeting, but "I noticed there doesn't currently show..." is not.
     company_name = lead.get("business_name") or "there"
-    weak_points = lead.get("weak_points") or []
-    if weak_points:
-        return _INSURANCE_TEMPLATE_GAP.format(
-            company_name=company_name,
-            company_in_sentence=_company_name_in_sentence(lead),
-        )
-    return _INSURANCE_TEMPLATE_NO_GAP.format(company_name=company_name)
+    return _INSURANCE_TEMPLATE.format(company_name=company_name)
 
 
 # FIXED templates for Zimmar (CCTV/network security review outreach),
