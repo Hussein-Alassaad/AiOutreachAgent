@@ -1464,6 +1464,28 @@ def _discover_linkedin(
                 # positive signal at all" bar applies here.
                 if not mismatch_reason and configured_location == "lebanon":
                     bio_lower = (profile.get("bio") or "").lower()
+                    # CONSIDERED and REJECTED 2026-09-19: adding
+                    # search_used_geo_facet itself as a 4th OR signal here,
+                    # to recover real false-negatives like Arabian
+                    # Construction Co. and UNITECH (independently confirmed
+                    # genuinely Lebanon-operating, but with English-only
+                    # LinkedIn About pages -- no city/phone/Arabic). NOT
+                    # done: search_used_geo_facet is computed once from
+                    # `linkedin.LOCATION_FACETS.get(configured_location)`,
+                    # which is a fixed fact about the SEARCH itself (Lebanon
+                    # always has a known facet id), not per-candidate
+                    # evidence -- it is True for every single Zimmar/
+                    # Insurance candidate this whole session, not just the
+                    # ones that are genuinely Lebanese. Using it here would
+                    # make has_lebanon_signal always True and silently
+                    # revert to tonight's original bug (Evans Engineering,
+                    # ITT Inc., Bitarchitects would all pass again). A real
+                    # per-candidate version of this idea needs LinkedIn to
+                    # expose something like "this specific result's location
+                    # facet actually matched," which the current scrape does
+                    # not read -- flagging as a genuine open gap rather than
+                    # shipping a fix that quietly undoes tonight's real
+                    # progress.
                     has_lebanon_signal = (
                         any(place in headquarters or place in bio_lower for place in _LEBANON_PLACE_MARKERS)
                         or _has_lebanon_phone_or_arabic(profile.get("bio") or "")
