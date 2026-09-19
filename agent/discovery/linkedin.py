@@ -313,7 +313,18 @@ def extract_company_profile(page: Page) -> dict:
 
     description = _safe_text(about_section.locator("p").first)
 
-    website = _unwrap_redirect(_safe_attr(about_section.locator("dd a").first, "href"))
+    # Was `about_section.locator("dd a").first` -- blindly grabbed whichever
+    # <a> happened to render FIRST anywhere in the whole About <dl>, with no
+    # check it was actually the Website field. REAL BUG found 2026-09-19:
+    # for companies whose About page lists a Phone field before (or instead
+    # of) Website, this grabbed a `tel:+961...` link as the "website" --
+    # confirmed live for 2 real Zimmar leads (FOOD RETAIL SAL, FRC -
+    # Franchise Retail Concept), silently poisoning every downstream Hunter
+    # email lookup for them (a phone number obviously has no domain to
+    # search). Same _dd_after_label() helper Headquarters/Industry already
+    # use below, scoped to the actual "Website" label so a Phone/other field
+    # rendering first can never be mistaken for it again.
+    website = _unwrap_redirect(_safe_attr(_dd_after_label(about_section, "Website").locator("a").first, "href"))
     size_text = _safe_text(_dd_after_label(about_section, "Company size"))
     # LIVE-ADDED 2026-09-01: LinkedIn's own companyHqGeo search facet
     # (build_search_url above) let a UK company (ZAM FM LTD) through a

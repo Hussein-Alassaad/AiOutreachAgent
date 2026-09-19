@@ -448,6 +448,33 @@ def _run_cycle_for_tenant(tenant_id: str, target_url: str, force: bool) -> list[
     return results
 
 
+# ADDED 2026-09-19: a company's bio text (Instagram especially, but also a
+# LinkedIn About description) sometimes spells out a real contact email
+# directly, in plain text, with no click or external lookup needed at all --
+# e.g. "Reach us: info@company.com" or "orders@shopname.com for wholesale".
+# Real audit that day found Instagram leads NEVER got a chance at an email
+# through Hunter (that path is LinkedIn-website-domain-only -- Instagram's
+# own website field is structurally empty, see instagram.py's
+# extract_profile_data() docstring for why), so this bio scan is the one
+# email source that costs nothing extra (no click, no API call, no added
+# automation risk) and works for both platforms alike. Deliberately a plain,
+# conservative pattern -- no attempt to validate the domain or guess at
+# obfuscated forms ("name [at] company [dot] com") since a wrong guess here
+# would silently poison a real send later; a bio with no plain email simply
+# yields None, same as if this check didn't exist.
+_BIO_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+
+
+def _email_from_bio(bio: str | None) -> str | None:
+    """First plain-text email address found in a bio, or None. See
+    _BIO_EMAIL_RE's own comment for why this stays a simple, literal match
+    rather than trying to catch obfuscated forms."""
+    if not bio:
+        return None
+    match = _BIO_EMAIL_RE.search(bio)
+    return match.group(0) if match else None
+
+
 def _save_if_qualified(
     account: dict, platform: str, profile_url: str, raw_profile: dict, niche: str = ""
 ) -> bool:
@@ -455,14 +482,44 @@ def _save_if_qualified(
     Shared save step for both platforms: skip if this profile is already
     known, qualify it, and insert into `leads` with status "discovered" if it
     passes. Returns True if a new lead was actually saved.
+
+    Thin wrapper kept for any other/future caller that only needs the bool --
+    see _save_if_qualified_with_reasons for the version the discovery loops
+    actually use, which also surfaces qualify_profile's `reasons` so a
+    rejection is diagnosable from logs alone (2026-09-17, see that function's
+    own docstring).
+    """
+    saved, _reasons = _save_if_qualified_with_reasons(account, platform, profile_url, raw_profile, niche)
+    return saved
+
+
+def _save_if_qualified_with_reasons(
+    account: dict, platform: str, profile_url: str, raw_profile: dict, niche: str = ""
+) -> tuple[bool, list[str]]:
+    """
+    Same behavior as _save_if_qualified, but also returns qualify_profile's
+    `reasons` list so the caller can log WHY a candidate was rejected, not
+    just that it was.
+
+    ADDED 2026-09-17: tonight's real niche-mismatch bug (see the call sites
+    in _discover_linkedin/_discover_instagram) was hard to diagnose from logs
+    alone precisely because a rejection's `reasons` were computed by
+    qualify_profile() and then thrown away right here, leaving only "rejected
+    by qualify_profile: <name>" with no indication of which check(s) actually
+    failed. Returning `reasons` (instead of discarding them on a `qualifies is
+    False` return) closes that observability gap going forward.
+
+    Returns (False, []) -- not qualify_profile's reasons -- for the
+    already-known-profile short-circuit, since that's a dedupe skip, not a
+    qualify_profile rejection; there is nothing to explain.
     """
     if repo.lead_profile_url_exists(account["tenant_id"], profile_url):
-        return False
+        return False, []
 
     normalised = {**raw_profile, "platform": platform}
     qualifies, reasons = qualify_profile(normalised, niche)
     if not qualifies:
-        return False
+        return False, reasons
 
     repo.insert_lead(account["tenant_id"], {
         "account_id": account["id"],
@@ -486,10 +543,19 @@ def _save_if_qualified(
         # nobody noticed.
         "bio": raw_profile.get("bio"),
         "engagement_sample": raw_profile.get("engagement_sample"),  # Instagram only -- null on LinkedIn leads
+        # See _email_from_bio()'s own comment -- a plain-text email in the
+        # bio itself, found for free at discovery time, no Hunter call
+        # needed. Populating contact_email here directly (rather than only
+        # ever setting it in _maybe_find_email's later Hunter-driven lead)
+        # means run_message_generation_cycle can draft this lead an email
+        # message on its OWN row instead of needing a second linked lead --
+        # simpler, and the fastest possible path from "bio has an email" to
+        # "message drafted".
+        "contact_email": _email_from_bio(raw_profile.get("bio")),
         "status": "discovered",
         "notes": " | ".join(reasons),  # keeps the qualification reasoning on the record
     })
-    return True
+    return True, reasons
 
 
 def run_discovery_cycle(force: bool = False) -> list[dict]:
@@ -1011,6 +1077,48 @@ def _next_search_terms(
     return None
 
 
+def _linkedin_scrape_looks_empty(profile: dict) -> bool:
+    """
+    True when a LinkedIn /about scrape came back with NOTHING at all -- the
+    signature of a page that never finished client-side rendering, not of a
+    real company with a thin profile.
+
+    LIVE-CONFIRMED 2026-09-18, the single biggest drag on discovery
+    throughput found so far. The droplet is 1 vCPU/1.9GB (see session.py's
+    own comment) and _discover_linkedin navigates with
+    wait_until="domcontentloaded", which fires as soon as the raw HTML
+    document parses -- well before LinkedIn's SPA JS has populated the
+    About panel. extract_company_profile() already waits up to 8s for the
+    about-module's first <p> to attach, but under real CPU contention that
+    wait times out often enough to matter, and the function then returns an
+    entirely empty profile.
+
+    qualify_profile() has no way to tell that apart from a genuinely empty
+    company page, so it rejected each one "correctly but wrongly" at score
+    -6 with an identical all-empty reason list ("Bio is missing / No website
+    linked / Zero posts / doesn't mention niche"). Insurance's Sept 18 run:
+    161 candidates visited, 5 saved (3.1%), 137 qualify-rejections of which
+    96 scored exactly -6 on that identical list and 117/137 (85%) included
+    "Bio is missing" -- among them DocShipper, GFS Global Group, Regie
+    Libanaise and Advanced Lines Group, all real Lebanese companies with
+    real websites, bios and posts. Zimmar's run the same night: 11 visits,
+    5 saves (45%). The controlled proof is Insurance's own round 20, whose
+    'telecommunications' search happened to render properly: 2 visits, 2
+    saves, 0 rejections.
+
+    ALL FOUR fields must be empty for this to fire. A company with a bio but
+    no website (or a website but no posts) is a real, partial profile that
+    should go to qualification exactly as before -- this must never trigger
+    an extra page load on the happy path.
+    """
+    return (
+        not (profile.get("bio") or "").strip()
+        and not profile.get("website")
+        and not (profile.get("post_count") or 0)
+        and not (profile.get("headquarters") or "").strip()
+    )
+
+
 def _discover_linkedin(
     account: dict, page, niche: str, location: str, industry: str, counts: dict,
     min_company_size: int | None = None, niche_is_random: bool = False,
@@ -1145,6 +1253,79 @@ def _discover_linkedin(
                 posts_info = linkedin.extract_recent_posts(page)
                 profile["post_count"] = posts_info["visible_post_count"]
                 profile["recent_activity"] = posts_info["recent_activity"]
+
+                # SCRAPE-FAILURE RETRY, added 2026-09-18 -- see
+                # _linkedin_scrape_looks_empty() above for the full live
+                # evidence. An all-empty /about scrape means the page never
+                # rendered, not that the company is a bad lead, so it must
+                # never reach ANY of the checks below as if it were real data.
+                # This sits here, before the location/competitor/size checks
+                # rather than just before qualification, deliberately: an
+                # empty scrape fails those too (a tenant whose location has no
+                # verified geo facet rejects it outright at "neither the
+                # Headquarters field nor its bio names any Lebanese
+                # location"), and recovered data has to flow through every one
+                # of them, not only through qualify_profile().
+                #
+                # Retried ONCE, and only on that exact all-empty signature: a
+                # partial or normal scrape falls straight through with no
+                # extra page load at all, exactly as before.
+                if _linkedin_scrape_looks_empty(profile):
+                    _progress_log.info(
+                        "[%s] LinkedIn round %d/%d: empty /about scrape, retrying once: %s",
+                        account.get("label"), attempt + 1, _MAX_SEARCH_ATTEMPTS,
+                        result.get("display_name") or profile_url,
+                    )
+                    # networkidle (not domcontentloaded) is the whole point of
+                    # the retry: it waits for LinkedIn's SPA to actually stop
+                    # fetching, which is exactly what the first load didn't do.
+                    # The explicit wait_for_selector mirrors
+                    # extract_company_profile()'s own anchor
+                    # (section.org-about-module__margin-bottom) so the retry
+                    # waits for the real content it's about to read, not just
+                    # that section's empty shell.
+                    try:
+                        page.goto(
+                            profile_url.rstrip("/") + "/about/",
+                            timeout=45_000, wait_until="networkidle",
+                        )
+                        page.wait_for_selector(
+                            "section.org-about-module__margin-bottom p", timeout=10_000,
+                        )
+                    except Exception:  # noqa: BLE001 -- extraction below tolerates a half-loaded page, and a still-empty result is handled as a scrape failure right after
+                        pass
+                    retried = linkedin.extract_company_profile(page)
+                    retried["display_name"] = result.get("display_name")
+                    # post_count/recent_activity come from the /posts/ tab, not
+                    # from /about -- carry the earlier real read across rather
+                    # than letting extract_company_profile()'s own placeholders
+                    # (post_count=None, recent_activity=True) overwrite it.
+                    retried["post_count"] = profile.get("post_count")
+                    retried["recent_activity"] = profile.get("recent_activity")
+                    if _linkedin_scrape_looks_empty(retried):
+                        # Still nothing after a full networkidle load: log it
+                        # as what it actually is. Before this, a rendering
+                        # failure was indistinguishable in the progress log
+                        # from a genuine qualify rejection, which is precisely
+                        # what made a page-timing problem masquerade as a
+                        # lead-quality problem for an entire night.
+                        counts["skipped_leads"].append({
+                            "platform": "linkedin",
+                            "identifier": result.get("display_name") or profile_url,
+                            "reason": "Scrape failed: LinkedIn /about rendered empty twice -- not a lead-quality rejection.",
+                        })
+                        _progress_log.info(
+                            "[%s] LinkedIn round %d/%d: scrape failed (empty /about after retry): %s",
+                            account.get("label"), attempt + 1, _MAX_SEARCH_ATTEMPTS,
+                            result.get("display_name") or profile_url,
+                        )
+                        continue
+                    profile = retried
+                    _progress_log.info(
+                        "[%s] LinkedIn round %d/%d: retry recovered real /about data: %s",
+                        account.get("label"), attempt + 1, _MAX_SEARCH_ATTEMPTS,
+                        result.get("display_name") or profile_url,
+                    )
 
                 # LIVE-CONFIRMED 2026-09-01: LinkedIn's own companyHqGeo search
                 # facet let a UK company (ZAM FM LTD, Manchester) through a
@@ -1309,7 +1490,37 @@ def _discover_linkedin(
                 # glance -- see outreach-approvals.ts's own comment on
                 # sendStatusReason.
 
-                if _save_if_qualified(account, "linkedin", profile_url, profile, niche):
+                # BUGFIX 2026-09-17, real live-confirmed harm: this used to
+                # pass the outer `niche` -- resolved ONCE at the top of the
+                # whole discovery cycle (_resolve_search_niche, called from
+                # _run_discovery_cycle_for_tenant) -- into qualification, even
+                # though `search_niche` (this round's ACTUAL search keyword,
+                # which rotates every round for an empty/service niche via
+                # _next_search_terms) is what really found this candidate.
+                # LIVE-CONFIRMED tonight: Zimmar and Insurance both searched
+                # "construction" in one of their rounds and surfaced the same
+                # real companies (Arabian Construction Co., UNITECH, Evans
+                # Engineering, Regbar, Murex, ITG Holding, Sword Group,
+                # NavLink, Falcon Logistics, ...). Zimmar's fixed top-of-run
+                # `niche` happened to be "construction" too, so its
+                # _mentions_niche check passed; Insurance's fixed top-of-run
+                # `niche` had randomly landed on a DIFFERENT, unrelated word,
+                # so the identical real candidates all took the -2
+                # "bio does not mention the target niche" penalty and were
+                # rejected -- purely from this mismatch, not from being bad
+                # leads. Passing `search_niche` (this round's real keyword)
+                # instead makes qualify-time relevance always match what was
+                # actually searched for. For a tenant with a real configured
+                # niche this is a no-op: _next_search_terms only ever PEELS
+                # that real niche into a still-on-topic substring
+                # ("Security and building infrastructure integration" ->
+                # "infrastructure integration"), never swaps in an unrelated
+                # word, so search_niche and niche stay meaningfully the same
+                # topic for those tenants exactly as before.
+                qualifies, reasons = _save_if_qualified_with_reasons(
+                    account, "linkedin", profile_url, profile, search_niche
+                )
+                if qualifies:
                     counts["linkedin_saved"] += 1
                     _progress_log.info(
                         "[%s] LinkedIn round %d/%d: SAVED %s",
@@ -1318,9 +1529,9 @@ def _discover_linkedin(
                     )
                 else:
                     _progress_log.info(
-                        "[%s] LinkedIn round %d/%d: rejected by qualify_profile: %s",
+                        "[%s] LinkedIn round %d/%d: rejected by qualify_profile: %s -- reasons: %s",
                         account.get("label"), attempt + 1, _MAX_SEARCH_ATTEMPTS,
-                        result.get("display_name") or profile_url,
+                        result.get("display_name") or profile_url, reasons,
                     )
             except Exception as exc:  # noqa: BLE001 -- one bad lead shouldn't stop the rest of the batch
                 counts["skipped_leads"].append({
@@ -1616,7 +1827,14 @@ def _discover_instagram(
                 # little actual precision gain (LinkedIn's much stronger
                 # Headquarters-field version of this same rule already
                 # remains in place as a genuine safety net there).
-                if _save_if_qualified(account, "instagram", profile_url, profile, niche):
+                # BUGFIX 2026-09-17 -- see the identical, fully-explained fix
+                # in _discover_linkedin above: qualify-time niche must be
+                # THIS round's actual search_niche, not the single fixed
+                # `niche` resolved once at the top of the whole cycle.
+                qualifies, reasons = _save_if_qualified_with_reasons(
+                    account, "instagram", profile_url, profile, search_niche
+                )
+                if qualifies:
                     counts["instagram_saved"] += 1
                     _progress_log.info(
                         "[%s] Instagram round %d/%d: SAVED %s",
@@ -1625,9 +1843,9 @@ def _discover_instagram(
                     )
                 else:
                     _progress_log.info(
-                        "[%s] Instagram round %d/%d: rejected by qualify_profile: %s",
+                        "[%s] Instagram round %d/%d: rejected by qualify_profile: %s -- reasons: %s",
                         account.get("label"), attempt + 1, _MAX_SEARCH_ATTEMPTS,
-                        profile.get("display_name") or profile_url,
+                        profile.get("display_name") or profile_url, reasons,
                     )
             except Exception as exc:  # noqa: BLE001 -- one bad lead shouldn't stop the rest of the batch
                 counts["skipped_leads"].append({
@@ -1748,10 +1966,34 @@ def _maybe_find_email(tenant_id: str, lead: dict, founder_name: str | None) -> N
     catches it the same way any other per-lead external-service failure
     already is.
     """
-    if lead.get("platform") != "linkedin":
-        return
+    # Was hard-restricted to platform=="linkedin" only -- removed
+    # 2026-09-19. Real audit that day found Zimmar's 44 Instagram leads (its
+    # single biggest source) got ZERO shot at an email purely from this
+    # gate, not from Hunter failing. This check now only needs a real
+    # `website` value, whichever platform found it -- LinkedIn is simply the
+    # only platform that currently ever populates one (Instagram's bio-link
+    # requires a real click to reveal per instagram.py's own
+    # extract_profile_data() docstring, a separate, not-yet-built fix; this
+    # change just stops silently discarding the field's value if/when that
+    # ever changes, and costs nothing today since it stays empty either way).
     domain = _bare_domain(lead.get("website"))
     if not domain:
+        return
+
+    # Domain-sanity check (2026-09-17, real bad match this fixes): a
+    # LinkedIn profile's "website" field is sometimes a bio-link/social
+    # platform URL (e.g. https://linktr.ee/KedemosEducation), not the
+    # company's own site. Searching Hunter against a bare domain like
+    # "linktr.ee" -- for EITHER tier below, person lookup or domain search
+    # -- returns an email Hunter has on file for that PLATFORM, unrelated
+    # to the actual lead (confirmed: "Kedemos Education" got
+    # pooya@linktr.ee this way). Bail out before calling Hunter at all
+    # rather than manufacturing a confident-looking but wrong email lead.
+    if hunter.is_blocklisted_domain(domain):
+        _progress_log.info(
+            "[email-lookup] skipping lead=%s: website resolves to generic platform "
+            "domain %s, not the company's own site", lead.get("id"), domain,
+        )
         return
 
     # Hunter is the ACTIVE provider (trialing its 50 free credits/month
@@ -1946,6 +2188,20 @@ def run_message_generation_cycle(limit: int | None = None) -> list[dict]:
 
 def _run_message_generation_cycle_for_tenant(limit: int | None) -> list[dict]:
     leads = repo.leads_by_status("analyzed")
+
+    # Recovery for leads stranded past "analyzed" with no message ever
+    # created (found 2026-09-19: 3 real Insurance leads sat untouched for 4
+    # days this way -- see stranded_approved_leads_missing_message()'s own
+    # docstring for how they get into this state). Reset each one back to
+    # "analyzed" first so the untouched loop below treats it exactly like a
+    # normal freshly-analyzed lead -- same generation path, same approval
+    # gate afterward, nothing special-cased past this point.
+    stranded = repo.stranded_approved_leads_missing_message()
+    for lead in stranded:
+        repo.update_lead(lead["id"], {"status": "analyzed"})
+        lead["status"] = "analyzed"
+    leads = leads + stranded
+
     if limit is not None:
         leads = leads[:limit]
 
@@ -1966,6 +2222,14 @@ def _run_message_generation_cycle_for_tenant(limit: int | None) -> list[dict]:
         channels = [lead.get("platform")]
         if lead.get("whatsapp_found"):
             channels.append("whatsapp")
+        # ADDED 2026-09-19, same additional-channel pattern as whatsapp_found
+        # above: a LinkedIn/Instagram lead whose bio had a plain-text email
+        # (see _email_from_bio() at discovery time) now also gets a real
+        # email message drafted on the SAME lead row, in addition to its
+        # primary-platform message -- not a replacement, same reasoning as
+        # WhatsApp: an extra channel is strictly additive, never instead of.
+        if lead.get("platform") != "email" and lead.get("contact_email") and "email" not in channels:
+            channels.append("email")
 
         try:
             primary_body = None
@@ -2586,22 +2850,46 @@ def run_full_pipeline_cycle() -> dict:
 _DOWNSTREAM_HOUR = 0
 _DOWNSTREAM_MINUTE = 30
 
+# SECOND daily run, added 2026-09-19: 00:30 alone left leads stranded up to
+# 24h in two real cases -- (1) a discovery job that runs late in the
+# 20:00-24:00 window (or overruns past midnight) finds leads AFTER 00:30 has
+# already passed for the night, so they sit un-drafted until the NEXT
+# night's 00:30; (2) a lead that slips past "analyzed" into "approved"/
+# "awaiting_approval" with no message ever created (see
+# stranded_approved_leads_missing_message()'s docstring for the real
+# Insurance leads found stuck this way) previously had no recovery until
+# the next 00:30 either. This second pass at 07:00 -- an hour before the
+# 08:00 sending window opens -- gives both cases a second chance same
+# morning instead of waiting a full extra day, and reviewers still get an
+# hour to approve anything freshly drafted before sending starts.
+_DOWNSTREAM_SECOND_HOUR = 7
+_DOWNSTREAM_SECOND_MINUTE = 0
+
 # How often run_reply_send_cycle() polls for tenant-written replies waiting
-# to go out -- see build_daily_schedule()'s IntervalTrigger job. Short
-# enough that a reply feels close to real-time, long enough not to hammer
-# LinkedIn/Instagram with constant inbox-open requests across every tenant
-# with a reply-less-empty queue.
-_REPLY_POLL_INTERVAL_MINUTES = 3
+# to go out -- see build_daily_schedule()'s IntervalTrigger job.
+#
+# RAISED 3 -> 30 on 2026-09-17: at 3 minutes, this and the detection poll
+# below together opened a fresh browser session ~20 times an hour, every
+# hour, on a 1 vCPU / 1.9GB droplet where a single Chromium instance alone
+# uses ~40-45% of available RAM. LIVE-CONFIRMED that morning: Zimmar
+# LinkedIn's scheduled sending job failed 3/3 attempts on page-load and
+# element-wait timeouts, each one landing within seconds of a reply-poll
+# cycle also having a browser open -- real resource contention, not a
+# broken selector (the same code had sent successfully the day before).
+# 30 minutes cuts these poll-driven browser opens by ~90% for a real cost
+# the owner explicitly accepted: a tenant-written reply can now take up to
+# ~30 min to actually go out instead of ~3, which is still fine for this
+# product's cadence.
+_REPLY_POLL_INTERVAL_MINUTES = 30
 
 # How often run_reply_detection_poll() re-checks every "contacted"/"replied"
-# lead's real inbox for a new incoming reply -- same real-time-feel
-# reasoning as _REPLY_POLL_INTERVAL_MINUTES above (this is the DETECTING
-# counterpart to that SENDING poll), same interval so a reply and its
-# eventual delivery both surface on a similarly fast cadence, live-fixed
-# 2026-09-07 (see run_reply_detection_poll()'s own docstring for the real
-# gap this closes -- a reply sitting undetected for up to 24h waiting on
-# the old once-daily check).
-_REPLY_DETECTION_POLL_INTERVAL_MINUTES = 3
+# lead's real inbox for a new incoming reply -- same reasoning and same
+# 2026-09-17 change as _REPLY_POLL_INTERVAL_MINUTES above. A real incoming
+# reply from a lead can now take up to ~30 min to show up in the dashboard
+# instead of ~3 -- accepted tradeoff for removing the resource contention
+# that was causing real send failures (see that constant's own comment for
+# the live incident this closes).
+_REPLY_DETECTION_POLL_INTERVAL_MINUTES = 30
 
 # How often run_account_health_check_cycle() re-visits each connected
 # LinkedIn/Instagram account -- hours, not minutes, deliberately: this is
@@ -2623,11 +2911,18 @@ _ACCOUNT_HEALTH_CHECK_INTERVAL_HOURS = 4
 # -- this is the minutes-scale rhythm BETWEEN sends, which nothing covered.
 #
 # Randomized rather than a fixed gap on purpose: a message every exactly-15
-# minutes is its own detectable fingerprint. With warm-up caps currently at
-# 5-10 messages/day this spreads a real run across roughly 1-3 hours, which
-# is why a long-running job is acceptable here -- see _sleep_between_sends().
-_SEND_GAP_MIN_SECONDS = 8 * 60
-_SEND_GAP_MAX_SECONDS = 25 * 60
+# minutes is its own detectable fingerprint.
+#
+# TIGHTENED 2026-09-17 (owner's explicit request): the send-limit override
+# raised the daily cap to 15/account, but at the original 8-25 min gap (avg
+# ~16.5 min), 10 messages average ~2.5 hours end to end -- routinely
+# spilling past the owner's intended ~2-hour morning sending window rather
+# than reliably finishing inside it. 6-13 min (avg ~9.5 min) puts 10
+# messages at ~85 min average, comfortably inside 2 hours even on a
+# slower-than-average day, while still varying run to run rather than
+# landing on a fixed interval.
+_SEND_GAP_MIN_SECONDS = 6 * 60
+_SEND_GAP_MAX_SECONDS = 13 * 60
 
 # Two non-overlapping daily windows, Beirut time, owner's design
 # (2026-09-16): ALL sending happens 08:00-12:00, ALL discovery happens
@@ -2656,6 +2951,22 @@ _DISCOVERY_WINDOW_START_HOUR = 20
 _DISCOVERY_WINDOW_END_HOUR = 24
 
 
+# Minutes-since-midnight ranges that _spread_within_window() must never
+# land inside, even by chance. Added 2026-09-17: Insurance's discovery
+# anchors (23:00/23:02 +/-10 min) sit INSIDE Zimmar's own 20:00-24:00
+# discovery window, and with Zimmar down to just 2 active accounts
+# (LinkedIn/Instagram paused that day), its random draws landed at 22:51,
+# 23:05, 23:07, and 23:11 across four separate rebuilds -- squarely inside
+# Insurance's reserved band. This isn't a rare coincidence: with only 2
+# jobs to place evenly across 240 minutes, a wide +/-15 min jitter has a
+# real, non-trivial chance of drifting into any given ~24-minute band
+# (22:48-23:12) each time the schedule rebuilds. Excluding this band from
+# every OTHER tenant's spread (not just Zimmar's -- any future tenant using
+# _spread_within_window() inherits the same protection automatically)
+# closes the gap at its root instead of hoping jitter avoids it.
+_RESERVED_MINUTE_RANGES: list[tuple[int, int]] = []
+
+
 def _spread_within_window(index: int, total: int, start_hour: int, end_hour: int) -> tuple[int, int]:
     """
     Place job `index` of `total` evenly inside [start_hour, end_hour), then
@@ -2666,17 +2977,49 @@ def _spread_within_window(index: int, total: int, start_hour: int, end_hour: int
     Clamped to stay strictly inside the window: the jitter must never push
     a job past the boundary, or a "sending" job could drift into the
     discovery window and reintroduce exactly the session-lock contention
-    these windows exist to prevent.
+    these windows exist to prevent. Also re-drawn (not just re-jittered --
+    a fresh random.randint() call, not a clamp) if it lands inside any
+    range in _RESERVED_MINUTE_RANGES, so it can't collide with another
+    tenant's own reserved/anchored slot -- see that constant's own comment.
     """
     window_minutes = (end_hour - start_hour) * 60
     # Evenly spaced slots, offset by half a slot so the first job isn't at
     # the very edge of the window and the last isn't at the very end.
     slot = window_minutes // max(total, 1)
     base = start_hour * 60 + slot * index + slot // 2
-    jittered = base + random.randint(-_RUN_TIME_JITTER_MINUTES, _RUN_TIME_JITTER_MINUTES)
     earliest = start_hour * 60
     latest = end_hour * 60 - 1
-    return divmod(max(earliest, min(latest, jittered)), 60)
+    for _attempt in range(20):  # bounded re-draw, never an infinite loop
+        jittered = base + random.randint(-_RUN_TIME_JITTER_MINUTES, _RUN_TIME_JITTER_MINUTES)
+        total_minutes = max(earliest, min(latest, jittered))
+        if not any(lo <= total_minutes <= hi for lo, hi in _RESERVED_MINUTE_RANGES):
+            return divmod(total_minutes, 60)
+    # Exhausted retries. LIVE-CAUGHT 2026-09-17: with `base` itself landing
+    # inside a reserved range (e.g. 2 accounts split 20:00-24:00 puts one
+    # slot's center at exactly 23:00, dead center of Insurance's reserved
+    # band), 20 re-draws of a +/-15 min jitter around that same bad center
+    # can plausibly ALL land back inside it -- and the old fallback to
+    # `base` unjittered just re-landed in the reserved zone every time,
+    # silently defeating the whole point of this function. Instead, walk
+    # outward one minute at a time from `base` in both directions until a
+    # minute outside every reserved range (and inside the window) is found
+    # -- this always terminates (window_minutes is finite) and always
+    # returns a genuinely safe time, unlike re-trying the same bad center.
+    for offset in range(1, window_minutes + 1):
+        for candidate in (base - offset, base + offset):
+            if earliest <= candidate <= latest and not any(
+                lo <= candidate <= hi for lo, hi in _RESERVED_MINUTE_RANGES
+            ):
+                return divmod(candidate, 60)
+    # Every minute in the window is reserved (reserved ranges configured to
+    # cover the whole window) -- nothing safe exists to return; this is a
+    # misconfiguration, not a runtime fluke, so fail loudly rather than
+    # silently schedule inside a reserved band.
+    raise RuntimeError(
+        f"_spread_within_window({index}, {total}, {start_hour}, {end_hour}): "
+        f"every minute in this window is covered by _RESERVED_MINUTE_RANGES "
+        f"({_RESERVED_MINUTE_RANGES}) -- no safe time exists to schedule."
+    )
 
 # Randomized jitter applied to every per-account discovery and sending job's
 # scheduled time, re-drawn each time build_daily_schedule() runs.
@@ -2762,6 +3105,23 @@ _INSURANCE_SENDING_MINUTE = 0
 # chosen anchors instead of drifting as far as the general-purpose jitter
 # would allow.
 _INSURANCE_JITTER_MINUTES = 10
+
+# Populates _RESERVED_MINUTE_RANGES (declared up near _spread_within_window,
+# before these anchors existed) with Insurance's own anchored bands, widened
+# a couple minutes past its own +/-_INSURANCE_JITTER_MINUTES so another
+# tenant's spread draw can't land RIGHT next to Insurance's actual jittered
+# time either. Module-load-time, not per-build -- these bands are fixed
+# regardless of how Insurance's own time jitters run to run.
+_RESERVED_MINUTE_RANGES.extend([
+    (
+        _INSURANCE_DISCOVERY_HOUR * 60 + _INSURANCE_DISCOVERY_MINUTE - _INSURANCE_JITTER_MINUTES - 2,
+        _INSURANCE_DISCOVERY_HOUR * 60 + _INSURANCE_DISCOVERY_MINUTE_EMAIL + _INSURANCE_JITTER_MINUTES + 2,
+    ),
+    (
+        _INSURANCE_SENDING_HOUR * 60 + _INSURANCE_SENDING_MINUTE - _INSURANCE_JITTER_MINUTES - 2,
+        _INSURANCE_SENDING_HOUR * 60 + _INSURANCE_SENDING_MINUTE + _INSURANCE_JITTER_MINUTES + 2,
+    ),
+])
 
 
 def _insurance_jittered_minutes(hour: int, minute: int) -> tuple[int, int]:
@@ -2919,6 +3279,10 @@ def build_daily_schedule() -> BackgroundScheduler:
         return _insurance_tenant_cache[tenant_id]
 
     # DISCOVERY -- night window (20:00-24:00 Beirut), every active account.
+    # Minutes already taken by an Insurance discovery job in THIS build, so
+    # its two anchored jobs can't jitter onto the same instant -- see the
+    # re-draw loop below.
+    _insurance_discovery_times: set[tuple[int, int]] = set()
     for index, (tenant_id, tenant_tz, account) in enumerate(scheduled_accounts):
         if _is_insurance(tenant_id):
             # EXPLICIT OWNER REQUEST (2026-09-16), Insurance only -- see
@@ -2935,7 +3299,20 @@ def build_daily_schedule() -> BackgroundScheduler:
                 if account.get("platform") == "email"
                 else _INSURANCE_DISCOVERY_MINUTE
             )
-            hour, minute = _insurance_jittered_minutes(_INSURANCE_DISCOVERY_HOUR, anchor_minute)
+            # Re-draw if this lands on a minute another Insurance discovery
+            # job already took. LIVE-CAUGHT 2026-09-19 by deploy.sh's own
+            # collision check: the LinkedIn/Email anchors sit only 2 minutes
+            # apart (23:00 / 23:02) and each gets its own independent +/-10
+            # min jitter, so landing on the identical minute is a real,
+            # non-trivial chance every rebuild -- and two discovery jobs
+            # firing at the same instant for the same tenant is exactly the
+            # session-lock contention the windows exist to prevent. Bounded
+            # retry, same pattern as _spread_within_window's own re-draw.
+            for _attempt in range(20):
+                hour, minute = _insurance_jittered_minutes(_INSURANCE_DISCOVERY_HOUR, anchor_minute)
+                if (hour, minute) not in _insurance_discovery_times:
+                    break
+            _insurance_discovery_times.add((hour, minute))
         else:
             hour, minute = _spread_within_window(
                 index, len(scheduled_accounts),
@@ -3007,6 +3384,22 @@ def build_daily_schedule() -> BackgroundScheduler:
         ),
         id="downstream-pipeline",
         name="Daily analysis -> messages -> reminders -> follow-up dispatch",
+        replace_existing=True,
+    )
+
+    # Second daily pass -- see _DOWNSTREAM_SECOND_HOUR's own comment above
+    # for why 00:30 alone isn't enough. Same job function, same tenant loop,
+    # just a second scheduled instant; nothing about run_full_pipeline_cycle
+    # itself needed to change since every step it calls is already safe to
+    # run twice (it only ever touches leads currently sitting at "analyzed",
+    # so a lead the first pass already drafted is simply skipped).
+    scheduler.add_job(
+        run_full_pipeline_cycle,
+        trigger=CronTrigger(
+            hour=_DOWNSTREAM_SECOND_HOUR, minute=_DOWNSTREAM_SECOND_MINUTE, timezone=config.TIMEZONE,
+        ),
+        id="downstream-pipeline-second",
+        name="Second daily pass: analysis -> messages -> reminders -> follow-up dispatch",
         replace_existing=True,
     )
 

@@ -630,6 +630,38 @@ def leads_by_status(status: str, tenant_id: str | None = None) -> list[Row]:
     return [_lead_out(r) for r in rows]
 
 
+def stranded_approved_leads_missing_message(tenant_id: str | None = None) -> list[Row]:
+    """
+    Leads sitting at "approved" or "awaiting_approval" that have a
+    generated_message body on the lead row itself but ZERO rows in
+    outreach_messages -- i.e. the lead record shows a message was drafted,
+    but the actual per-channel message insert never landed (or was deleted
+    afterward). run_message_generation_cycle()'s normal path only looks at
+    status "analyzed", so once a lead slips past that into "approved" or
+    "awaiting_approval" without a real message row, it becomes invisible to
+    that query forever -- found 2026-09-19 via 3 real Insurance leads
+    (damacproperties.com, baconigroup.com, accgroup.com) stuck untouched for
+    4 days. This recovers them by re-running generation as if they were
+    freshly "analyzed", without disturbing leads that already have a
+    message (including ones fully sent already).
+    """
+    tenant_id = _resolve_tenant(tenant_id)
+    with get_cursor(commit=False) as cur:
+        cur.execute(
+            """
+            SELECT l.* FROM outreach_leads l
+            WHERE l.tenant_id = %s
+              AND l.status IN ('approved', 'awaiting_approval')
+              AND NOT EXISTS (
+                  SELECT 1 FROM outreach_messages m WHERE m.lead_id = l.id
+              )
+            """,
+            (tenant_id,),
+        )
+        rows = cur.fetchall()
+    return [_lead_out(r) for r in rows]
+
+
 def lead_profile_url_exists(tenant_id: str, profile_url: str) -> bool:
     """
     True if this exact profile URL is already in this tenant's `leads`,
