@@ -113,7 +113,23 @@ def _open_thread_for_lead(page: Page, account: dict, business_name: str) -> bool
     except Exception:  # noqa: BLE001 -- Playwright's TimeoutError means no matching thread exists, a real "no" not a crash
         return False
     human_delay()
-    item.click()
+    # REAL BUG found 2026-09-19 (real lead "xarkloofficial", reproduced
+    # twice): item.click() timed out at 30s even though the SAME locator's
+    # wait_for(state="visible") had just succeeded a moment earlier -- the
+    # inbox list re-renders/re-sorts on its own (new activity, a
+    # notification badge clearing), and Instagram's DOM has no stable
+    # per-item id (see CONVERSATION_LIST_ITEM_SELECTOR's own comment), so
+    # the element `item` is bound to can go stale between the wait and the
+    # click. force=True skips Playwright's actionability re-checks (which
+    # is what was hanging for the full 30s against a now-stale/covered
+    # element) and clicks the CURRENT element at that DOM location
+    # instead -- safe here specifically because wait_for already confirmed
+    # a real, visible, text-matching item exists at this locator.
+    try:
+        item.click(timeout=10_000)
+    except Exception:  # noqa: BLE001 -- see comment above; retry once against a freshly re-queried locator before giving up
+        item = page.locator(CONVERSATION_LIST_ITEM_SELECTOR, has_text=business_name).first
+        item.click(timeout=10_000, force=True)
     # LIVE-CONFIRMED 2026-09-07, third fix in this function: clicking the
     # conversation updates an in-page panel rather than navigating (page.url
     # stays on /direct/inbox/ throughout -- confirmed live), so there's no
@@ -256,6 +272,29 @@ def check_instagram_replies() -> list[dict]:
                 # own docstring for why that distinction matters).
                 results.append({"lead_id": lead["id"], "replied": False, "error": str(exc)})
                 continue
+            except Exception as exc:  # noqa: BLE001 -- REAL BUG found 2026-09-19
+                # live-confirmed: an uncaught Locator.click TimeoutError on
+                # ONE lead's thread (xarkloofficial -- item found "visible"
+                # but a click on it 30s later still timed out, likely a
+                # stale/re-rendered element) crashed this entire function's
+                # for-loop, silently skipping EVERY remaining lead in the
+                # batch -- including fadeltradingcompany and titus.logistics,
+                # two real leads with genuine unread replies that never even
+                # got checked because they happened to sort after the bad
+                # one. Every other per-lead failure path in this same loop
+                # (ProxyIpMismatch, SessionLoggedOut above) already isolates
+                # itself and continues; a plain timeout/exception from
+                # _open_thread_for_lead or _read_thread_messages was the one
+                # gap. Same isolation now applies here.
+                try:
+                    repo.insert_error({
+                        "stage": "instagram_reply_check", "channel": "instagram",
+                        "account_id": account["id"], "error_message": str(exc), "is_expected": False,
+                    })
+                except Exception:  # noqa: BLE001 -- logging itself must never crash this run
+                    pass
+                results.append({"lead_id": lead["id"], "replied": False, "error": str(exc)})
+                continue
             finally:
                 sessions.close(account["id"], context)
 
@@ -314,23 +353,33 @@ def _sync_thread_messages(lead: dict, account: dict, live_messages: list[dict]) 
          (a reply we already recorded) is that side, full stop -- no
          position involved, and this is also what makes the existing
          dedup-by-content below a no-op for anything already on file.
-      2. A genuinely NEW bubble (matches neither known set) only gets a
-         position-based guess when the thread has at least one bubble
-         ALREADY CONFIRMED on EACH side (i.e. `known_incoming` is
-         non-empty -- a real reply has genuinely arrived before, so the
-         thread is known to actually have two-sided content, not just our
-         own template). The guess then compares the new bubble's `left`
-         against the average `left` of the bubbles already confirmed "us"
-         in THIS read, not a blind thread-wide average.
-      3. Otherwise (no confirmed reply exists for this lead yet) a new
-         bubble's direction is UNKNOWN and it is skipped entirely --
-         neither recorded as a reply nor backfilled as outgoing. This is
-         the safe fallback the owner asked for: guessing wrong here
-         fabricates a reply record and flips the lead's status on no real
-         evidence, which is strictly worse than not backfilling a
-         manually-sent outgoing message for one extra poll cycle (it will
-         still be caught once a real reply exists, or once it's later
-         re-sent/approved through the platform itself).
+      2. A genuinely NEW bubble (matches neither known set) gets a
+         position-based guess whenever THIS READ already has at least one
+         bubble it could content-match to `known_outgoing` (our own sent
+         message) -- `confirmed_us_lefts` below. The guess compares the
+         new bubble's `left` against the average `left` of those
+         confirmed-"us" bubbles.
+      3. Otherwise (this read has no bubble it can content-match at all --
+         e.g. a stale/empty page load) direction is UNKNOWN and the bubble
+         is skipped -- neither recorded as a reply nor backfilled.
+
+    REAL BUG FOUND AND FIXED 2026-09-19: step 2 used to ALSO require
+    `known_incoming` to be non-empty (a reply already confirmed on a
+    PRIOR run) before ever trusting a position-based guess -- reasoned as
+    "the thread is confirmed two-sided". That reasoning silently excluded
+    the single most common real case: a lead's FIRST EVER reply, which by
+    definition happens while known_incoming is still empty. Two real
+    leads (fadeltradingcompany, titus.logistics) each sent a real first
+    reply on Instagram that this exact gate skipped outright -- confirmed
+    live, zero rows in outreach_replies for either despite a real reply
+    screenshot from the owner. Every lead's first reply hit this same
+    silent gap, every time, since that is always the moment
+    known_incoming is empty. The real risk the original fix protected
+    against -- a thread with ONLY our own messages having no genuine
+    "left" cluster to average against -- is fully covered by requiring
+    confirmed_us_lefts (content-matched "us" bubbles from THIS read)
+    to be non-empty; requiring a PRIOR confirmed reply on top of that
+    added no extra safety, it only ever cost the first-reply case.
 
     Returns (new_replies_recorded, new_outgoing_backfilled).
     """
@@ -343,13 +392,11 @@ def _sync_thread_messages(lead: dict, account: dict, live_messages: list[dict]) 
         for m in repo.messages_for_lead(lead["id"])
         if m.get("channel") == "instagram"
     }
-    # A real reply already exists for this lead -- the thread is confirmed
-    # two-sided, so a position-based guess on a genuinely new bubble is
-    # calibrated against real evidence rather than an assumption.
-    has_confirmed_reply = bool(known_incoming)
-    # "us" lefts among bubbles this read can already attribute by content --
+    # "us" lefts among bubbles THIS READ can already attribute by content --
     # the calibration anchor for step 2 above, computed fresh each call
-    # since it only ever needs bubbles from the current live read.
+    # since it only ever needs bubbles from the current live read. This
+    # alone is the real safety condition (see 2026-09-19 fix note above):
+    # a PRIOR confirmed reply is no longer also required.
     confirmed_us_lefts = [
         b["left"] for b in live_messages if _normalized(b["text"]) in known_outgoing and "left" in b
     ]
@@ -364,7 +411,7 @@ def _sync_thread_messages(lead: dict, account: dict, live_messages: list[dict]) 
             direction = "us"
         elif normalized in known_incoming:
             direction = "lead"
-        elif has_confirmed_reply and confirmed_us_lefts and "left" in msg:
+        elif confirmed_us_lefts and "left" in msg:
             avg_us_left = sum(confirmed_us_lefts) / len(confirmed_us_lefts)
             direction = "lead" if msg["left"] < avg_us_left else "us"
         else:

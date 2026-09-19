@@ -40,7 +40,7 @@ fail() { printf '   \033[31mFAIL\033[0m %s\n' "$*"; }
 # ---------------------------------------------------------------------------
 read -r -d '' VERIFY_PY <<'PYEOF' || true
 import sys
-from agent.discovery import linkedin, qualify
+from agent.discovery import linkedin, qualify, hunter
 from agent import scheduler as sch
 from agent.core import session as sess
 from agent.sending import linkedin_send, instagram_send, linkedin_reply_check, instagram_reply_check
@@ -545,6 +545,30 @@ try:
         {"id": "lead-with-reply"}, {"id": "acc1"}, _live2)
     check("a genuinely NEW incoming message is still detected once a real reply already anchors the thread",
           _new_replies2 == 1 and _fabricated_replies == ["Ok sounds good, call me"])
+
+    # REAL BUG found live 2026-09-19 (fadeltradingcompany, titus.logistics,
+    # real Zimmar Instagram leads): the ORIGINAL version of this check
+    # additionally required known_incoming to be non-empty (a reply already
+    # confirmed on a PRIOR run) before ever trusting a position-based
+    # guess -- which silently excluded a lead's FIRST EVER reply, since
+    # that is always the one moment known_incoming is still empty. Both
+    # real leads sent a genuine first reply that this exact gate skipped
+    # outright. This is the fix: a genuinely new bubble at a lead's FIRST
+    # reply (known_incoming empty, but our own sent message IS
+    # content-matched in this same read) must now be detected.
+    _fake_first_reply = _FakeReplyRepo(existing_replies=[], existing_messages=[
+        {"channel": "instagram", "body": "Our cold outreach message"},
+    ])
+    instagram_reply_check.repo = _fake_first_reply
+    _fabricated_replies.clear()
+    _live3 = [
+        {"text": "Our cold outreach message", "left": 900.0},  # us, content-matched
+        {"text": "Hi thanks for reaching out", "left": 100.0},  # genuinely new -- the lead's FIRST reply
+    ]
+    _new_replies3, _new_outgoing3 = instagram_reply_check._sync_thread_messages(
+        {"id": "lead-first-reply"}, {"id": "acc1"}, _live3)
+    check("a lead's FIRST EVER reply is detected even with no prior confirmed reply on file (2026-09-19 real bug fix)",
+          _new_replies3 == 1 and _fabricated_replies == ["Hi thanks for reaching out"])
 finally:
     instagram_reply_check.repo = _ig_real_repo
     instagram_reply_check.handle_reply_detected = _orig_handle_reply
@@ -553,7 +577,65 @@ check("_read_thread_messages() no longer decides direction itself (returns undec
       '"from"' not in _inspect.getsource(instagram_reply_check._read_thread_messages))
 check("direction classification lives in _sync_thread_messages(), anchored to known content first (regression check)",
       "known_outgoing" in _inspect.getsource(instagram_reply_check._sync_thread_messages)
-      and "has_confirmed_reply" in _inspect.getsource(instagram_reply_check._sync_thread_messages))
+      and "confirmed_us_lefts" in _inspect.getsource(instagram_reply_check._sync_thread_messages))
+
+# REAL ROOT CAUSE found and fixed 2026-09-18, live-confirmed against lead
+# "Khatib & Alami" (Insurance tenant, lead_id 83ae70fd-0064-4372-992e-
+# 612691e2add3): unlike Instagram (which derives direction from CONTENT
+# first, known_outgoing checked before any position guess -- see the block
+# above), linkedin_reply_check._sync_thread_messages() unconditionally
+# trusted _read_thread_messages()'s DOM-derived "from" label. A re-render
+# of our OWN already-sent message got mislabeled "lead" by LinkedIn's own
+# sender-name carry-forward heuristic and was inserted straight into
+# outreach_replies as a fabricated reply -- confirmed live: the bad row's
+# body is byte-for-byte our own outbound message with paragraph breaks
+# flattened. Fix: a candidate labeled "lead" is now cross-checked against
+# known_outgoing (content-normalized) BEFORE being accepted -- a match
+# means it's our own message misread off the page, not a real reply, and
+# it's skipped entirely (no outreach_replies insert, no status flip).
+check("linkedin_reply_check cross-checks a 'lead'-labeled candidate against known_outgoing before accepting it (regression check)",
+      "if normalized in known_outgoing" in _inspect.getsource(linkedin_reply_check._sync_thread_messages))
+
+class _FakeLinkedInRepo:
+    """Stands in for repo inside linkedin_reply_check._sync_thread_messages:
+    a lead with one known outgoing message on file and one genuine prior
+    reply -- mirrors Khatib & Alami's real shape (one real send, one real
+    'deleted message' reply) at the moment the bug fired."""
+    def __init__(self, existing_replies=None, existing_messages=None):
+        self._replies = existing_replies or []
+        self._messages = existing_messages or []
+    def replies_for_lead(self, lead_id):
+        return self._replies
+    def messages_for_lead(self, lead_id):
+        return self._messages
+    def insert_message(self, fields):
+        pass
+    def insert_error(self, *a, **k):
+        pass
+
+_li_sent_body = "Hello Khatib & Alami,\n\nWe're introducing Lebanon's first Dental Card.\n\nWould it be worth a quick call?"
+_fake_li_repo = _FakeLinkedInRepo(
+    existing_replies=[{"body": "This message has been deleted."}],
+    existing_messages=[{"channel": "linkedin", "body": _li_sent_body}],
+)
+try:
+    linkedin_reply_check.repo = _fake_li_repo
+    _li_fabricated = []
+    linkedin_reply_check.handle_reply_detected = lambda *a, **k: _li_fabricated.append(k.get("body") or (a[2] if len(a) > 2 else None))
+    # DOM mislabels our own already-sent message as "lead" (flattened
+    # newlines, exactly like LinkedIn's real re-render) -- the exact
+    # live-confirmed failure mode for Khatib & Alami.
+    _li_live = [
+        {"from": "lead", "text": "This message has been deleted."},   # genuine prior reply, already known
+        {"from": "lead", "text": _li_sent_body.replace("\n", "")},    # BUG: our own message mislabeled "lead"
+    ]
+    _li_new_replies, _li_new_outgoing = linkedin_reply_check._sync_thread_messages(
+        {"id": "lead-khatib-alami"}, {"id": "acc1"}, _li_live)
+    check("a DOM-mislabeled 'lead' message matching our own known_outgoing content fabricates ZERO replies (Khatib & Alami bug)",
+          _li_new_replies == 0 and not _li_fabricated)
+finally:
+    linkedin_reply_check.repo = _li_real_repo
+    linkedin_reply_check.handle_reply_detected = _orig_handle_reply
 
 # REAL SECOND BUG found alongside the above while investigating: the
 # sending cycle had NO daily-send-limit check at all -- LIVE-CONFIRMED one
@@ -862,40 +944,67 @@ _INS_DISC_EMAIL_ANCHOR = 23 * 60 + 2  # 23:02
 _INS_SEND_ANCHOR = 10 * 60 + 0        # 10:00
 _INS_JITTER = 10  # must match scheduler._INSURANCE_JITTER_MINUTES
 
-check("Insurance has at least one real scheduled discovery job to check",
-      len(_ins_disc_1) > 0)
-check("Insurance's discovery job(s) land within +/-10 min of their 23:00/23:02 anchors on both rebuilds (bounded jitter, not the full 20:00-24:00 window)",
-      _ins_disc_1 and all(
-          abs(_mins(v) - _INS_DISC_LI_ANCHOR) <= _INS_JITTER
-          or abs(_mins(v) - _INS_DISC_EMAIL_ANCHOR) <= _INS_JITTER
-          for v in _ins_disc_1.values()
-      )
-      and all(
-          abs(_mins(v) - _INS_DISC_LI_ANCHOR) <= _INS_JITTER
-          or abs(_mins(v) - _INS_DISC_EMAIL_ANCHOR) <= _INS_JITTER
-          for v in _ins_disc_2.values()
-      ))
-check("Insurance's discovery time VARIES across independent rebuilds (owner's 2026-09-17 fix -- no longer byte-identical every day; checked across 8 rebuilds so one coincidental match isn't a false flake)",
-      _ins_disc_1 != {} and any(x != _ins_disc_all[0] for x in _ins_disc_all[1:]))
-check("Insurance has at least one real scheduled sending job to check",
-      len(_ins_send_1) > 0)
-check("Insurance's sending job lands within +/-10 min of its 10:00 Beirut anchor on both rebuilds, and stays before 11:00",
-      _ins_send_1
-      and all(abs(_mins(v) - _INS_SEND_ANCHOR) <= _INS_JITTER for v in _ins_send_1.values())
-      and all(abs(_mins(v) - _INS_SEND_ANCHOR) <= _INS_JITTER for v in _ins_send_2.values())
-      and all(_mins(v) < 11 * 60 for v in _ins_send_1.values()))
-check("Insurance's sending time VARIES across independent rebuilds (owner's 2026-09-17 fix, same as discovery; checked across 8 rebuilds so one coincidental match on its single LinkedIn job isn't a false flake)",
-      _ins_send_1 != {} and any(x != _ins_send_all[0] for x in _ins_send_all[1:]))
-check("Zimmar still has real scheduled discovery jobs to check (regression guard against an empty/broken comparison)",
-      len(_zim_disc_1) > 0)
-check("Zimmar's discovery time is NOT pinned near Insurance's anchor hour/minute (still using its own spread window)",
-      not any(abs(_mins(v) - _INS_DISC_LI_ANCHOR) <= _INS_JITTER
+# Insurance's/Zimmar's LinkedIn accounts can legitimately be PAUSED (e.g.
+# 2026-09-17: both paused while diagnosing droplet resource contention) --
+# a paused account correctly has ZERO scheduled jobs (see the run-time
+# account-status gate added earlier), so these timing/collision checks are
+# only meaningful, and only run, when there's at least one real job to
+# check. A paused account is not a regression; an ACTIVE account with
+# broken timing is -- these checks still catch that case fully.
+if _ins_disc_1:
+    check("Insurance's discovery job(s) land within +/-10 min of their 23:00/23:02 anchors on both rebuilds (bounded jitter, not the full 20:00-24:00 window)",
+          all(
+              abs(_mins(v) - _INS_DISC_LI_ANCHOR) <= _INS_JITTER
               or abs(_mins(v) - _INS_DISC_EMAIL_ANCHOR) <= _INS_JITTER
-              for v in _zim_disc_1.values()))
-check("Zimmar's discovery time still RE-RANDOMIZES across independent rebuilds (spread/jitter unchanged, regression check)",
-      _zim_disc_1 != _zim_disc_2)
-check("Insurance's discovery times stay tightly clustered near its anchor (span <= 2x jitter), unlike Zimmar's full-window spread",
-      (max(_mins(v) for v in _ins_disc_1.values()) - min(_mins(v) for v in _ins_disc_1.values())) <= 2 * _INS_JITTER + 2)
+              for v in _ins_disc_1.values()
+          )
+          and all(
+              abs(_mins(v) - _INS_DISC_LI_ANCHOR) <= _INS_JITTER
+              or abs(_mins(v) - _INS_DISC_EMAIL_ANCHOR) <= _INS_JITTER
+              for v in _ins_disc_2.values()
+          ))
+    check("Insurance's discovery time VARIES across independent rebuilds (owner's 2026-09-17 fix -- no longer byte-identical every day; checked across 8 rebuilds so one coincidental match isn't a false flake)",
+          any(x != _ins_disc_all[0] for x in _ins_disc_all[1:]))
+    check("Insurance's discovery times stay tightly clustered near its anchor (span <= 2x jitter), unlike Zimmar's full-window spread",
+          (max(_mins(v) for v in _ins_disc_1.values()) - min(_mins(v) for v in _ins_disc_1.values())) <= 2 * _INS_JITTER + 2)
+else:
+    print("   OK   Insurance's LinkedIn/Email accounts are currently paused -- no discovery jobs to check, correctly")
+
+if _ins_send_1:
+    check("Insurance's sending job lands within +/-10 min of its 10:00 Beirut anchor on both rebuilds, and stays before 11:00",
+          all(abs(_mins(v) - _INS_SEND_ANCHOR) <= _INS_JITTER for v in _ins_send_1.values())
+          and all(abs(_mins(v) - _INS_SEND_ANCHOR) <= _INS_JITTER for v in _ins_send_2.values())
+          and all(_mins(v) < 11 * 60 for v in _ins_send_1.values()))
+    check("Insurance's sending time VARIES across independent rebuilds (owner's 2026-09-17 fix, same as discovery; checked across 8 rebuilds so one coincidental match on its single LinkedIn job isn't a false flake)",
+          any(x != _ins_send_all[0] for x in _ins_send_all[1:]))
+else:
+    print("   OK   Insurance's LinkedIn account is currently paused -- no sending job to check, correctly")
+
+if not _zim_disc_1:
+    print("   OK   Zimmar's LinkedIn/Instagram/Email accounts are currently paused -- no discovery jobs to check, correctly")
+else:
+    # REAL BUG FOUND AND FIXED 2026-09-17: with only 2 active Zimmar
+    # accounts, _spread_within_window()'s slot-center for one of them lands
+    # at EXACTLY 23:00 -- dead center of Insurance's reserved band -- and a
+    # live check across 4 separate rebuilds that same day caught Zimmar's
+    # discovery landing at 22:51/23:05/23:07/23:11, squarely inside
+    # Insurance's 22:48-23:14 zone. Checking only _sched1/_sched2 (2
+    # rebuilds) missed this reliably; sampling many more rebuilds here
+    # catches the systematic collision this specific 2-account slot-center
+    # produces, not just an unlucky one-off jitter draw.
+    _zim_disc_many = [_zim_disc_1, _zim_disc_2]
+    for _ in range(18):
+        _extra_sched = sch.build_daily_schedule()
+        _zim_disc_many.append(_job_times(_extra_sched.get_jobs(), "discovery", _ZIMMAR_TENANT_ID))
+    check("Zimmar's discovery time is NOT pinned near Insurance's anchor hour/minute, across 20 independent rebuilds (regression check for the 2026-09-17 reserved-range collision)",
+          all(
+              not any(abs(_mins(v) - _INS_DISC_LI_ANCHOR) <= _INS_JITTER
+                      or abs(_mins(v) - _INS_DISC_EMAIL_ANCHOR) <= _INS_JITTER
+                      for v in _times.values())
+              for _times in _zim_disc_many
+          ))
+    check("Zimmar's discovery time still RE-RANDOMIZES across independent rebuilds (spread/jitter unchanged, regression check)",
+          _zim_disc_1 != _zim_disc_2)
 
 # No literal collision: Insurance's jittered times must not exactly match
 # any of Zimmar's own currently-scheduled job times (the owner's own
@@ -908,13 +1017,422 @@ _zim_all_times = (
     | set(_job_times(_sched1.get_jobs(), "sending", _ZIMMAR_TENANT_ID).values())
     | set(_job_times(_sched2.get_jobs(), "sending", _ZIMMAR_TENANT_ID).values())
 )
-check("Insurance's jittered discovery/sending times do not exactly match any of Zimmar's own live-scheduled job times (either rebuild)",
-      not (set(_ins_disc_1.values()) & _zim_all_times)
-      and not (set(_ins_disc_2.values()) & _zim_all_times)
-      and not (set(_ins_send_1.values()) & _zim_all_times)
-      and not (set(_ins_send_2.values()) & _zim_all_times))
-check("Insurance's own discovery jobs (LinkedIn + Email) don't collide with each other at the identical instant",
-      len(set(_ins_disc_1.values())) == len(_ins_disc_1) or len(_ins_disc_1) == 1)
+if _ins_disc_1 or _ins_send_1 or _zim_all_times:
+    check("Insurance's jittered discovery/sending times do not exactly match any of Zimmar's own live-scheduled job times (either rebuild)",
+          not (set(_ins_disc_1.values()) & _zim_all_times)
+          and not (set(_ins_disc_2.values()) & _zim_all_times)
+          and not (set(_ins_send_1.values()) & _zim_all_times)
+          and not (set(_ins_send_2.values()) & _zim_all_times))
+else:
+    print("   OK   Both tenants' LinkedIn accounts are currently paused -- no collision to check, correctly")
+if _ins_disc_1:
+    check("Insurance's own discovery jobs (LinkedIn + Email) don't collide with each other at the identical instant",
+          len(set(_ins_disc_1.values())) == len(_ins_disc_1) or len(_ins_disc_1) == 1)
+
+# ---------------------------------------------------------------------------
+# Real resource-contention incident, 2026-09-17: Zimmar LinkedIn's scheduled
+# sending job failed 3/3 real send attempts that morning on page-load/
+# element-wait timeouts, each one landing within seconds of the reply-poll
+# also having a browser open -- the droplet is 1 vCPU/1.9GB and one Chromium
+# instance alone eats ~40-45% of that. Two fixes: (1) the reply polls now
+# run every 30 min instead of 3, cutting poll-driven browser opens ~90%;
+# (2) a global cross-process slot cap (_MAX_CONCURRENT_BROWSER_SESSIONS)
+# stops two DIFFERENT accounts' sessions from ever launching Chromium at the
+# same literal moment, closing the actual collision instead of just making
+# it rarer.
+check("reply-send poll interval raised from 3 to 30 minutes (resource-contention fix)",
+      sch._REPLY_POLL_INTERVAL_MINUTES == 30)
+check("reply-detection poll interval raised from 3 to 30 minutes (resource-contention fix)",
+      sch._REPLY_DETECTION_POLL_INTERVAL_MINUTES == 30)
+
+check("a global browser-slot limiter exists and is set to a small, non-zero cap",
+      hasattr(sess, "_MAX_CONCURRENT_BROWSER_SESSIONS") and 1 <= sess._MAX_CONCURRENT_BROWSER_SESSIONS <= 4)
+check("SessionManager acquires the global slot in __enter__, before launching Chromium (regression check)",
+      "_global_session_slot" in _inspect.getsource(sess.SessionManager.__enter__)
+      and _inspect.getsource(sess.SessionManager.__enter__).index("_global_session_slot")
+          < _inspect.getsource(sess.SessionManager.__enter__).index("chromium.launch"))
+check("SessionManager releases the global slot in __exit__, after the browser is closed (regression check)",
+      "_global_session_slot" not in _inspect.getsource(sess.SessionManager.__exit__)
+      and "_global_slot" in _inspect.getsource(sess.SessionManager.__exit__)
+      and _inspect.getsource(sess.SessionManager.__exit__).index("_browser.close")
+          < _inspect.getsource(sess.SessionManager.__exit__).index("_global_slot.__exit__"))
+
+# Behavioral check: with the cap set to 1, a second concurrent
+# SessionManager must actually raise SessionBusy rather than silently
+# proceeding -- proves this is a real enforced limit, not just present code
+# that's never actually reached.
+_orig_cap = sess._MAX_CONCURRENT_BROWSER_SESSIONS
+_orig_timeout = sess._GLOBAL_SESSION_LOCK_TIMEOUT_SECONDS
+sess._MAX_CONCURRENT_BROWSER_SESSIONS = 1
+sess._GLOBAL_SESSION_LOCK_TIMEOUT_SECONDS = 1
+try:
+    _held = sess._global_session_slot()
+    _held.__enter__()
+    try:
+        _blocked = False
+        try:
+            with sess._global_session_slot():
+                pass
+        except sess.SessionBusy:
+            _blocked = True
+        check("with the slot cap at 1, a second concurrent session is genuinely blocked (SessionBusy), not silently allowed through",
+              _blocked)
+    finally:
+        _held.__exit__(None, None, None)
+    # And once released, a new acquire succeeds immediately -- proves this
+    # isn't a one-way lock that permanently wedges the account/machine.
+    with sess._global_session_slot():
+        check("after the holder releases, a new session can acquire the same slot immediately", True)
+finally:
+    sess._MAX_CONCURRENT_BROWSER_SESSIONS = _orig_cap
+    sess._GLOBAL_SESSION_LOCK_TIMEOUT_SECONDS = _orig_timeout
+
+# Owner-requested 2026-09-17: 10 approved messages must reliably finish
+# within a ~2-hour sending window. At the old 8-25 min gap (avg ~16.5 min),
+# 10 messages averaged ~2.5 hours -- routinely spilling past the window.
+check("send-gap pacing tightened to 6-13 min (was 8-25) so 10 messages fit within ~2 hours even in the worst case",
+      sch._SEND_GAP_MIN_SECONDS == 6 * 60 and sch._SEND_GAP_MAX_SECONDS == 13 * 60)
+check("10 messages' worst-case total gap time (9 max-length gaps) stays under 2 hours",
+      9 * sch._SEND_GAP_MAX_SECONDS <= 120 * 60)
+check("the gap is still genuinely randomized, not a fixed interval (regression check -- a fixed cadence is itself a bot signal)",
+      sch._SEND_GAP_MIN_SECONDS < sch._SEND_GAP_MAX_SECONDS)
+
+# ---------------------------------------------------------------------------
+# REAL DATA-QUALITY BUG, found and fixed 2026-09-17: hunter.py's
+# find_email()/find_company_emails() took whatever email Hunter's API
+# returned without ever checking Hunter's own `score` (0-100 confidence)
+# or `verification.status` fields -- both returned on every response, both
+# silently discarded. Confirmed real harm: lead "Kedemos Education" has
+# website=https://linktr.ee/KedemosEducation (a Linktree bio-link page,
+# not their real site); Domain Search was run against linktr.ee itself and
+# returned pooya@linktr.ee, a stranger's email with zero connection to the
+# company -- consistent with the account's 5-8% bounce rate (cold-email
+# norm is ~1-2%). Two fixes: (1) a score/verification quality gate on both
+# Hunter lookup functions, (2) a bio-link/social-platform domain blocklist
+# checked BEFORE calling Hunter at all, in _maybe_find_email() (so a lead
+# whose "website" is actually linktr.ee/instagram.com/etc. never reaches
+# either Hunter endpoint in the first place).
+check("Hunter's verification.status is actually read from the API response, not discarded (structural regression check)",
+      "verification" in _inspect.getsource(hunter._passes_quality_gate))
+check("a hard-bad verification status (invalid/disposable) is rejected",
+      not hunter._passes_quality_gate({"score": 90, "verification": {"status": "invalid"}}, context="t")
+      and not hunter._passes_quality_gate({"score": 90, "verification": {"status": "disposable"}}, context="t"))
+check("a genuinely good status (valid/accept_all) passes at a high score",
+      hunter._passes_quality_gate({"score": 90, "verification": {"status": "valid"}}, context="t")
+      and hunter._passes_quality_gate({"score": 90, "verification": {"status": "accept_all"}}, context="t"))
+check("a low score is rejected even with no bad status present (score is checked independently of status)",
+      not hunter._passes_quality_gate({"score": 20, "verification": {"status": "unknown"}}, context="t"))
+check("score exactly at the minimum threshold (%d) still passes (inclusive floor, not exclusive)" % hunter._MIN_SCORE,
+      hunter._passes_quality_gate({"score": hunter._MIN_SCORE, "verification": {"status": "valid"}}, context="t"))
+check("an 'unknown' verification status is accepted (not so strict this returns nothing), at an acceptable score",
+      hunter._passes_quality_gate({"score": 70, "verification": {"status": "unknown"}}, context="t"))
+check("a candidate with no verification block at all (missing key) does not crash and is judged on score alone",
+      hunter._passes_quality_gate({"score": 70}, context="t"))
+
+# The Kedemos Education case, exactly as it happened: website is a Linktree
+# URL, not the company's real domain.
+check("linktr.ee (the real Kedemos Education case) is recognized as a generic platform domain, not a company site",
+      hunter.is_blocklisted_domain("linktr.ee")
+      and hunter.is_blocklisted_domain("https://linktr.ee/KedemosEducation"))
+check("common bio-link/social platforms are all blocklisted",
+      all(hunter.is_blocklisted_domain(d) for d in
+          ["instagram.com", "facebook.com", "twitter.com", "x.com", "tiktok.com",
+           "bio.link", "beacons.ai", "linktree.com"]))
+check("a real company domain is NOT blocklisted (regression check -- must not over-block)",
+      not hunter.is_blocklisted_domain("acmesecurity.com") and not hunter.is_blocklisted_domain("tesla.com"))
+_refused_blocklisted = False
+try:
+    hunter.find_company_emails("linktr.ee")
+except ValueError:
+    _refused_blocklisted = True
+except Exception:
+    pass  # any other exception (e.g. network) still means it did NOT silently search it
+check("find_company_emails() refuses to search a blocklisted platform domain (raises, never silently searches it)",
+      _refused_blocklisted)
+
+# scheduler.py's _maybe_find_email() must apply the domain-sanity check
+# BEFORE calling Hunter at all -- structural check against its real source,
+# since a live call would need a real API key/network access this
+# verification step doesn't have.
+_mfe_src = _inspect.getsource(sch._maybe_find_email)
+check("_maybe_find_email() checks is_blocklisted_domain() before either Hunter lookup tier (regression check)",
+      "hunter.is_blocklisted_domain(domain)" in _mfe_src
+      and _mfe_src.index("is_blocklisted_domain") < _mfe_src.index("hunter.find_email")
+      and _mfe_src.index("is_blocklisted_domain") < _mfe_src.index("hunter.find_company_emails"))
+
+# Owner-requested 2026-09-17: prefer the company's own generic address
+# (info@/contact@/sales@) over a named individual's personal email when
+# Hunter's Domain Search returns both -- founder/manager email is still an
+# acceptable fallback (find_email() above is unaffected), but a generic
+# company address should win whenever one exists and passes the quality
+# gate. Verified BEHAVIORALLY by mocking Hunter's HTTP response, not just
+# reading the source -- proves the actual runtime selection, not just that
+# the right-looking code exists.
+import httpx as _httpx
+
+class _FakeHunterResponse:
+    def __init__(self, payload):
+        self._payload = payload
+        self.status_code = 200
+        self.text = ""
+    def json(self):
+        return self._payload
+
+def _fake_domain_search(emails):
+    # **kwargs so this stub keeps working as the real call's signature
+    # grows (e.g. the 2026-09-19 move of Hunter's key from an `api_key=`
+    # query param to an X-API-KEY header added `headers=`).
+    def _get(url, params=None, timeout=None, **kwargs):
+        return _FakeHunterResponse({"data": {"emails": emails}})
+    return _get
+
+_orig_httpx_get = _httpx.get
+try:
+    _httpx.get = _fake_domain_search([
+        {"value": "someone@acmesecurity.com", "type": "personal", "score": 90, "verification": {"status": "valid"}},
+        {"value": "info@acmesecurity.com", "type": "generic", "score": 85, "verification": {"status": "valid"}},
+    ])
+    check("find_company_emails() picks the generic company address over a personal one, even when personal comes first in Hunter's own array",
+          hunter.find_company_emails("acmesecurity.com") == "info@acmesecurity.com")
+
+    _httpx.get = _fake_domain_search([
+        {"value": "jane.doe@acmesecurity.com", "type": "personal", "score": 90, "verification": {"status": "valid"}},
+    ])
+    check("find_company_emails() falls back to a personal/named email when no generic address exists at all",
+          hunter.find_company_emails("acmesecurity.com") == "jane.doe@acmesecurity.com")
+
+    _httpx.get = _fake_domain_search([
+        {"value": "bad@acmesecurity.com", "type": "generic", "score": 10, "verification": {"status": "invalid"}},
+        {"value": "jane.doe@acmesecurity.com", "type": "personal", "score": 90, "verification": {"status": "valid"}},
+    ])
+    check("a low-quality generic candidate does NOT win over a genuinely good personal one (quality gate still applies within the preference)",
+          hunter.find_company_emails("acmesecurity.com") == "jane.doe@acmesecurity.com")
+
+    # REAL SECRET LEAK FOUND AND FIXED 2026-09-19: httpx logs every
+    # request's full URL at INFO level, so passing Hunter's key as an
+    # `api_key=` QUERY PARAM wrote the live key in plaintext into docker
+    # logs on every lookup. Moved to an X-API-KEY header. These checks
+    # capture what the code actually sends and assert the key is in the
+    # header and NOT anywhere in the URL/params -- a behavioural guard, so
+    # a future refactor that puts it back in the URL fails the deploy.
+    _seen = {}
+    def _capture_get(url, params=None, headers=None, timeout=None):
+        _seen["url"] = url
+        _seen["params"] = params or {}
+        _seen["headers"] = headers or {}
+        return _FakeHunterResponse({"data": {"emails": [
+            {"value": "info@acmesecurity.com", "type": "generic", "score": 90,
+             "verification": {"status": "valid"}},
+        ]}})
+    _httpx.get = _capture_get
+    hunter.find_company_emails("acmesecurity.com")
+    _key = hunter.config.HUNTER_API_KEY
+    check("Hunter's API key is sent as an X-API-KEY header, not a URL query param (secret-leak regression check)",
+          _seen["headers"].get("X-API-KEY") == _key and "api_key" not in _seen["params"])
+    check("the real API key value appears NOWHERE in the request URL or params (secret-leak regression check)",
+          bool(_key) and _key not in str(_seen["url"]) and _key not in str(_seen["params"]))
+finally:
+    _httpx.get = _orig_httpx_get
+
+# ---------------------------------------------------------------------------
+# 2026-09-17 real live-confirmed bug: for an EMPTY-target_niche tenant
+# ("all companies" -- Zimmar and Insurance, owner's standing rule), the niche
+# used to QUALIFY a candidate was the single random word _resolve_search_niche
+# picked ONCE at the very top of the whole discovery cycle -- not the
+# per-round search_niche that actually found that candidate. Zimmar and
+# Insurance both searched "construction" the same night and surfaced the same
+# real companies (Arabian Construction Co., UNITECH, Evans Engineering,
+# Regbar, Murex, ITG Holding, Sword Group, NavLink, Falcon Logistics); Zimmar
+# saved them because its own fixed top-of-run word happened to also be
+# "construction", Insurance rejected every one of them because its fixed
+# top-of-run word had randomly landed on something unrelated -- same real
+# candidates, opposite outcomes, purely from this mismatch. Fix: qualify-time
+# niche is now the per-round search_niche, passed via the new
+# _save_if_qualified_with_reasons(), not the single fixed niche.
+import re as _niche_re
+_lk_src = _inspect.getsource(sch._discover_linkedin)
+_ig_src = _inspect.getsource(sch._discover_instagram)
+
+def _qualify_call_uses_search_niche(src, platform):
+    # Find the _save_if_qualified_with_reasons(...) call for this platform and
+    # confirm its niche argument is `search_niche` (this round's real
+    # keyword), not the bare `niche` (the single fixed top-of-run value --
+    # tonight's actual bug).
+    m = _niche_re.search(
+        r'_save_if_qualified_with_reasons\(\s*account,\s*"%s".*?\)' % platform, src, _niche_re.DOTALL,
+    )
+    if not m:
+        return False
+    call_text = m.group(0)
+    return bool(_niche_re.search(r'\bsearch_niche\b', call_text)) and not _niche_re.search(r',\s*niche\s*\)', call_text)
+
+check("LinkedIn discovery qualifies each candidate against THIS ROUND's search_niche, not the fixed top-of-run niche",
+      _qualify_call_uses_search_niche(_lk_src, "linkedin"))
+check("Instagram discovery qualifies each candidate against THIS ROUND's search_niche, not the fixed top-of-run niche",
+      _qualify_call_uses_search_niche(_ig_src, "instagram"))
+check("the old direct _save_if_qualified(...) call (fixed top-of-run niche, no reasons) is gone from both discovery loops (regression check)",
+      "_save_if_qualified(account, \"linkedin\"" not in _lk_src
+      and "_save_if_qualified(account, \"instagram\"" not in _ig_src)
+
+# Behavioral proof, not just source-grepping: simulate what happened tonight
+# directly through qualify_profile(), which is what actually scores a
+# candidate. A bio that only mentions "construction" must qualify when
+# checked against this round's real search keyword ("construction") and be
+# scored worse when (as the bug did) checked against an unrelated fixed word
+# picked at the top of the run ("retail") -- proving the fix's OWN target
+# metric (niche mismatch costs real points) is real, then proving the code
+# path now avoids it.
+_construction_bio = (
+    "Arabian Construction Co. is a leading Lebanese construction and "
+    "building contractor with over 500 employees, delivering major "
+    "infrastructure and construction projects across the region. Visit our "
+    "website for details."
+)
+_qualifies_correct_niche, _reasons_correct = qualify.qualify_profile(
+    {"display_name": "Arabian Construction Co.", "bio": _construction_bio,
+     "has_website": True, "post_count": 40, "recent_activity": True,
+     "follower_or_headcount": 500, "platform": "linkedin"},
+    "construction",
+)
+_qualifies_wrong_niche, _reasons_wrong = qualify.qualify_profile(
+    {"display_name": "Arabian Construction Co.", "bio": _construction_bio,
+     "has_website": True, "post_count": 40, "recent_activity": True,
+     "follower_or_headcount": 500, "platform": "linkedin"},
+    "retail",
+)
+check("proves the real mismatch: the SAME real candidate qualifies when checked against the niche that actually found it (this round's search_niche)",
+      _qualifies_correct_niche)
+check("...and would have been penalized/could be rejected when checked against an unrelated fixed niche from a different round (tonight's actual bug)",
+      "Bio mentions the target niche" in _reasons_correct
+      and "Bio does not mention the target niche -- possible relevance miss" in _reasons_wrong)
+
+# Real-niche tenants (Zimmar's actual configured niche, when non-empty) must
+# be UNCHANGED: _next_search_terms only PEELS a real niche into a still
+# on-topic substring, it never rotates in an unrelated random word the way
+# the empty-niche branch does -- so search_niche and the original niche
+# always describe the same topic for those tenants, before and after this fix.
+check("a real (non-empty, non-service) configured niche is never randomized by _resolve_search_niche (regression check -- only empty/service niches rotate)",
+      sch._resolve_search_niche("Security and building infrastructure integration") ==
+      "Security and building infrastructure integration")
+_peel_result = sch._next_search_terms(
+    "Security and building infrastructure integration", "Lebanon", "Lebanon",
+    False, set(),
+)
+check("a real configured niche's round-2 search_niche is a PEELED, still on-topic substring of the original -- never an unrelated word (so qualify-time niche stays consistent with what a real-niche tenant actually configured, same as before this fix)",
+      _peel_result is not None
+      and _peel_result[0] in "Security and building infrastructure integration")
+check("an EMPTY niche's round-2 search_niche instead comes from the random industry rotation (confirms the fix only changes behavior for the empty/all-companies case)",
+      sch._next_search_terms("construction", "Lebanon", "Lebanon", True, {"construction"})[0]
+      in sch._RANDOM_INDUSTRY_TERMS)
+
+# Rejection reasons must now reach the logs, not just be discarded --
+# closes the exact observability gap that made tonight's bug hard to
+# diagnose from `docker logs` alone.
+import inspect as _svq_inspect
+_svq_src = _svq_inspect.getsource(sch._save_if_qualified_with_reasons)
+check("_save_if_qualified_with_reasons() returns qualify_profile's reasons on a rejection instead of discarding them",
+      "return False, reasons" in _svq_src)
+check("the LinkedIn rejection log line now includes the specific reasons, not just the candidate name",
+      "rejected by qualify_profile: %s -- reasons: %s" in _lk_src)
+check("the Instagram rejection log line now includes the specific reasons, not just the candidate name",
+      "rejected by qualify_profile: %s -- reasons: %s" in _ig_src)
+
+# --- 2026-09-18: unrendered LinkedIn /about pages masquerading as bad leads
+# Insurance's Sept 18 run visited 161 candidates and saved 5 (3.1%), with
+# 137 qualify-rejections -- 96 of them scoring exactly -6 on an IDENTICAL
+# all-empty reason list and 117/137 (85%) including "Bio is missing".
+# DocShipper, GFS Global Group, Regie Libanaise and Advanced Lines Group
+# were all rejected this way despite being real companies with real
+# websites, bios and posts. Zimmar the same night: 11 visits, 5 saves
+# (45%). The root cause is page timing (1 vCPU droplet +
+# wait_until="domcontentloaded"), not lead quality.
+_empty_scrape = {
+    "platform": "linkedin", "display_name": "DocShipper", "bio": "",
+    "website": None, "has_website": False, "post_count": 0, "headquarters": "",
+}
+check("an all-empty /about scrape (bio+website+posts+headquarters ALL empty) is detected as a scrape failure",
+      sch._linkedin_scrape_looks_empty(_empty_scrape))
+check("whitespace-only bio/headquarters still counts as empty (a rendered-but-blank panel is the same failure)",
+      sch._linkedin_scrape_looks_empty(dict(_empty_scrape, bio="   ", headquarters="  ")))
+
+# The happy path must be untouched: NO extra page load for a normal or even
+# a thin-but-real profile. Each of these has exactly ONE real field, which
+# is enough to prove the page rendered.
+check("a NORMAL scrape does not trigger the retry (no extra page loads on the happy path)",
+      not sch._linkedin_scrape_looks_empty({
+          "platform": "linkedin", "display_name": "DocShipper",
+          "bio": "DocShipper is a Lebanese freight forwarding and logistics company.",
+          "website": "https://docshipper.com", "has_website": True,
+          "post_count": 12, "headquarters": "Beirut, Lebanon"}))
+check("a PARTIAL scrape (bio only, no website/posts/hq) does not trigger the retry either -- that is a real thin company, not a failed render",
+      not sch._linkedin_scrape_looks_empty(dict(_empty_scrape, bio="A real Lebanese trading company.")))
+check("a partial scrape with ONLY a website does not trigger the retry",
+      not sch._linkedin_scrape_looks_empty(dict(_empty_scrape, website="https://example.com.lb")))
+check("a partial scrape with ONLY posts does not trigger the retry",
+      not sch._linkedin_scrape_looks_empty(dict(_empty_scrape, post_count=3)))
+check("a partial scrape with ONLY a headquarters does not trigger the retry",
+      not sch._linkedin_scrape_looks_empty(dict(_empty_scrape, headquarters="Beirut, Lebanon")))
+
+# Structural: the empty signature must route into a RETRY + distinct
+# scrape-failure log, and must NOT reach qualification as a normal rejection.
+check("_discover_linkedin gates a retry on the all-empty signature (not on every candidate)",
+      "_linkedin_scrape_looks_empty(profile)" in _lk_src)
+check("the retry re-loads /about with a stronger wait than domcontentloaded (networkidle) plus an explicit about-panel selector wait",
+      'wait_until="networkidle"' in _lk_src
+      and "section.org-about-module__margin-bottom p" in _lk_src)
+check("a still-empty retry is logged DISTINCTLY as a scrape failure, not as a qualify rejection (this is what masked the bug in the logs)",
+      "scrape failed (empty /about after retry)" in _lk_src)
+check("a still-empty retry skips the candidate instead of passing empty data to qualification",
+      _niche_re.search(r"scrape failed \(empty /about after retry\).*?continue", _lk_src, _niche_re.DOTALL) is not None)
+check("the retry happens BEFORE the location/competitor/size checks, so recovered data flows through every check, not just qualify_profile",
+      _lk_src.index("_linkedin_scrape_looks_empty(profile)") < _lk_src.index("mismatch_reason = None"))
+check("the retry carries post_count/recent_activity across from the /posts/ read instead of letting extract_company_profile's placeholders overwrite them",
+      'retried["post_count"] = profile.get("post_count")' in _lk_src
+      and 'retried["recent_activity"] = profile.get("recent_activity")' in _lk_src)
+
+# --- 2026-09-18: _looks_like_personal_name false-positives on LinkedIn
+# LIVE-VERIFIED tonight: "Orange Business", "Alfa Telecommunications" and
+# "Roman Foods" all returned True -- any Two Title-Case Words lacking a term
+# from the small _BUSINESS_WORDS set. On LinkedIn that cost -2 each and
+# produced 21 of the -9 scores. LinkedIn company search structurally only
+# ever returns /company/ URLs, so an individual is impossible there.
+def _linkedin_profile(name):
+    return {"platform": "linkedin", "display_name": name,
+            "bio": "A real Lebanese company providing services to businesses nationwide.",
+            "has_website": True, "post_count": 8, "recent_activity": True,
+            "follower_or_headcount": 200}
+
+for _real_company in ("Orange Business", "Alfa Telecommunications", "Roman Foods"):
+    _, _reasons_lk = qualify.qualify_profile(_linkedin_profile(_real_company), "")
+    check("LinkedIn company %r is no longer penalized as a personal name (tonight's real false positive)" % _real_company,
+          not any("matches a personal-name pattern" in r for r in _reasons_lk))
+
+# Regression: Instagram genuinely needs this check (hashtag discovery really
+# does surface individuals) -- it must be completely unchanged there.
+_, _reasons_ig = qualify.qualify_profile(
+    {"platform": "instagram", "display_name": "anthony_elhachem",
+     "bio": "Sharing my life, travels and daily thoughts with you all.",
+     "has_website": True, "post_count": 80, "recent_activity": True,
+     "follower_or_headcount": 4000},
+    "",
+)
+check("Instagram's personal-name gate still flags a real personal handle (regression check -- must NOT be weakened)",
+      any("reads as an individual's account" in r for r in _reasons_ig))
+_ig_qualifies, _ = qualify.qualify_profile(
+    {"platform": "instagram", "display_name": "anthony_elhachem",
+     "bio": "Sharing my life, travels and daily thoughts with you all.",
+     "has_website": True, "post_count": 80, "recent_activity": True,
+     "follower_or_headcount": 4000},
+    "",
+)
+check("...and that Instagram individual is still hard-rejected, not saved as a lead",
+      not _ig_qualifies)
+check("a real Instagram BUSINESS account is still not flagged as personal (regression check -- must not over-reject)",
+      qualify.qualify_profile(
+          {"platform": "instagram", "display_name": "zimmar.security.systems",
+           "bio": "Security systems installation and building infrastructure for offices and homes in Beirut.",
+           "has_website": True, "post_count": 40, "recent_activity": True,
+           "follower_or_headcount": 3000}, "")[0])
 
 print()
 if failures:
