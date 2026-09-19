@@ -1395,17 +1395,45 @@ def _discover_linkedin(
                                 f"configured for {location!r}, company's own bio mentions {foreign_marker!r}."
                             )
 
-                    if not mismatch_reason and configured_location == "lebanon":
-                        has_lebanon_signal = any(
-                            place in headquarters or place in (profile.get("bio") or "").lower()
-                            for place in _LEBANON_PLACE_MARKERS
+                # RE-TIGHTENED 2026-09-19, real owner audit (a separate,
+                # independent web-search verification of every live Zimmar/
+                # Insurance LinkedIn lead): even WITH the geo-facet applied,
+                # real false positives got through -- Evans Engineering and
+                # Construction (genuinely Kenya-based, zero Lebanon
+                # connection), ITT Inc. (US industrial conglomerate, no
+                # Lebanon presence at all), Bitarchitects (relocated to
+                # Washington DC after the 2020 Beirut Blast, no continuing
+                # Lebanon office), First Law International (a Brussels-HQ'd
+                # law-firm NETWORK brand -- Lebanon is only represented by an
+                # independent member firm, not this entity itself). The
+                # geo-facet-trusts-LinkedIn relaxation above (2026-09-13) was
+                # solving a real problem (Aramex/Dar Al-Handasah wrongly
+                # rejected for showing a foreign HQ despite genuine, current
+                # Lebanon branches) but went too far by skipping verification
+                # entirely rather than just skipping the HQ-mismatch hard
+                # reject specifically. Fix: the has_lebanon_signal check now
+                # ALWAYS runs, regardless of search_used_geo_facet -- a
+                # company needs at least ONE positive signal (Headquarters
+                # field or bio naming an actual Lebanese place) to qualify,
+                # which real Lebanon-operating companies (even ones with a
+                # foreign global HQ, like Aramex/Dar/DAMAC's Beirut branch)
+                # still have via their bio, while a company with literally
+                # no Lebanon connection (Evans/ITT/Bitarchitects/First Law)
+                # does not. The HQ-mismatch-alone hard reject stays OFF for
+                # the geo-facet case (that specific check is what wrongly
+                # flagged Aramex/Dar before) -- only the weaker "is there ANY
+                # positive signal at all" bar applies here.
+                if not mismatch_reason and configured_location == "lebanon":
+                    has_lebanon_signal = any(
+                        place in headquarters or place in (profile.get("bio") or "").lower()
+                        for place in _LEBANON_PLACE_MARKERS
+                    )
+                    if not has_lebanon_signal:
+                        mismatch_reason = (
+                            "configured for 'lebanon', but neither the company's Headquarters "
+                            "field nor its bio names any Lebanese location -- no positive signal "
+                            "this is a Lebanese company."
                         )
-                        if not has_lebanon_signal:
-                            mismatch_reason = (
-                                "configured for 'lebanon', but neither the company's Headquarters "
-                                "field nor its bio names any Lebanese location -- no positive signal "
-                                "this is a Lebanese company."
-                            )
 
                 if mismatch_reason:
                     counts["skipped_leads"].append({
