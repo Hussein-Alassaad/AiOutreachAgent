@@ -142,6 +142,85 @@ class SessionBusy(RuntimeError):
     """
 
 
+# How many browser instances may be open across the WHOLE machine at once,
+# regardless of account. Added 2026-09-17: _account_session_lock above only
+# ever serialized the SAME account's own sessions -- nothing stopped, say,
+# Zimmar's scheduled sending job and Insurance's reply-detection poll from
+# both launching their own full Chromium process at the same moment, and on
+# this droplet's 1 vCPU / 1.9GB, a single Chromium instance alone eats
+# ~40-45% of total RAM. LIVE-CONFIRMED that morning: Zimmar LinkedIn's
+# sending job failed 3/3 real send attempts on page-load/element-wait
+# timeouts, each one landing within seconds of a reply-poll cycle also
+# holding a browser open -- genuine resource contention between DIFFERENT
+# accounts' sessions, not a broken selector (the identical code had sent
+# successfully the day before).
+#
+# LOWERED to 1 on 2026-09-19: this comment's own "revisit if real
+# contention persists" flag turned out to be needed -- LIVE-CONFIRMED
+# tonight, Zimmar's LinkedIn discovery job (started 20:38 Beirut) and the
+# 30-minute reply-detection poll (fires on a fixed interval, landed at
+# 20:43) both held their own Chromium instance open AT THE SAME TIME --
+# `docker top` showed two full browser process trees running concurrently,
+# `docker stats` showed the container at 1.045GiB/1.922GiB (54%) with only
+# 94MB free system-wide and load average 1.54 on this box's single vCPU.
+# Consequence: 4 consecutive LinkedIn /about scrapes came back empty even
+# after the networkidle retry (Algorithm Pharmaceutical, Arwan
+# Pharmaceutical, Mediterranean Pharmaceutical "MPC", European
+# Pharmaceutical Industry) -- real, previously-good companies, not a
+# lead-quality problem. 2 was chosen specifically to avoid serializing
+# everything into a single-file queue, but tonight proved this droplet's
+# actual capacity is 1 concurrent browser, not 2 -- a slower but complete
+# scrape beats a fast one that fails outright.
+_MAX_CONCURRENT_BROWSER_SESSIONS = 1
+_GLOBAL_SESSION_LOCK_TIMEOUT_SECONDS = 300
+
+
+@contextlib.contextmanager
+def _global_session_slot():
+    """
+    Cross-process limiter on how many SessionManager browsers may be open at
+    once, machine-wide. Same fcntl-based, crash-safe pattern as
+    _account_session_lock below (advisory, cross-process, auto-released if a
+    holder is killed) -- but instead of one lock file per account, this
+    tries _MAX_CONCURRENT_BROWSER_SESSIONS numbered slot files and takes
+    whichever one isn't currently held, which is the standard way to build
+    a counting semaphore (as opposed to a single mutex) out of flock.
+
+    Raises SessionBusy (the same exception _account_session_lock already
+    raises, so every existing caller's "leave it pending, retry next cycle"
+    handling covers this without any change) if every slot is still held
+    after _GLOBAL_SESSION_LOCK_TIMEOUT_SECONDS.
+    """
+    try:
+        import fcntl
+    except ImportError:  # pragma: no cover -- Windows dev machines only
+        yield
+        return
+
+    STORAGE_DIR.mkdir(exist_ok=True)
+    deadline = time.monotonic() + _GLOBAL_SESSION_LOCK_TIMEOUT_SECONDS
+    while True:
+        for slot in range(_MAX_CONCURRENT_BROWSER_SESSIONS):
+            slot_file = open(STORAGE_DIR / f"_global_browser_slot_{slot}.lock", "a+")
+            try:
+                fcntl.flock(slot_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                slot_file.close()
+                continue
+            try:
+                yield
+            finally:
+                fcntl.flock(slot_file.fileno(), fcntl.LOCK_UN)
+                slot_file.close()
+            return
+        if time.monotonic() >= deadline:
+            raise SessionBusy(
+                f"All {_MAX_CONCURRENT_BROWSER_SESSIONS} browser session slots are still in "
+                f"use after {_GLOBAL_SESSION_LOCK_TIMEOUT_SECONDS}s; try again on the next cycle."
+            )
+        time.sleep(0.5)
+
+
 @contextlib.contextmanager
 def _account_session_lock(account_id: str):
     """
@@ -255,8 +334,18 @@ class SessionManager:
         self._browser: Browser | None = None
         # account_id -> the held session lock, released by close().
         self._locks: dict[str, Any] = {}
+        # The global browser-slot lock (see _global_session_slot), held for
+        # this SessionManager's entire lifetime -- released in __exit__.
+        self._global_slot: Any = None
 
     def __enter__(self) -> "SessionManager":
+        # Acquired BEFORE launching Chromium, not after: the whole point is
+        # to cap how many browser PROCESSES exist at once machine-wide (see
+        # _MAX_CONCURRENT_BROWSER_SESSIONS's own comment) -- acquiring after
+        # launch would let the very launch this is meant to gate proceed
+        # unconditionally.
+        self._global_slot = _global_session_slot()
+        self._global_slot.__enter__()
         self._playwright = sync_playwright().start()
         # LIVE-VERIFIED 2026-08-21: plain launch(headless=...) with no extra
         # args leaves navigator.webdriver == True (Chromium's own default
@@ -329,6 +418,14 @@ class SessionManager:
             self._browser.close()
         if self._playwright:
             self._playwright.stop()
+        # Released LAST, after the browser process is actually gone -- the
+        # slot represents "a browser is running," so freeing it before
+        # self._browser.close() has finished would let a new session start
+        # while this one's Chromium process is still tearing down and still
+        # consuming its memory.
+        if self._global_slot is not None:
+            self._global_slot.__exit__(None, None, None)
+            self._global_slot = None
 
     def open(self, account: dict) -> tuple[BrowserContext, "Page", str | None]:  # noqa: F821
         """
