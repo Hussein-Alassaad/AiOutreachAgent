@@ -187,6 +187,13 @@ _INSURANCE_BUSINESS_NAME = "Partners Insurance Consultancy"
 # split itself unnecessary, and the owner's instruction was to remove the
 # assumption everywhere, not just in the no-gap case.
 #
+# UPDATED 2026-09-19: "annual coverage for cleanings, extractions,
+# fillings" reworded to "free unlimited cleanings, extractions, and
+# fillings" per owner instruction -- those three are unlimited. The
+# consultation stays explicitly ONE free consultation, not unlimited --
+# owner's direct correction the same day ("the consultation one for free
+# only so put one free con[sultation]").
+#
 # Length checked against LinkedIn Page inbox's 25-750 char limit (see the
 # dated history above this comment for why that limit is load-bearing):
 # 620 chars with a long real company name ("Mediterranean Pharmaceutical
@@ -197,7 +204,7 @@ _INSURANCE_TEMPLATE = """Hello {company_name},
 
 We're introducing Lebanon's first Dental Card — a dental benefit no insurance company in Lebanon currently offers. Even if you already have commercial insurance, you can add this while keeping your existing coverage as is.
 
-The dental card includes: annual coverage for cleanings, extractions, fillings, and one free consultation, plus 50-70% off implants, crowns, orthodontics, and oral surgery. No medical exams, no pre-existing condition screening, open to all ages from day one — just USD 50 per person/year.
+The dental card includes: free unlimited cleanings, extractions, and fillings, plus one free consultation, plus 50-70% off implants, crowns, orthodontics, and oral surgery. No medical exams, no pre-existing condition screening, open to all ages from day one — just USD 50 per person/year.
 
 Would it be worth a quick call to see if this fits your team?"""
 
