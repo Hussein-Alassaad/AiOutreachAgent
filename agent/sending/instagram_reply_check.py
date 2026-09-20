@@ -128,7 +128,21 @@ def _open_thread_for_lead(page: Page, account: dict, business_name: str) -> bool
     try:
         item.click(timeout=10_000)
     except Exception:  # noqa: BLE001 -- see comment above; retry once against a freshly re-queried locator before giving up
+        # REAL BUG found 2026-09-20, live-confirmed 3x against real lead
+        # "titus.logistics" (same timeout, same lead, across 3 separate
+        # runs -- a genuinely reproducible failure, not one-off flakiness):
+        # force=True on the retry SKIPS Playwright's normal actionability
+        # checks, which is exactly what auto-scrolls a below-the-fold item
+        # into view before clicking -- so a still-off-screen item was being
+        # force-clicked at a stale screen position instead. Explicit
+        # scroll_into_view_if_needed() first restores that scroll step
+        # without reintroducing the full 30s actionability wait the
+        # original bug was about.
         item = page.locator(CONVERSATION_LIST_ITEM_SELECTOR, has_text=business_name).first
+        try:
+            item.scroll_into_view_if_needed(timeout=5_000)
+        except Exception:  # noqa: BLE001 -- best-effort; the force click below still runs either way
+            pass
         item.click(timeout=10_000, force=True)
     # LIVE-CONFIRMED 2026-09-07, third fix in this function: clicking the
     # conversation updates an in-page panel rather than navigating (page.url
