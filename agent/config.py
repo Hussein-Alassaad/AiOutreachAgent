@@ -52,14 +52,19 @@ WHATSAPP_API_SECRET = _get("WHATSAPP_API_SECRET")
 WHATSAPP_FROM_NUMBER = _get("WHATSAPP_FROM_NUMBER")
 
 # ── Email lookup for LinkedIn-discovered companies ─────────────────────────────
-# Two providers, same job (name+domain -> email) -- see discovery/hunter.py and
-# discovery/findymail.py's own module docstrings for what each does and why.
-# Being trialed in this order: Hunter's 50 free credits/month first: if
-# results are good, move to Icypeas (cheaper long-term); Findymail was built
-# first but paused in favor of testing the free option before paying for
-# either. scheduler.py's _maybe_find_email() picks which one is active.
+# Three providers, same job (name+domain -> email) -- see discovery/hunter.py,
+# discovery/findymail.py, and discovery/icypeas.py's own module docstrings
+# for what each does and why. Being trialed in this order: Hunter's 50 free
+# credits/month first: if results are good, move to Icypeas (cheaper
+# long-term, added 2026-09-20 -- 50 free/month + ~$19/month paid tier, and a
+# genuinely different data source than Hunter's own crawled database, unlike
+# every other tool compared that either cost more or duplicated Hunter's own
+# coverage); Findymail was built first but paused in favor of testing the
+# free option before paying for either. scheduler.py's _maybe_find_email()
+# picks which one is active.
 HUNTER_API_KEY = _get("HUNTER_API_KEY")
 FINDYMAIL_API_KEY = _get("FINDYMAIL_API_KEY")
+ICYPEAS_API_KEY = _get("ICYPEAS_API_KEY")
 
 # ── Live login (remote "Connect account" websocket service) ───────────────────
 # Same value as the main Next.js app's own AUTH_SECRET (src/lib/auth.ts) -- the

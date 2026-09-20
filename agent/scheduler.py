@@ -58,7 +58,7 @@ from agent.core import warmup
 from agent.core.session import ProxyIpMismatch, SessionManager
 from agent.crm import followup
 from agent.db import repositories as repo
-from agent.discovery import findymail, hunter, instagram, linkedin
+from agent.discovery import findymail, hunter, icypeas, instagram, linkedin
 from agent.discovery.qualify import qualify_profile
 from agent.discovery.qualify import _is_agency as _lead_is_agency
 from agent.messaging import approval
@@ -2160,17 +2160,49 @@ def _maybe_find_email(tenant_id: str, lead: dict, founder_name: str | None) -> N
         try:
             email = hunter.find_email(founder_name, domain)
         except hunter.HunterNotConfigured:
-            return  # no API key set yet -- not an error, just not wired up
-        if email:
-            found_via = f"Hunter Email Finder for {founder_name}"
+            pass  # not configured is not fatal here -- Hunter's other tier or Icypeas may still be, see below
+        else:
+            if email:
+                found_via = f"Hunter Email Finder for {founder_name}"
 
     if not email:
         try:
             email = hunter.find_company_emails(domain)
         except hunter.HunterNotConfigured:
-            return
-        if email:
-            found_via = "Hunter Domain Search (no founder name identified)"
+            pass  # not configured is not fatal here -- Icypeas may still be, see below
+        else:
+            if email:
+                found_via = "Hunter Domain Search (no founder name identified)"
+
+    # ADDED 2026-09-20, real owner request: a SECOND, independent provider
+    # tried only when Hunter found nothing on either of its own two tiers --
+    # not a replacement, an additional real chance, so a lead Hunter's
+    # database genuinely doesn't have still gets a shot rather than being a
+    # dead end. Icypeas is a genuinely different data source than Hunter's
+    # own crawled database (see discovery/icypeas.py's own module docstring
+    # for the real research behind picking it), so this is a real second
+    # opinion, not just re-asking the same underlying data. Kept as a
+    # fallback rather than the primary tier until it has real live-verified
+    # results to compare against Hunter's own -- see icypeas.py's docstring
+    # for what's confirmed-from-docs versus what still needs a real API
+    # call to fully verify.
+    if not email:
+        if founder_name:
+            try:
+                email = icypeas.find_email(founder_name, domain)
+            except icypeas.IcypeasNotConfigured:
+                pass
+            else:
+                if email:
+                    found_via = f"Icypeas Email Finder for {founder_name}"
+        if not email:
+            try:
+                email = icypeas.find_company_emails(domain)
+            except icypeas.IcypeasNotConfigured:
+                pass
+            else:
+                if email:
+                    found_via = "Icypeas Domain Search (no founder name identified)"
 
     if not email:
         return
