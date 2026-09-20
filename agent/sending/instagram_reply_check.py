@@ -139,6 +139,25 @@ def _open_thread_for_lead(page: Page, account: dict, business_name: str) -> bool
     # thread that genuinely had one -- the exact false negative this whole
     # function exists to avoid. A real settle wait here is what actually
     # makes the read see the conversation that just opened.
+    #
+    # REAL BUG found 2026-09-19 (real lead "fadeltradingcompany", a genuine
+    # owner-reported missed reply): the flat 3s sleep alone wasn't always
+    # enough -- confirmed live, this exact lead's thread opened
+    # successfully (found=True) but _read_thread_messages() then read ZERO
+    # bubbles, meaning the panel genuinely hadn't finished rendering yet on
+    # this resource-constrained droplet. Waiting for the thread's own
+    # message selector to actually appear (same selector
+    # _read_thread_messages() itself reads) is real evidence the panel is
+    # populated, instead of a fixed guess at how long that takes. Falls
+    # back to the original flat sleep if the wait itself times out --
+    # _read_thread_messages() already tolerates finding nothing (returns an
+    # empty list, treated as "no reply this poll" rather than a crash), so
+    # this fallback keeps the exact previous behavior as a safety net
+    # rather than ever raising here.
+    try:
+        page.wait_for_selector(_THREAD_MESSAGE_SELECTOR, timeout=8_000)
+    except Exception:  # noqa: BLE001 -- fall through to the flat sleep below; _read_thread_messages tolerates an empty result
+        pass
     page.wait_for_timeout(3_000)
     return True
 
