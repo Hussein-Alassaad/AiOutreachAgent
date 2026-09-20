@@ -39,9 +39,12 @@ import random
 import re
 import time
 
+from zoneinfo import ZoneInfo
+
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from agent import config
@@ -3507,6 +3510,42 @@ def build_daily_schedule() -> BackgroundScheduler:
             name=f"Morning cold-outreach sending: tenant {tenant_id} / {account['label']}",
             replace_existing=True,
         )
+
+        # REAL BUG FOUND AND FIXED 2026-09-20: CronTrigger always computes
+        # "next occurrence strictly after now" -- if a redeploy happens
+        # AFTER today's send_hour:send_minute has already passed (this
+        # session alone: multiple same-morning redeploys each pushed
+        # Zimmar's own sending slot to TOMORROW, live-confirmed 43 real
+        # approved messages sitting untouched all day while the 8:00-12:00
+        # Beirut window was still wide open), the account gets skipped for
+        # the ENTIRE day even though the window it belongs to hasn't
+        # closed yet. This schedules a ONE-OFF immediate catch-up run
+        # (fired ~10-40s from now, staggered per account so a redeploy
+        # mid-window doesn't fire every account's catch-up in the same
+        # instant -- same spacing reasoning as _spread_within_window)
+        # whenever: (1) we're currently inside this tenant's own
+        # 08:00-12:00 sending window right now, in ITS timezone, AND (2)
+        # today's own send_hour:send_minute has already passed. Condition
+        # (2) matters -- an account whose slot is still ahead of us today
+        # must NOT get an extra early run on top of its normal one.
+        try:
+            tz = ZoneInfo(tenant_tz)
+        except Exception:  # noqa: BLE001 -- an invalid/unknown tz string must not crash schedule-build; just skip catch-up for this one account
+            tz = None
+        if tz is not None:
+            now_local = dt.datetime.now(tz)
+            today_slot = now_local.replace(hour=send_hour, minute=send_minute, second=0, microsecond=0)
+            window_start = now_local.replace(hour=_SENDING_WINDOW_START_HOUR, minute=0, second=0, microsecond=0)
+            window_end = now_local.replace(hour=_SENDING_WINDOW_END_HOUR, minute=0, second=0, microsecond=0)
+            if window_start <= now_local < window_end and now_local > today_slot:
+                catch_up_at = now_local + dt.timedelta(seconds=10 + index * 30)
+                scheduler.add_job(
+                    _run_sending_for_this_account,
+                    trigger=DateTrigger(run_date=catch_up_at, timezone=tz),
+                    id=f"sending-catchup-{tenant_id}-{account['id']}",
+                    name=f"Catch-up (missed today's slot): tenant {tenant_id} / {account['label']}",
+                    replace_existing=True,
+                )
 
     # timezone=config.TIMEZONE is load-bearing (added 2026-09-16): without
     # it APScheduler falls back to the scheduler's own default, and since
