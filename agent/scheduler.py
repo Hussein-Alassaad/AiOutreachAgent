@@ -1819,16 +1819,24 @@ def _discover_instagram(
                 page.goto(profile_url, timeout=30_000, wait_until="domcontentloaded")
                 profile = instagram.extract_profile(page)
                 profile["engagement_sample"] = engagement
-                # RE-VERIFIED 2026-08-03: extract_profile() has no display_name
-                # field at all -- Instagram's real display name ("Toi Kruvasan")
-                # only exists as plain DOM text with no stable selector or
-                # semantic meta tag backing it (og:title only has the @username,
-                # same as the URL). Caught via a real supervised discovery run
-                # where every saved Instagram lead's business_name came back
-                # null. Using the @username (already reliably in profile_url) as
-                # business_name instead of leaving it null -- less pretty than a
-                # real display name, but always present and never guessed at.
-                profile["display_name"] = profile_url.rstrip("/").rsplit("/", 1)[-1]
+                # FIXED 2026-09-20 -- see instagram.py's
+                # _OG_TITLE_DISPLAY_NAME_RE for the real discovery: og:title
+                # now genuinely carries the display name (re-verified live,
+                # no longer true that it "only has the @username" as this
+                # comment previously claimed on 2026-08-03). extract_profile()
+                # now returns a real display_name when parseable; only fall
+                # back to the bare @handle (from profile_url) when it isn't
+                # -- same safety net as before, now just the exception
+                # instead of the rule. This is what lets
+                # instagram_reply_check.py's business_name-based inbox
+                # search actually match a real conversation going forward:
+                # Instagram's own inbox list shows the DISPLAY NAME, never
+                # the handle, which is exactly why 2 real leads'
+                # (fadeltradingcompany, titus.logistics) replies went
+                # undetected -- the handle this code used to save literally
+                # never appears anywhere in that list.
+                handle = profile_url.rstrip("/").rsplit("/", 1)[-1]
+                profile["display_name"] = profile.get("display_name") or handle
                 # Own competitors -- see _is_competitor()'s own comment. This
                 # check previously only existed on the LinkedIn side, so
                 # Zimmar's Instagram discovery had no defense against

@@ -79,6 +79,19 @@ _STATS_RE = re.compile(
     r"([\d.,KMk]+)\s+Followers,\s+([\d.,KMk]+)\s+Following,\s+([\d.,KMk]+)\s+Posts",
     re.IGNORECASE,
 )
+# ADDED 2026-09-20, real bug found live: extract_profile()'s own docstring
+# used to say "og:title only has the @username, same as the URL" (dated
+# 2026-08-03) -- re-verified live against 2 real profiles
+# (fadeltradingcompany, titus.logistics) and that is no longer true.
+# Instagram's og:title now reads "<Display Name> (@<handle>) • Instagram
+# photos and videos" -- confirmed live for both. This is the real display
+# name this codebase has never been able to save until now (business_name
+# has always fallen back to the bare @handle instead -- see
+# scheduler.py's _discover_instagram, which is exactly why Instagram's own
+# inbox list -- which shows the DISPLAY NAME, never the handle -- couldn't
+# be matched by instagram_reply_check.py's business_name search, and 2 real
+# leads' replies went undetected).
+_OG_TITLE_DISPLAY_NAME_RE = re.compile(r"^(.*?)\s*\(@[^)]+\)")
 # RE-VERIFIED 2026-08-03: the old `"biography":"..."` embedded-JSON approach
 # is gone -- see extract_profile()'s docstring for the full story. This
 # reads the plain <meta name="description"> tag instead, whose content is
@@ -268,9 +281,22 @@ def extract_profile(page: Page) -> dict:
     follower_count = parse_count(stats_match.group(1)) if stats_match else None
     post_count = parse_count(stats_match.group(3)) if stats_match else None
 
+    # See _OG_TITLE_DISPLAY_NAME_RE's own comment above for the real bug
+    # this fixes -- og:title now genuinely carries the display name, unlike
+    # when this function was last verified. None (not the bare handle) on
+    # any parse failure -- the caller (_discover_instagram) already has its
+    # own handle fallback, so this only ever ADDS a better name when one is
+    # actually found, never removes the existing safety net.
+    display_name = None
+    og_title = _meta_content(page, "og:title") or ""
+    name_match = _OG_TITLE_DISPLAY_NAME_RE.match(og_title)
+    if name_match:
+        display_name = html.unescape(name_match.group(1)).strip() or None
+
     return {
         "platform": "instagram",
         "bio": bio,
+        "display_name": display_name,
         "has_website": bool(website),
         "website": website,
         "follower_or_headcount": follower_count,
