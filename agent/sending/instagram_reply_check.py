@@ -296,8 +296,44 @@ def check_instagram_replies() -> list[dict]:
                 repo.update_account(account["id"], {"verified_proxy_ip": new_verified_ip})
                 account["verified_proxy_ip"] = new_verified_ip
             try:
-                found = _open_thread_for_lead(page, account, business_name)
-                live_messages = _read_thread_messages(page) if found else []
+                # REAL BUG found 2026-09-20, live-confirmed 4x against real
+                # lead "titus.logistics" and repeatedly against
+                # "fadeltradingcompany": a single pass through
+                # _open_thread_for_lead can hit a genuinely stale DOM
+                # element (Playwright's wait_for(state="visible") gave a
+                # false positive -- bounding_box() came back None on the
+                # SAME element moments later, confirmed via a live
+                # elementFromPoint check) or an empty thread-panel render,
+                # neither of which is fixed by waiting longer WITHIN the
+                # same page load -- Instagram's own list can genuinely
+                # re-sort/re-render between the check and the interaction.
+                # A full retry (fresh page reload, fresh locator query from
+                # scratch) is what actually recovers from this, since it
+                # gives Instagram's client-side app a clean new render
+                # rather than fighting a specific already-stale element.
+                # Bounded to 2 total attempts -- a third retry buys
+                # diminishing returns for a failure this rare (1 in 25+
+                # leads checked on a normal night) against the real cost of
+                # extra page loads on this resource-constrained droplet.
+                found = False
+                live_messages: list[dict] = []
+                last_exc: Exception | None = None
+                for attempt in range(2):
+                    try:
+                        found = _open_thread_for_lead(page, account, business_name)
+                        live_messages = _read_thread_messages(page) if found else []
+                        last_exc = None
+                        if not found or live_messages:
+                            break  # either a clean "no thread" or a real non-empty read -- both are done
+                        # found=True but zero messages read -- the exact
+                        # empty-render failure mode; worth one fresh retry
+                        # before accepting it as "no reply this poll".
+                    except SessionLoggedOut:
+                        raise  # a real logged-out session must propagate immediately, not retry
+                    except Exception as exc:  # noqa: BLE001 -- captured for a possible re-raise below if the retry also fails
+                        last_exc = exc
+                if last_exc is not None:
+                    raise last_exc
             except SessionLoggedOut as exc:
                 # login_status is already persisted "failed" by
                 # _raise_if_logged_out itself -- record this as a real
