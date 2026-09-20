@@ -3090,6 +3090,14 @@ _SENDING_WINDOW_END_HOUR = 12
 _DISCOVERY_WINDOW_START_HOUR = 20
 _DISCOVERY_WINDOW_END_HOUR = 24
 
+# End-of-day sending recovery, added 2026-09-20 -- see
+# build_daily_schedule()'s own "SECOND, DAILY safety net" comment for the
+# real incident this fixes. 18:00 sits in the middle of the gap between
+# the morning sending window closing (12:00) and the night discovery
+# window opening (20:00), so it can never collide with either.
+_SENDING_RECOVERY_HOUR = 18
+_SENDING_RECOVERY_MINUTE = 0
+
 
 # Minutes-since-midnight ranges that _spread_within_window() must never
 # land inside, even by chance. Added 2026-09-17: Insurance's discovery
@@ -3546,6 +3554,48 @@ def build_daily_schedule() -> BackgroundScheduler:
                     name=f"Catch-up (missed today's slot): tenant {tenant_id} / {account['label']}",
                     replace_existing=True,
                 )
+
+        # SECOND, DAILY safety net for the case the mid-window catch-up
+        # above can't cover: the morning window (08:00-12:00) closes
+        # ENTIRELY before any redeploy runs at all that day (live-confirmed
+        # 2026-09-20: every one of that day's redeploys happened to land
+        # right after each account's own slot had already passed, so the
+        # in-window catch-up never got a chance to fire, and 43 real
+        # approved messages sat untouched the whole day). Scheduled once
+        # daily at _SENDING_RECOVERY_HOUR (18:00 Beirut -- well clear of
+        # the 08:00-12:00 window and the 20:00-24:00 discovery window, so
+        # it never collides with either), this checks whether this account
+        # actually sent its full daily allowance today; if not, it runs the
+        # exact same sending cycle once more. run_account_sending_cycle()
+        # is naturally safe to call more than once a day -- it only ever
+        # picks up still-"approved" messages and re-checks the real
+        # per-calendar-day cap (pool.today_start_iso) before sending
+        # anything, so this can never double-send past the daily limit.
+        def _run_recovery_sending_for_this_account(
+            tenant_id: str = tenant_id, account_id: str = account["id"], tenant_tz: str = tenant_tz,
+        ) -> None:
+            try:
+                tz = ZoneInfo(tenant_tz)
+            except Exception:  # noqa: BLE001 -- an invalid/unknown tz string must not crash the job; just skip the check and let the normal cap logic decide
+                tz = None
+            acct = repo.get_account(account_id, tenant_id)
+            if not acct or acct.get("status") != "active":
+                return
+            override = acct.get("send_daily_limit_override")
+            daily_limit = override if override is not None else warmup.effective_limit(acct, acct.get("platform"))
+            day_start = pool.today_start_iso(tenant_id)
+            already_sent = repo.cold_sends_today_for_account(account_id, day_start, tenant_id=tenant_id)
+            if already_sent >= daily_limit:
+                return  # already sent its full allowance today -- nothing to recover
+            run_account_sending_cycle(tenant_id, account_id)
+
+        scheduler.add_job(
+            _run_recovery_sending_for_this_account,
+            trigger=CronTrigger(hour=_SENDING_RECOVERY_HOUR, minute=_SENDING_RECOVERY_MINUTE, timezone=tenant_tz),
+            id=f"sending-recovery-{tenant_id}-{account['id']}",
+            name=f"End-of-day recovery (send today's leftover quota if the morning window was missed entirely): tenant {tenant_id} / {account['label']}",
+            replace_existing=True,
+        )
 
     # timezone=config.TIMEZONE is load-bearing (added 2026-09-16): without
     # it APScheduler falls back to the scheduler's own default, and since
