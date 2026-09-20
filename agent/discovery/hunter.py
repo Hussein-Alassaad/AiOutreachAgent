@@ -123,6 +123,29 @@ BLOCKLISTED_DOMAINS = {
     "whatsapp.com",
     "telegram.me",
     "t.me",
+    # ADDED 2026-09-20, real bad match traced: a Zimmar lead's saved
+    # contact_email came back as the platform owner's OWN real personal
+    # Gmail address (husseinalasaad5@gmail.com) -- an email lead with no
+    # "found via" note at all, meaning _bare_domain() extracted a personal
+    # webmail domain from a malformed/mismatched `website` field (the same
+    # class of bug that motivated this blocklist in the first place: a
+    # LinkedIn "website" field isn't always the company's own domain).
+    # Same reasoning as the bio-link platforms above -- Domain Search
+    # against a personal webmail PROVIDER's own domain returns whichever
+    # real person's address Hunter happens to have crawled for that
+    # provider, completely unrelated to the lead being contacted. A
+    # company's real contact email is never @gmail.com/@yahoo.com/etc. by
+    # definition for this codebase's purposes (cold B2B outreach to a real
+    # business), so these are blocked the same way bio-link platforms are.
+    "gmail.com",
+    "yahoo.com",
+    "hotmail.com",
+    "outlook.com",
+    "icloud.com",
+    "aol.com",
+    "live.com",
+    "msn.com",
+    "protonmail.com",
 }
 
 
