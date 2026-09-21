@@ -46,3 +46,9 @@ desktop.ini
 *.log
 npm-debug.log*
 logs/
+
+# ── Droplet-local forensic captures (agent/sending/linkedin_send.py) ──
+debug_captures/
+
+# ── one-off throwaway investigation/test scripts, never part of the product ──
+scratch_*.py

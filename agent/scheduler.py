@@ -75,7 +75,7 @@ from agent.sending import (
 )
 from agent.sending.instagram_send import NoExistingThread as InstagramNoExistingThread
 from agent.sending.instagram_send import NoMessageButtonAvailable as InstagramNoMessageButtonAvailable
-from agent.sending.linkedin_send import MessageLengthInvalid, NoMessageButtonAvailable
+from agent.sending.linkedin_send import MessageLengthInvalid, NoMessageButtonAvailable, PageMessagingRateLimited
 from agent.sending.linkedin_send import NoExistingThread as LinkedInNoExistingThread
 from agent.sending.whatsapp_send import WhatsAppNotConfigured
 
@@ -2650,6 +2650,22 @@ def _run_sending_cycle_for_tenant(limit: int | None, account_id: str | None = No
                     "message_id": message["id"], "channel": channel, "ok": False,
                     "reason": f"unrecognized channel {channel!r} -- expected linkedin/instagram/whatsapp",
                 })
+        except PageMessagingRateLimited as exc:
+            # LIVE-CONFIRMED 2026-09-20/21: once LinkedIn's own "reached the
+            # limit for starting new conversations with Pages" banner shows
+            # up, it stays up for the rest of this account's session -- every
+            # remaining Page lead in this batch would hit the identical wall
+            # (confirmed: many distinct leads, same run, same banner, both
+            # days). Continuing to retry burns the full per-lead timeout on
+            # each one AND repeatedly hammers a platform rate limit, which
+            # risks looking like exactly the automated-abuse pattern
+            # LinkedIn's detection watches for. Mark this one message failed
+            # for visibility, then stop trying further LinkedIn Page leads
+            # on this account for the rest of THIS run -- tomorrow's run
+            # starts fresh and may no longer be capped.
+            results.append({"message_id": message["id"], "channel": channel, "ok": False, "error": str(exc)})
+            log_error("sending", exc, channel=channel, lead_id=message.get("lead_id"))
+            break
         except Exception as exc:  # noqa: BLE001 -- one bad message shouldn't stop the rest
             results.append({"message_id": message["id"], "channel": channel, "ok": False, "error": str(exc)})
             log_error("sending", exc, channel=channel, lead_id=message.get("lead_id"))
@@ -3055,13 +3071,16 @@ _DOWNSTREAM_SECOND_MINUTE = 0
 _REPLY_POLL_INTERVAL_MINUTES = 30
 
 # How often run_reply_detection_poll() re-checks every "contacted"/"replied"
-# lead's real inbox for a new incoming reply -- same reasoning and same
-# 2026-09-17 change as _REPLY_POLL_INTERVAL_MINUTES above. A real incoming
-# reply from a lead can now take up to ~30 min to show up in the dashboard
-# instead of ~3 -- accepted tradeoff for removing the resource contention
-# that was causing real send failures (see that constant's own comment for
-# the live incident this closes).
-_REPLY_DETECTION_POLL_INTERVAL_MINUTES = 30
+# lead's real inbox for a new incoming reply -- same reasoning as
+# _REPLY_POLL_INTERVAL_MINUTES above. Raised again 2026-09-21 (owner's own
+# explicit request) from 30 to 60 minutes: this poll was STILL observed
+# competing for the single browser slot with real sending jobs that same
+# morning (Insurance LinkedIn's 10:04 run hit three separate "All 1 browser
+# session slots are still in use after 300s" waits). A real incoming reply
+# can now take up to ~60 min to show up in the dashboard instead of ~30 --
+# accepted tradeoff, same direction as the original 3->30 change, for
+# further reducing contention with sending.
+_REPLY_DETECTION_POLL_INTERVAL_MINUTES = 60
 
 # How often run_account_health_check_cycle() re-visits each connected
 # LinkedIn/Instagram account -- hours, not minutes, deliberately: this is

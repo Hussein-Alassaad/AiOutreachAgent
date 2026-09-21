@@ -73,6 +73,8 @@ unattended, same as the company path's first real send.
 from __future__ import annotations
 
 import datetime as dt
+import logging
+from pathlib import Path
 
 from playwright.sync_api import Page
 
@@ -214,6 +216,32 @@ class MessageLengthInvalid(RuntimeError):
     """
 
 
+class PageMessagingRateLimited(RuntimeError):
+    """
+    Raised when LinkedIn's own "New message" modal shows its real, native
+    warning banner: "You have reached the limit for starting new
+    conversations with Pages. Try again later." -- LIVE-CONFIRMED
+    2026-09-20/21 (screenshots taken both days) on Zimmar LinkedIn across
+    many distinct company-Page leads (Farjallah Trading, DG Jones and
+    Partners, others). This is LinkedIn itself refusing at the platform
+    level, not a broken selector -- the topic <select> genuinely never
+    renders because the modal stops at this banner instead. Previously
+    this fell through to the generic "topic dropdown timeout" after a full
+    10s wait per lead, burning through the whole day's batch one dead
+    attempt at a time and generating noisy, misleading errors that looked
+    like a code bug.
+
+    Once this fires, EVERY remaining Page lead on this account will hit
+    the exact same wall for the rest of LinkedIn's own cooldown window (a
+    same-day cap, confirmed to still be active session over session, not a
+    per-request fluke) -- callers should stop trying more Page leads on
+    this account for the rest of the run rather than retry each one and
+    wait out the full timeout individually. Continuing to hammer a rate
+    limit like this is also exactly the kind of pattern LinkedIn's own
+    automation detection watches for.
+    """
+
+
 def _is_company_page(profile_url: str) -> bool:
     return "linkedin.com/company/" in profile_url
 
@@ -223,6 +251,50 @@ def _is_person_profile(profile_url: str) -> bool:
 
 
 _VIEWING_SETTING_MODAL_SELECTOR = "[data-test-modal-id='org-page-viewing-setting-modal']"
+
+# Added 2026-09-19: investigating a persistent, worsening account-specific
+# failure -- Zimmar LinkedIn's Conversation-topic <select> has timed out on
+# MANY distinct company leads over 4 consecutive days (Sept 16-19), while
+# Insurance LinkedIn (same code, same modal path) keeps succeeding. Every
+# theory so far (checkpoint banner, A/B modal variant, warmup/account-age,
+# proxy) has been either inconclusive or ruled out by real account/log data
+# -- what's missing is the actual DOM at the moment this specific wait_for
+# times out. This is a PURE, ADDITIVE capture: it changes no control flow,
+# retries nothing, and never swallows the exception -- it only writes
+# forensic evidence to a droplet-local (gitignored, never committed)
+# directory immediately before the existing `raise` still fires exactly as
+# before. Every failure mode below (disk full, permissions, page already
+# closed) is caught and logged, never allowed to mask the real exception.
+_DEBUG_CAPTURE_DIR = Path(__file__).resolve().parents[2] / "debug_captures"
+
+
+def _capture_topic_dropdown_failure(page: Page, lead: dict) -> None:
+    """
+    Best-effort forensic snapshot for the Conversation-topic <select>
+    timeout specifically -- see the module comment above. Saves a timestamped
+    .html (page.content()) and .png (page.screenshot()) pair to
+    _DEBUG_CAPTURE_DIR so the NEXT natural (unattended, scheduled) failure
+    leaves real evidence instead of another unexplained log line. Never
+    raises: a capture failure must never prevent or alter the real
+    NoMessageButtonAvailable/timeout handling that already follows this
+    call.
+    """
+    try:
+        _DEBUG_CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
+        stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        lead_id = lead.get("id") or "unknown-lead"
+        base = _DEBUG_CAPTURE_DIR / f"topic-dropdown-timeout_{stamp}_{lead_id}"
+        base.with_suffix(".html").write_text(page.content(), encoding="utf-8")
+        page.screenshot(path=str(base.with_suffix(".png")), full_page=True)
+        logging.getLogger("agent.discovery.progress").warning(
+            "[sending] lead=%s: captured topic-dropdown-timeout debug evidence to %s.{html,png}",
+            lead_id, base,
+        )
+    except Exception:  # noqa: BLE001 -- a failed capture must never mask the real send failure
+        logging.getLogger("agent.discovery.progress").warning(
+            "[sending] lead=%s: failed to capture topic-dropdown-timeout debug evidence",
+            lead.get("id") or "unknown-lead", exc_info=True,
+        )
 
 
 def _send_to_company(page: Page, lead: dict, body: str, delivery: Delivery) -> None:
@@ -302,13 +374,44 @@ def _send_to_company(page: Page, lead: dict, body: str, delivery: Delivery) -> N
             state="visible", timeout=15_000
         )
 
+    # LIVE-CONFIRMED 2026-09-20/21: the modal can open and stay on this
+    # native LinkedIn banner instead of ever rendering the topic dropdown
+    # -- checked BEFORE the dropdown wait so this fails fast (a fraction of
+    # a second) instead of burning the full 10s topic-dropdown timeout on
+    # every single Page lead for the rest of the run. See
+    # PageMessagingRateLimited's docstring for why this is real platform
+    # rate limiting, not a broken selector, and why callers should stop
+    # trying further Page leads on this account once it fires.
+    rate_limit_banner = page.get_by_text(
+        "reached the limit for starting new conversations with pages", exact=False
+    ).first
+    try:
+        rate_limit_banner.wait_for(state="visible", timeout=2_000)
+    except Exception:  # noqa: BLE001 -- Playwright's TimeoutError means the banner isn't there, the common case
+        pass
+    else:
+        raise PageMessagingRateLimited(
+            "LinkedIn: you have reached the limit for starting new conversations "
+            "with Pages. Try again later."
+        )
+
     human_delay()
     topic = page.locator(_COMPANY_TOPIC_SELECT_SELECTOR).first
     if topic.count() > 0:
         topic.select_option(value=_TOPIC_URN)
     else:
         topic = page.locator(_COMPANY_TOPIC_SELECT_FALLBACK).first
-        topic.wait_for(state="visible", timeout=10_000)
+        try:
+            topic.wait_for(state="visible", timeout=10_000)
+        except Exception:
+            # Added 2026-09-19: this exact wait_for is the confirmed,
+            # repeated failure site (Zimmar LinkedIn, many distinct leads,
+            # Sept 16-19, never seen on Insurance LinkedIn on the same
+            # code). Purely additive -- see _capture_topic_dropdown_failure's
+            # docstring: no behavior change, the same exception is re-raised
+            # immediately below exactly as before this change.
+            _capture_topic_dropdown_failure(page, lead)
+            raise
         topic.select_option(value=_TOPIC_VALUE)
 
     human_delay()

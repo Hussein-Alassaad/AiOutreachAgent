@@ -421,6 +421,38 @@ def _sync_thread_messages(lead: dict, account: dict, live_messages: list[dict]) 
     differences between our stored body and LinkedIn's own DOM rendering
     of the same message must never be read as "this is a new message".
 
+    REAL BUG FOUND AND FIXED 2026-09-18, live-confirmed against lead
+    "Khatib & Alami" (Insurance tenant): _read_thread_messages() labels
+    direction from LinkedIn's own per-message-group sender name, carried
+    forward across consecutive unlabeled messages (see that function's own
+    docstring). That labeling is UNCONDITIONALLY TRUSTED here -- a message
+    the DOM tags "lead" was inserted straight into outreach_replies with
+    zero cross-check against what we already know we sent. Confirmed live:
+    a re-render of our OWN already-sent message got mislabeled "lead" (the
+    carry-forward name was almost certainly stale, likely due to the
+    "This message has been deleted." tombstone bubble between it and the
+    last genuinely-labeled message not carrying a sender name of its own),
+    and landed in outreach_replies as a fabricated reply -- content
+    byte-for-byte our own outbound body, whitespace/newlines flattened by
+    LinkedIn's DOM the same way _normalized_for_dedup already exists to
+    handle.
+
+    Fix: before accepting ANY candidate labeled "lead", cross-check its
+    normalized text against known_outgoing (bodies we already know we
+    sent, per outreach_messages) FIRST. A match means this is our own
+    message misread off the page, not a real reply -- skip it entirely
+    (no outreach_replies insert, no handle_reply_detected(), no status
+    flip). This is additive on top of whatever the DOM-labeling heuristic
+    already does, and does not require that heuristic to be perfectly
+    correct -- it only needs this one content-based safety net to catch
+    the failure mode at the last point before bad data is written.
+    Mirrors the safety Instagram's own _sync_thread_messages() already has
+    (there, content match against known_outgoing is checked before ANY
+    position-based guess is even attempted -- see that function's own
+    docstring); LinkedIn never had the equivalent check because it always
+    trusted the DOM's own label first instead of deriving direction from
+    content the way Instagram does.
+
     Returns (new_replies_recorded, new_outgoing_backfilled).
     """
     known_incoming = {
@@ -439,6 +471,13 @@ def _sync_thread_messages(lead: dict, account: dict, live_messages: list[dict]) 
         normalized = _normalized_for_dedup(text)
         if msg["from"] == "lead":
             if normalized in known_incoming:
+                continue
+            if normalized in known_outgoing:
+                # Content cross-check safety net (2026-09-18): the DOM
+                # labeled this "lead", but its text matches a message we
+                # already know we sent -- our own message misread off the
+                # page, not a genuine reply. Skip entirely rather than
+                # trust the label, see this function's own docstring.
                 continue
             handle_reply_detected(
                 lead["id"],

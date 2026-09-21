@@ -1042,8 +1042,8 @@ if _ins_disc_1:
 # it rarer.
 check("reply-send poll interval raised from 3 to 30 minutes (resource-contention fix)",
       sch._REPLY_POLL_INTERVAL_MINUTES == 30)
-check("reply-detection poll interval raised from 3 to 30 minutes (resource-contention fix)",
-      sch._REPLY_DETECTION_POLL_INTERVAL_MINUTES == 30)
+check("reply-detection poll interval raised from 3 to 60 minutes (resource-contention fix)",
+      sch._REPLY_DETECTION_POLL_INTERVAL_MINUTES == 60)
 
 check("a global browser-slot limiter exists and is set to a small, non-zero cap",
       hasattr(sess, "_MAX_CONCURRENT_BROWSER_SESSIONS") and 1 <= sess._MAX_CONCURRENT_BROWSER_SESSIONS <= 4)

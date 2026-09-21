@@ -458,7 +458,27 @@ def qualify_profile(profile: dict, niche: str = "") -> tuple[bool, list[str]]:
     recent_activity = bool(profile.get("recent_activity"))
     follower_or_headcount = profile.get("follower_or_headcount")
 
-    if _looks_like_personal_name(display_name):
+    # LinkedIn is exempt from the personal-name check entirely -- SAME
+    # structural reasoning the Instagram-only hard gate below already runs
+    # on, just in the opposite direction: LinkedIn company search only ever
+    # returns linkedin.com/company/ URLs, so a candidate reaching here from
+    # LinkedIn is structurally incapable of being an individual, and there
+    # is nothing for this check to catch. On Instagram (hashtag discovery,
+    # which genuinely surfaces individuals) it stays exactly as strict as
+    # before -- do NOT weaken it there.
+    # LIVE-CONFIRMED 2026-09-18: _looks_like_personal_name() false-positives
+    # on real company names that happen to be Two Title-Case Words without a
+    # term from the small _BUSINESS_WORDS set -- "Orange Business", "Alfa
+    # Telecommunications" and "Roman Foods" all returned True in tonight's
+    # Insurance run, costing each a real -2 and producing 21 of the -9
+    # scores in a single night.
+    if profile.get("platform") == "linkedin":
+        reasons.append(
+            "Personal-name check skipped: LinkedIn company search only returns "
+            "/company/ URLs, so this is structurally a company, not an individual"
+        )
+        score += 1
+    elif _looks_like_personal_name(display_name):
         reasons.append(f"Name '{display_name}' matches a personal-name pattern")
         score -= 2
     else:
